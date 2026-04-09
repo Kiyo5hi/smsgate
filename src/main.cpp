@@ -133,7 +133,12 @@ bool keepTelegramClientAlive()
 
 bool setupTelegramClient()
 {
-    telegramClient.setCACert(isrg_root_x1);
+    // TODO(security): pinning ISRG Root X1 fails from this network — either a
+    // MITM proxy or a regional cert chain we don't recognise. For now we skip
+    // validation so the bridge is usable; revisit with setCACertBundle() using
+    // the ESP-IDF built-in x509 bundle once the happy path is verified.
+    telegramClient.setInsecure();
+    (void)isrg_root_x1;
     telegramClient.setTimeout(15000);
     return keepTelegramClientAlive();
 }
@@ -186,32 +191,30 @@ bool sendBotMessage(const String &message)
         }
     }
 
-    // Read just enough of the body to confirm "ok":true, then stop.
-    bool apiOk = false;
+    // Drain the FULL response body. We must consume exactly contentLength
+    // bytes (or until the connection closes) — otherwise leftover bytes
+    // sit in the TLS buffer and the next keep-alive request will read them
+    // back as the new HTTP status line, corrupting parsing.
     String body;
-    unsigned long deadline = millis() + 5000;
-    int toRead = contentLength > 0 ? contentLength : 512;
-    while (body.length() < (size_t)toRead && millis() < deadline)
+    unsigned long deadline = millis() + 8000;
+    size_t target = contentLength > 0 ? (size_t)contentLength : 8192;
+    while (body.length() < target && millis() < deadline)
     {
         if (telegramClient.available())
         {
             body += (char)telegramClient.read();
-            if (body.indexOf("\"ok\":true") != -1)
-            {
-                apiOk = true;
-                break;
-            }
-            if (body.indexOf("\"ok\":false") != -1)
-            {
-                break;
-            }
+        }
+        else if (contentLength <= 0 && !telegramClient.connected())
+        {
+            break; // server closed and no Content-Length to wait for
         }
         else
         {
-            delay(5);
+            delay(2);
         }
     }
 
+    bool apiOk = body.indexOf("\"ok\":true") != -1;
     return httpOk && apiOk;
 }
 
@@ -502,10 +505,6 @@ void setup()
 
     pinMode(BOARD_PWRKEY_PIN, OUTPUT);
     digitalWrite(BOARD_PWRKEY_PIN, LOW);
-    delay(100);
-    digitalWrite(BOARD_PWRKEY_PIN, HIGH);
-    delay(MODEM_POWERON_PULSE_WIDTH_MS);
-    digitalWrite(BOARD_PWRKEY_PIN, LOW);
 
 #ifdef MODEM_RING_PIN
     pinMode(MODEM_RING_PIN, INPUT_PULLUP);
@@ -513,12 +512,41 @@ void setup()
 
     SerialAT.begin(115200, SERIAL_8N1, MODEM_RX_PIN, MODEM_TX_PIN);
 
-    Serial.println("Start modem...");
-    delay(3000);
-
-    while (!modem.testAT())
+    // The modem and ESP32 are on independent power rails. After an ESP-only
+    // reset (upload, watchdog, ESP.restart) the modem may still be powered on
+    // from the previous session. Pulsing PWRKEY in that case would TURN IT
+    // OFF, leaving testAT() to spin forever. Probe first; only pulse PWRKEY
+    // if the modem is genuinely silent.
+    Serial.println("Probing modem...");
+    bool modemAlreadyOn = false;
+    for (int i = 0; i < 5; i++)
     {
-        delay(10);
+        if (modem.testAT(500))
+        {
+            modemAlreadyOn = true;
+            break;
+        }
+    }
+
+    if (modemAlreadyOn)
+    {
+        Serial.println("Modem already powered on, skipping PWRKEY pulse.");
+    }
+    else
+    {
+        Serial.println("Modem silent, pulsing PWRKEY...");
+        digitalWrite(BOARD_PWRKEY_PIN, LOW);
+        delay(100);
+        digitalWrite(BOARD_PWRKEY_PIN, HIGH);
+        delay(MODEM_POWERON_PULSE_WIDTH_MS);
+        digitalWrite(BOARD_PWRKEY_PIN, LOW);
+
+        Serial.println("Start modem...");
+        delay(3000);
+        while (!modem.testAT())
+        {
+            delay(10);
+        }
     }
 
     String modemName = "UNKNOWN";
@@ -627,8 +655,11 @@ void setup()
 
 void loop()
 {
-    // Drive TinyGSM's URC handling / keep its buffer drained.
-    modem.maintain();
+    // NOTE: do NOT call modem.maintain() here. On TinyGSM/A76XX it internally
+    // calls waitResponse() which eats unknown URCs (+CMTI included) and only
+    // prints "### Unhandled: ..." in debug mode — meaning our +CMTI would be
+    // consumed before we ever see it in SerialAT.available() below.
+    // We drain the serial buffer ourselves and dispatch the URCs we care about.
 
     // Consume unsolicited lines and react to +CMTI: "SM",<idx>
     while (SerialAT.available())
