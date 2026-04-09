@@ -34,6 +34,11 @@ public:
         return modem_.callHangup();
     }
 
+    bool sendSMS(const String &number, const String &text) override
+    {
+        return modem_.sendSMS(number, text);
+    }
+
 private:
     TinyGsm &modem_;
 };

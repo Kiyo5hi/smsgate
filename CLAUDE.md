@@ -24,12 +24,19 @@ What works today (verified on real T-A7670X hardware):
   withheld / anonymous callers), and auto-hangs-up the call so the
   caller gets a busy signal instead of ringing forever. See
   "Call notify" under Architecture.
+- Reply to a forwarded SMS in Telegram, the bot sends the reply back
+  over SMS to the original sender. Reply targeting is by Telegram
+  `reply_to_message_id` looked up in a 200-slot ring buffer persisted
+  in NVS. Single-user allow list (`TELEGRAM_CHAT_ID`). ASCII bodies
+  only in the first cut (Unicode reply support waits on RFC-0002
+  encoder reuse). See "TG -> SMS" under Architecture and `rfc/0003`.
 - Reboots itself after 8 consecutive Telegram POST failures to escape
   stuck TLS / WiFi states.
 
 What does **not** work yet:
 
-- One-way only. No Telegram → SMS replies. See `rfc/0003`.
+- Unicode SMS replies (Telegram -> SMS path is ASCII-only for now).
+  Receiving Unicode SMS already works.
 - Hard dependency on WiFi. The SIM's data path is unused. See `rfc/0004`.
 
 TLS verification against `api.telegram.org` is now active — see the
@@ -123,9 +130,10 @@ already reset the board). The `pio.exe` python is at
 
 - `src/main.cpp` — composition root. Owns the `TinyGsm modem` instance,
   modem power-up, WiFi, NTP, and the `+CMTI` / `RING` / `+CLIP` URC
-  drainer in `loop()`. Constructs a `RealModem`, `RealBotClient`, and
-  a reboot lambda, and wires them into an `SmsHandler` + a
-  `CallHandler`. No SMS / call logic lives here.
+  drainer in `loop()`. Constructs a `RealModem`, `RealBotClient`,
+  `RealPersist`, `ReplyTargetMap`, `SmsSender`, and a reboot lambda,
+  and wires them into an `SmsHandler` + a `CallHandler` + a
+  `TelegramPoller`. No SMS / call / poller logic lives here.
 - `src/sms_codec.{h,cpp}` — pure (Arduino-`String`-only) helpers:
   `decodeUCS2`, `parseCmgrBody`, `humanReadablePhoneNumber`,
   `timestampToRFC3339`, `parseClipLine`. No hardware deps. Compiled
@@ -140,13 +148,42 @@ already reset the board). The `pio.exe` python is at
   loop also calls `tick()` each iteration to drive the unknown-number
   deadline and the cooldown-to-idle transition.
 - `src/imodem.h` — narrow interface over TinyGSM (`sendAT`,
-  `waitResponse`, `waitResponseOk`, `callHangup`). `RealModem` in
-  `real_modem.h` is the production adapter; `FakeModem` in
-  `test/support/` is the test double.
-- `src/ibot_client.h` — narrow interface for "post text to the bot".
-  `RealBotClient` in `telegram.cpp` is the production impl; owns the
-  file-static `WiFiClientSecure` and the full Content-Length drain
-  loop. `FakeBotClient` in `test/support/` is the test double.
+  `waitResponse`, `waitResponseOk`, `callHangup`, `sendSMS`).
+  `RealModem` in `real_modem.h` is the production adapter;
+  `FakeModem` in `test/support/` is the test double.
+- `src/ibot_client.h` — narrow interface for talking to the Telegram
+  bot. Three methods: `sendMessage(text)` (bool, used by call
+  notifications and the boot banner), `sendMessageReturningId(text)`
+  (returns the new Telegram message_id, used by SmsHandler so the
+  reply-target ring buffer can map a future user reply back to the
+  SMS sender), and `pollUpdates(sinceUpdateId, timeoutSec, out)`
+  (long-poll getUpdates, used by TelegramPoller for the TG -> SMS
+  path). `RealBotClient` in `telegram.cpp` is the production impl;
+  owns the file-static `WiFiClientSecure` and the full
+  Content-Length drain loop. `FakeBotClient` in `test/support/` is
+  the test double.
+- `src/ipersist.h` + `src/real_persist.h` — narrow Preferences-backed
+  key/value store interface for the TG -> SMS persistence needs
+  (last update_id watermark + reply-target ring buffer blob).
+  `FakePersist` in `test/support/` is an in-memory test double.
+- `src/reply_target_map.{h,cpp}` — fixed-size 200-slot ring buffer
+  mapping `Telegram message_id -> sms sender phone`. Each slot
+  stores both the message_id and the phone, so a stale lookup
+  (slot has been overwritten by a newer message) returns false.
+  Persisted via `IPersist` as a versioned binary blob.
+- `src/sms_sender.{h,cpp}` — outbound SMS path (RFC-0003). Wraps
+  `IModem::sendSMS` with an ASCII gate (bails on non-ASCII bodies
+  in the first cut) and the `+CMGF=0` PDU-mode restoration that
+  TinyGSM's text-mode send breaks. Implements `ISmsSender` so
+  TelegramPoller can host-test against a fake.
+- `src/telegram_poller.{h,cpp}` — TG -> SMS pipeline as a class.
+  Constructor takes `IBotClient&`, `ISmsSender&`, `ReplyTargetMap&`,
+  `IPersist&`, a `ClockFn`, and an `AuthFn` allow-list predicate.
+  `tick()` from `loop()` issues short-poll getUpdates at most once
+  per `kPollIntervalMs` (3s), parses the response via
+  `IBotClient::pollUpdates`, runs each update through the
+  authorization gate / reply-target lookup / SmsSender pipeline,
+  and persists the watermark fail-closed. See "TG -> SMS" below.
 - `src/real_modem.h` — header-only `RealModem` class, thin delegate to
   `TinyGsm`. Only included from `main.cpp`.
 - `src/telegram.{h,cpp}` — `setupTelegramClient()` + `RealBotClient`.
@@ -256,6 +293,60 @@ TUs never hit the host compiler. See
 6. Dedupe is keyed on TIME, not phone number, so two back-to-back
    calls from the same caller still produce two notifications once
    the cooldown expires.
+
+### TG -> SMS reply path (RFC-0003)
+
+1. Each successful SMS forward (single-part or assembled concat) calls
+   `IBotClient::sendMessageReturningId(...)` instead of the bool
+   variant. The Telegram API returns the new message's `message_id`
+   in the response body; `RealBotClient` parses that out via a tiny
+   stream-filtered ArduinoJson document.
+2. `SmsHandler` writes the `(message_id, sms_sender)` pair into a
+   `ReplyTargetMap` (ring buffer keyed by `message_id % 200`). Each
+   slot stores both the message_id and the phone, so a future
+   lookup that hits a slot whose stored message_id no longer
+   matches the requested id returns false — the slot has been
+   overwritten by a newer SMS forward and the original is too
+   old to route. The map is persisted via `IPersist` as a versioned
+   blob in NVS, so the routing table survives reboots.
+3. `loop()` calls `telegramPoller.tick()` after the URC drain. The
+   poller is rate-limited internally to one getUpdates per
+   `kPollIntervalMs = 3000ms`. **First-cut implementation uses short
+   polling** (`kPollTimeoutSec = 0`), NOT long polling: long polling
+   would block the synchronous loop for up to 25s and silently drop
+   +CMTI / RING / +CLIP URCs during the request. Switching to
+   non-blocking long polling is a follow-up. Data cost of 3s short
+   polling is ~30 KB/day.
+4. Each update from the poll is run through:
+   - **Authorization gate.** `from.id` (or `chat.id` fallback) must
+     match the `TELEGRAM_CHAT_ID` parsed as int64. Unauthorized
+     updates are dropped silently — we don't even acknowledge them
+     to avoid being a probe oracle. The watermark still advances.
+   - **Reply-target lookup.** `reply_to_message_id` must be set,
+     and the ring buffer slot for that id must hold the matching
+     stored message_id. On miss / stale slot, the user gets a
+     "reply target expired" error reply; watermark advances.
+   - **`SmsSender::send`.** ASCII bodies only in the first cut.
+     Non-ASCII bodies bail with a "needs RFC-0002" error reply
+     to the user. SmsSender re-enters PDU mode (`+CMGF=0`) after
+     every send attempt, success or failure — TinyGSM's `sendSMS`
+     internally flips the modem to text mode, which would silently
+     break the next +CMTI parse if not restored.
+   - **Confirmation.** On success the user gets a "✅ Reply sent
+     to <phone>" message. Watermark advances.
+5. The `update_id` watermark is **persisted only after** all updates
+   in a batch have been processed, in a single NVS write. That
+   minimizes wear on the flash sector at the cost of a possible
+   small replay window if power dies mid-batch — the
+   `<= lastUpdateId_` guard inside `tick()` plus Telegram's own
+   offset semantics absorb the replay safely.
+6. Failure modes that don't advance the watermark: (a) the
+   `IBotClient::pollUpdates` HTTP / JSON envelope itself failing
+   (transport error, non-200, malformed top-level JSON). The poller
+   returns without touching the watermark and tries again on the
+   next tick. Per-update parse failures (bad message shape, missing
+   fields) DO advance the watermark — fail-closed semantics from
+   RFC-0003 §5.
 
 ### Two non-obvious traps (already fixed, do not regress)
 

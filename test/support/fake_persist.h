@@ -1,0 +1,59 @@
+#pragma once
+
+#include <Arduino.h>
+#include <cstring>
+#include <vector>
+
+#include "ipersist.h"
+
+// In-memory IPersist for native tests. Survives across multiple poller
+// instantiations within a single test (since the test owns the
+// FakePersist object), so we can simulate a "restart" by destroying
+// and recreating the TelegramPoller while keeping the FakePersist
+// untouched.
+class FakePersist : public IPersist
+{
+public:
+    int32_t loadLastUpdateId() override
+    {
+        return lastUpdateId_;
+    }
+
+    void saveLastUpdateId(int32_t id) override
+    {
+        lastUpdateId_ = id;
+        saveLastUpdateIdCalls_++;
+    }
+
+    size_t loadReplyTargets(void *buf, size_t bufSize) override
+    {
+        if (replyTargets_.empty())
+        {
+            return 0;
+        }
+        size_t n = replyTargets_.size();
+        if (n > bufSize)
+        {
+            return 0;
+        }
+        std::memcpy(buf, replyTargets_.data(), n);
+        return n;
+    }
+
+    void saveReplyTargets(const void *buf, size_t bufSize) override
+    {
+        replyTargets_.assign(static_cast<const uint8_t *>(buf),
+                             static_cast<const uint8_t *>(buf) + bufSize);
+        saveReplyTargetsCalls_++;
+    }
+
+    // Test introspection
+    int saveLastUpdateIdCalls() const { return saveLastUpdateIdCalls_; }
+    int saveReplyTargetsCalls() const { return saveReplyTargetsCalls_; }
+
+private:
+    int32_t lastUpdateId_ = 0;
+    std::vector<uint8_t> replyTargets_;
+    int saveLastUpdateIdCalls_ = 0;
+    int saveReplyTargetsCalls_ = 0;
+};

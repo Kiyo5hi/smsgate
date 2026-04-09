@@ -9,6 +9,10 @@
 #include "ibot_client.h"
 #include "sms_codec.h"
 
+// Forward declaration — sms_handler doesn't otherwise need to know
+// about reply target storage; it just calls put() on the pointer.
+class ReplyTargetMap;
+
 // Reboot callback injected from the composition root. Production code
 // passes a lambda that calls `ESP.restart()`; tests pass a lambda that
 // bumps a counter so the reboot path is actually exercised.
@@ -52,6 +56,13 @@ public:
 
     // Clock defaults to `millis()` if not supplied.
     SmsHandler(IModem &modem, IBotClient &bot, RebootFn reboot, ClockFn clock = nullptr);
+
+    // Optional: attach a ReplyTargetMap (RFC-0003 §2). When set, every
+    // successful SMS forward writes a (telegram_message_id, sms_sender)
+    // entry into the map so a future Telegram reply can route back
+    // to the original SMS sender. Pass nullptr (or just don't call
+    // this) to disable the bidirectional path.
+    void setReplyTargetMap(ReplyTargetMap *map) { replyTargets_ = map; }
 
     // Read the SMS at SIM index <idx>, forward it to the bot, and
     // delete it from the SIM on success. Leaves the SMS in place on
@@ -131,6 +142,7 @@ private:
     IBotClient &bot_;
     RebootFn reboot_;
     ClockFn clock_;
+    ReplyTargetMap *replyTargets_ = nullptr;
     int consecutiveFailures_ = 0;
 
     // Holds the in-flight concatenated groups. Vector is fine at this
