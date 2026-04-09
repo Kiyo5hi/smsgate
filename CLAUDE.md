@@ -39,11 +39,11 @@ What does **not** work yet:
 3. **Create `src/secrets.h`** by copying `secrets.h.example` and filling
    in WiFi + bot credentials. The file is gitignored.
 4. **Check whether your operator needs an APN.** Look near the top of
-   `setup()` in `src/main.cpp` for `NETWORK_APN` — it's commented out
-   by default. If your SIM is from a Chinese / regional operator that
-   requires one (e.g. `CHN-CT` for China Telecom) you need to define
-   it via `-DNETWORK_APN="..."` or uncomment the macro. Without it,
-   network registration may be silently denied.
+   `src/main.cpp` for `NETWORK_APN` — it's commented out by default.
+   If your SIM is from a Chinese / regional operator that requires one
+   (e.g. `CHN-CT` for China Telecom) you need to define it via
+   `-DNETWORK_APN="..."` or uncomment the macro. Without it, network
+   registration may be silently denied.
 5. **Build, flash, watch the monitor.** A healthy boot sequence looks
    roughly like:
    ```
@@ -111,20 +111,35 @@ already reset the board). The `pio.exe` python is at
 
 ## Architecture
 
+### Source layout
+
+- `src/main.cpp` — boot/loop. Owns the `modem` instance, modem power-up,
+  network registration, WiFi, NTP, and the `+CMTI` URC drainer in `loop()`.
+- `src/sms.{h,cpp}` — SMS receive pipeline: `decodeUCS2`, `parseCmgrBody`,
+  `handleSmsIndex`, `sweepExistingSms`, plus the consecutive-failure
+  counter and reboot logic. Borrows the global `modem` via `extern`.
+- `src/telegram.{h,cpp}` — TLS client + Telegram bot. Owns
+  `WiFiClientSecure`, the (currently unused) ISRG Root X1 cert,
+  `setupTelegramClient`, and `sendBotMessage`.
+- `src/utilities.h` — board pin definitions, copied verbatim from
+  upstream `LilyGo-Modem-Series/examples/*/utilities.h`. Selects the
+  right `TINY_GSM_MODEM_xxx` based on the `LILYGO_T_*` build flag.
+- `src/secrets.h` — gitignored, see "Secrets" below.
+
 ### SMS receive path (URC-driven, not polling)
 
-1. `setup()` configures: `+CMGF=1` (text mode), `+CSCS="UCS2"` (everything
-   comes back as UTF-16BE hex, sender included), `+CSDH=1`, and
-   `+CNMI=2,1,0,0,0` so new SMS produce a `+CMTI: "SM",<idx>` URC.
-2. `loop()` reads raw lines from `SerialAT`, looks for `+CMTI:`, extracts
-   `<idx>`.
-3. `handleSmsIndex(idx)` issues `AT+CMGR=<idx>`, parses sender/timestamp/
-   content out of the response, decodes UCS2 → UTF-8, posts to Telegram,
-   and `AT+CMGD`s the slot **only on success**. On failure the SMS stays
-   on the SIM and a counter increments; after `MAX_CONSECUTIVE_FAILURES`
-   (8) the ESP reboots.
-4. `sweepExistingSms()` runs once at the end of `setup()` to drain any
-   messages that arrived while the bridge was offline.
+1. `setup()` (main.cpp) configures: `+CMGF=1` (text mode), `+CSCS="UCS2"`
+   (everything comes back as UTF-16BE hex, sender included), `+CSDH=1`,
+   and `+CNMI=2,1,0,0,0` so new SMS produce a `+CMTI: "SM",<idx>` URC.
+2. `loop()` (main.cpp) reads raw lines from `SerialAT`, looks for `+CMTI:`,
+   extracts `<idx>`, and dispatches to `handleSmsIndex` from `sms.cpp`.
+3. `handleSmsIndex(idx)` (sms.cpp) issues `AT+CMGR=<idx>`, parses
+   sender/timestamp/content out of the response, decodes UCS2 → UTF-8,
+   posts to Telegram via `sendBotMessage`, and `AT+CMGD`s the slot
+   **only on success**. On failure the SMS stays on the SIM and a
+   counter increments; after `MAX_CONSECUTIVE_FAILURES` (8) the ESP reboots.
+4. `sweepExistingSms()` (sms.cpp) runs once at the end of `setup()` to
+   drain any messages that arrived while the bridge was offline.
 
 ### Two non-obvious traps (already fixed, do not regress)
 
@@ -142,18 +157,19 @@ already reset the board). The `pio.exe` python is at
 
 ### TLS state
 
-Currently `WiFiClientSecure` runs with `setInsecure()`. The pinned
-ISRG Root X1 cert is in the source but unused — see `rfc/0001-tls-cert-pinning.md`
-for the open work. Cert verification failed in testing on the network this
-board is deployed on.
+Currently `WiFiClientSecure` (in `telegram.cpp`) runs with `setInsecure()`.
+The pinned ISRG Root X1 cert is in the source but unused — see
+`rfc/0001-tls-cert-pinning.md` for the open work. Cert verification failed
+in testing on the network this board is deployed on.
 
 ### Telegram POST response handling
 
-`sendBotMessage()` keeps the connection alive (`Connection: keep-alive`) for
-throughput, but **must drain the full Content-Length** of every response.
-If you early-`break` after spotting `"ok":true`, leftover bytes sit in the
-TLS buffer and the next request reads them as the new HTTP status line.
-This was a real bug. Don't reintroduce it.
+`sendBotMessage()` (telegram.cpp) keeps the connection alive
+(`Connection: keep-alive`) for throughput, but **must drain the full
+Content-Length** of every response. If you early-`break` after spotting
+`"ok":true`, leftover bytes sit in the TLS buffer and the next request
+reads them as the new HTTP status line. This was a real bug. Don't
+reintroduce it.
 
 ### Secrets
 

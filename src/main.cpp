@@ -8,24 +8,32 @@
  * Based on examples/ReadSMS.
  */
 
-#include "gpio.h"
-#include "utils.h"
+#include "utilities.h"
 #include "secrets.h"
+#include "telegram.h"
+#include "sms.h"
 
 #ifdef TINY_GSM_MODEM_SIM7080
 #error "This modem has no SMS function"
 #endif
 
-#define TINY_GSM_DEBUG SerialMon
 #define SerialMon Serial
+#define TINY_GSM_DEBUG SerialMon
 
 // See all AT commands, if wanted
 // #define DUMP_AT_COMMANDS
 
+// Uncomment / set via -D to provide a network APN if your operator requires
+// one (e.g. "CHN-CT" for China Telecom). Without it, network registration
+// may be silently denied on some Chinese / regional SIMs.
+// #define NETWORK_APN     "CHN-CT"
+
 #include <WiFi.h>
-#include <WiFiClientSecure.h>
 #include <TinyGsmClient.h>
-#include <ArduinoJson.h>
+
+#ifndef TINY_GSM_FORK_LIBRARY
+#error "No correct definition detected, Please copy all the [lib directories](https://github.com/Xinyuan-LilyGO/LilyGO-T-A76XX/tree/main/lib) to the arduino libraries directory , See README"
+#endif
 
 #ifdef DUMP_AT_COMMANDS
 #include <StreamDebugger.h>
@@ -37,51 +45,6 @@ TinyGsm modem(SerialAT);
 
 static const char *ssid = WIFI_SSID;
 static const char *password = WIFI_PASSWORD;
-static const char *botToken = TELEGRAM_BOT_TOKEN;
-static const char *chatID = TELEGRAM_CHAT_ID;
-
-// Let's Encrypt ISRG Root X1 — the current root behind api.telegram.org.
-// Valid until 2035-06-04.
-static const char isrg_root_x1[] PROGMEM = R"EOF(
------BEGIN CERTIFICATE-----
-MIIFazCCA1OgAwIBAgIRAIIQz7DSQONZRGPgu2OCiwAwDQYJKoZIhvcNAQELBQAw
-TzELMAkGA1UEBhMCVVMxKTAnBgNVBAoTIEludGVybmV0IFNlY3VyaXR5IFJlc2Vh
-cmNoIEdyb3VwMRUwEwYDVQQDEwxJU1JHIFJvb3QgWDEwHhcNMTUwNjA0MTEwNDM4
-WhcNMzUwNjA0MTEwNDM4WjBPMQswCQYDVQQGEwJVUzEpMCcGA1UEChMgSW50ZXJu
-ZXQgU2VjdXJpdHkgUmVzZWFyY2ggR3JvdXAxFTATBgNVBAMTDElTUkcgUm9vdCBY
-MTCCAiIwDQYJKoZIhvcNAQEBBQADggIPADCCAgoCggIBAK3oJHP0FDfzm54rVygc
-h77ct984kIxuPOZXoHj3dcKi/vVqbvYATyjb3miGbESTtrFj/RQSa78f0uoxmyF+
-0TM8ukj13Xnfs7j/EvEhmkvBioZxaUpmZmyPfjxwv60pIgbz5MDmgK7iS4+3mX6U
-A5/TR5d8mUgjU+g4rk8Kb4Mu0UlXjIB0ttov0DiNewNwIRt18jA8+o+u3dpjq+sW
-T8KOEUt+zwvo/7V3LvSye0rgTBIlDHCNAymg4VMk7BPZ7hm/ELNKjD+Jo2FR3qyH
-B5T0Y3HsLuJvW5iB4YlcNHlsdu87kGJ55tukmi8mxdAQ4Q7e2RCOFvu396j3x+UC
-B5iPNgiV5+I3lg02dZ77DnKxHZu8A/lJBdiB3QW0KtZB6awBdpUKD9jf1b0SHzUv
-KBds0pjBqAlkd25HN7rOrFleaJ1/ctaJxQZBKT5ZPt0m9STJEadao0xAH0ahmbWn
-OlFuhjuefXKnEgV4We0+UXgVCwOPjdAvBbI+e0ocS3MFEvzG6uBQE3xDk3SzynTn
-jh8BCNAw1FtxNrQHusEwMFxIt4I7mKZ9YIqioymCzLq9gwQbooMDQaHWBfEbwrbw
-qHyGO0aoSCqI3Haadr8faqU9GY/rOPNk3sgrDQoo//fb4hVC1CLQJ13hef4Y53CI
-rU7m2Ys6xt0nUW7/vGT1M0NPAgMBAAGjQjBAMA4GA1UdDwEB/wQEAwIBBjAPBgNV
-HRMBAf8EBTADAQH/MB0GA1UdDgQWBBR5tFnme7bl5AFzgAiIyBpY9umbbjANBgkq
-hkiG9w0BAQsFAAOCAgEAVR9YqbyyqFDQDLHYGmkgJykIrGF1XIpu+ILlaS/V9lZL
-ubhzEFnTIZd+50xx+7LSYK05qAvqFyFWhfFQDlnrzuBZ6brJFe+GnY+EgPbk6ZGQ
-3BebYhtF8GaV0nxvwuo77x/Py9auJ/GpsMiu/X1+mvoiBOv/2X/qkSsisRcOj/KK
-NFtY2PwByVS5uCbMiogziUwthDyC3+6WVwW6LLv3xLfHTjuCvjHIInNzktHCgKQ5
-ORAzI4JMPJ+GslWYHb4phowim57iaztXOoJwTdwJx4nLCgdNbOhdjsnvzqvHu7Ur
-TkXWStAmzOVyyghqpZXjFaH3pO3JLF+l+/+sKAIuvtd7u+Nxe5AW0wdeRlN8NwdC
-jNPElpzVmbUq4JUagEiuTDkHzsxHpFKVK7q4+63SM1N95R1NbdWhscdCb+ZAJzVc
-oyi3B43njTOQ5yOf+1CceWxG1bQVs5ZufpsMljq4Ui0/1lvh+wjChP4kqKOJ2qxq
-4RgqsahDYVvTH9w7jXbyLeiNdd8XM2w9U/t7y0Ff/9yi0GE44Za4rF2LN9d11TPA
-mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
-emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
------END CERTIFICATE-----
-)EOF";
-
-WiFiClientSecure telegramClient;
-
-// After this many consecutive Telegram send failures, reboot to recover
-// from stuck TLS / WiFi / DNS / TinyGSM states.
-static const int MAX_CONSECUTIVE_FAILURES = 8;
-static int consecutiveFailures = 0;
 
 void connectToWiFi()
 {
@@ -109,374 +72,6 @@ void syncTime()
     }
     Serial.printf("\nCurrent time: %s\n", ctime(&now));
 }
-
-bool keepTelegramClientAlive()
-{
-    if (telegramClient.connected())
-    {
-        return true;
-    }
-
-    Serial.println("Reconnecting to Telegram API server...");
-    telegramClient.stop();
-    bool ok = telegramClient.connect("api.telegram.org", 443);
-    if (ok)
-    {
-        Serial.println("Reconnected to Telegram API server!");
-    }
-    else
-    {
-        Serial.println("Reconnection to Telegram API server failed!");
-    }
-    return ok;
-}
-
-bool setupTelegramClient()
-{
-    // TODO(security): pinning ISRG Root X1 fails from this network — either a
-    // MITM proxy or a regional cert chain we don't recognise. For now we skip
-    // validation so the bridge is usable; revisit with setCACertBundle() using
-    // the ESP-IDF built-in x509 bundle once the happy path is verified.
-    telegramClient.setInsecure();
-    (void)isrg_root_x1;
-    telegramClient.setTimeout(15000);
-    return keepTelegramClientAlive();
-}
-
-bool sendBotMessage(const String &message)
-{
-    String url = String("/bot") + botToken + "/sendMessage";
-
-    size_t size = JSON_OBJECT_SIZE(2) + message.length() + 256;
-    DynamicJsonDocument doc(size);
-    doc["chat_id"] = chatID;
-    doc["text"] = message;
-
-    String payload;
-    serializeJson(doc, payload);
-
-    if (!keepTelegramClientAlive())
-    {
-        return false;
-    }
-
-    telegramClient.print(String("POST ") + url + " HTTP/1.1\r\n");
-    telegramClient.print("Host: api.telegram.org\r\n");
-    telegramClient.print("Connection: keep-alive\r\n");
-    telegramClient.print("Content-Type: application/json\r\n");
-    telegramClient.print("Content-Length: ");
-    telegramClient.print(payload.length());
-    telegramClient.print("\r\n\r\n");
-    telegramClient.print(payload);
-
-    // Parse status line: "HTTP/1.1 200 OK"
-    String statusLine = telegramClient.readStringUntil('\n');
-    statusLine.trim();
-    Serial.print("Telegram status: ");
-    Serial.println(statusLine);
-
-    bool httpOk = statusLine.indexOf(" 200") != -1;
-
-    // Drain headers until blank line
-    int contentLength = -1;
-    while (telegramClient.connected() || telegramClient.available())
-    {
-        String line = telegramClient.readStringUntil('\n');
-        if (line == "\r" || line.length() == 0)
-            break;
-        line.toLowerCase();
-        if (line.startsWith("content-length:"))
-        {
-            contentLength = line.substring(15).toInt();
-        }
-    }
-
-    // Drain the FULL response body. We must consume exactly contentLength
-    // bytes (or until the connection closes) — otherwise leftover bytes
-    // sit in the TLS buffer and the next keep-alive request will read them
-    // back as the new HTTP status line, corrupting parsing.
-    String body;
-    unsigned long deadline = millis() + 8000;
-    size_t target = contentLength > 0 ? (size_t)contentLength : 8192;
-    while (body.length() < target && millis() < deadline)
-    {
-        if (telegramClient.available())
-        {
-            body += (char)telegramClient.read();
-        }
-        else if (contentLength <= 0 && !telegramClient.connected())
-        {
-            break; // server closed and no Content-Length to wait for
-        }
-        else
-        {
-            delay(2);
-        }
-    }
-
-    bool apiOk = body.indexOf("\"ok\":true") != -1;
-    return httpOk && apiOk;
-}
-
-bool postSMSMessage(const String &sender, const String &timestamp, const String &content)
-{
-    String formattedMessage = humanReadablePhoneNumber(sender) + " | " + timestampToRFC3339(timestamp) +
-                              "\n-----\n" +
-                              content;
-
-    return sendBotMessage(formattedMessage);
-}
-
-String decodeUCS2(String hex)
-{
-    // Remove whitespace/newlines
-    String tmp;
-    for (size_t i = 0; i < hex.length(); ++i)
-    {
-        char c = hex[i];
-        if (c == ' ' || c == '\r' || c == '\n' || c == '\t')
-            continue;
-        tmp += c;
-    }
-    hex = tmp;
-    hex.trim();
-
-    // If it doesn't look like hex at all (e.g. module returned GSM 7bit ASCII
-    // directly because CSCS != "UCS2"), pass it through unchanged.
-    if (!isHexString(hex))
-    {
-        return hex;
-    }
-
-    auto hexVal = [](char c) -> int
-    {
-        c = toupper(c);
-        if (c >= '0' && c <= '9')
-            return c - '0';
-        if (c >= 'A' && c <= 'F')
-            return c - 'A' + 10;
-        return -1;
-    };
-
-    auto hexByte = [&](int idx) -> int
-    {
-        if (idx + 1 >= (int)hex.length())
-            return -1;
-        int hi = hexVal(hex[idx]);
-        int lo = hexVal(hex[idx + 1]);
-        if (hi < 0 || lo < 0)
-            return -1;
-        return (hi << 4) | lo;
-    };
-
-    String out;
-    int len = hex.length();
-
-    // If length is multiple of 4 -> decode as UTF-16BE (UCS2/UTF-16)
-    if (len >= 4 && (len % 4) == 0)
-    {
-        for (int i = 0; i + 3 < len; i += 4)
-        {
-            int b1 = hexByte(i);
-            int b2 = hexByte(i + 2);
-            if (b1 < 0 || b2 < 0)
-                break;
-            uint16_t codeUnit = ((uint16_t)b1 << 8) | (uint16_t)b2;
-
-            // Check for surrogate pair
-            if (codeUnit >= 0xD800 && codeUnit <= 0xDBFF && (i + 7) < len)
-            {
-                int b3 = hexByte(i + 4);
-                int b4 = hexByte(i + 6);
-                if (b3 >= 0 && b4 >= 0)
-                {
-                    uint16_t low = ((uint16_t)b3 << 8) | (uint16_t)b4;
-                    if (low >= 0xDC00 && low <= 0xDFFF)
-                    {
-                        uint32_t high = codeUnit - 0xD800;
-                        uint32_t lowpart = low - 0xDC00;
-                        uint32_t codepoint = (high << 10) + lowpart + 0x10000;
-                        out += (char)(0xF0 | ((codepoint >> 18) & 0x07));
-                        out += (char)(0x80 | ((codepoint >> 12) & 0x3F));
-                        out += (char)(0x80 | ((codepoint >> 6) & 0x3F));
-                        out += (char)(0x80 | (codepoint & 0x3F));
-                        i += 4;
-                        continue;
-                    }
-                }
-            }
-
-            uint16_t code = codeUnit;
-            if (code <= 0x7F)
-            {
-                out += (char)code;
-            }
-            else if (code <= 0x7FF)
-            {
-                out += (char)(0xC0 | ((code >> 6) & 0x1F));
-                out += (char)(0x80 | (code & 0x3F));
-            }
-            else
-            {
-                out += (char)(0xE0 | ((code >> 12) & 0x0F));
-                out += (char)(0x80 | ((code >> 6) & 0x3F));
-                out += (char)(0x80 | (code & 0x3F));
-            }
-        }
-        return out;
-    }
-
-    // If hex length is even but not multiple of 4 -> treat as ASCII bytes in hex
-    if ((len % 2) == 0)
-    {
-        for (int i = 0; i + 1 < len; i += 2)
-        {
-            int b = hexByte(i);
-            if (b < 0)
-                break;
-            out += (char)b;
-        }
-        return out;
-    }
-
-    return out;
-}
-
-// Parse the body of an AT+CMGR response. Expected shape (text mode):
-//
-//   +CMGR: "REC UNREAD","<sender-hex>","","<timestamp>"\r\n
-//   <content-hex>\r\n
-//   \r\n
-//   OK\r\n
-//
-// Returns true if a message was found; fills out sender/timestamp/content.
-bool parseCmgrBody(const String &raw, String &sender, String &timestamp, String &content)
-{
-    int header = raw.indexOf("+CMGR:");
-    if (header == -1)
-        return false;
-    int headerEnd = raw.indexOf("\r\n", header);
-    if (headerEnd == -1)
-        return false;
-
-    String headerLine = raw.substring(header, headerEnd);
-
-    // Quote positions: 1,2 = status; 3,4 = sender; 5,6 = (alpha, often empty); 7,8 = timestamp
-    int q1 = headerLine.indexOf('"');
-    int q2 = headerLine.indexOf('"', q1 + 1);
-    int q3 = headerLine.indexOf('"', q2 + 1);
-    int q4 = headerLine.indexOf('"', q3 + 1);
-    int q5 = headerLine.indexOf('"', q4 + 1);
-    int q6 = headerLine.indexOf('"', q5 + 1);
-    int q7 = headerLine.indexOf('"', q6 + 1);
-    int q8 = headerLine.indexOf('"', q7 + 1);
-    if (q8 == -1)
-        return false;
-
-    String senderHex = headerLine.substring(q3 + 1, q4);
-    String ts = headerLine.substring(q7 + 1, q8);
-
-    int bodyStart = headerEnd + 2;
-    int bodyEnd = raw.indexOf("\r\nOK", bodyStart);
-    if (bodyEnd == -1)
-        bodyEnd = raw.length();
-
-    String contentHex = raw.substring(bodyStart, bodyEnd);
-    contentHex.trim();
-
-    sender = decodeUCS2(senderHex);
-    timestamp = ts;
-    content = decodeUCS2(contentHex);
-    return true;
-}
-
-// Read message at <idx>, forward to Telegram, delete on success.
-// Leaves the SMS on the SIM on any failure so a later retry can pick it up.
-void handleSmsIndex(int idx)
-{
-    Serial.printf("-------- SMS @ index %d --------\n", idx);
-
-    String raw;
-    modem.sendAT("+CMGR=" + String(idx));
-    int8_t res = modem.waitResponse(5000UL, raw);
-    if (res != 1)
-    {
-        Serial.println("CMGR failed");
-        return;
-    }
-
-    String sender, timestamp, content;
-    if (!parseCmgrBody(raw, sender, timestamp, content))
-    {
-        Serial.println("Unable to parse CMGR body. Raw:");
-        Serial.println(raw);
-        // Nothing useful here; delete so we don't loop on a malformed slot.
-        modem.sendAT("+CMGD=" + String(idx));
-        modem.waitResponse(1000UL);
-        return;
-    }
-
-    Serial.print("Sender:    ");
-    Serial.println(sender);
-    Serial.print("Timestamp: ");
-    Serial.println(timestamp);
-    Serial.print("Content:   ");
-    Serial.println(content);
-
-    if (postSMSMessage(sender, timestamp, content))
-    {
-        consecutiveFailures = 0;
-        Serial.println("Posted to Telegram OK, deleting SMS.");
-        modem.sendAT("+CMGD=" + String(idx));
-        modem.waitResponse(1000UL);
-    }
-    else
-    {
-        consecutiveFailures++;
-        Serial.printf("Post to Telegram FAILED (%d consecutive). Keeping SMS on SIM.\n",
-                      consecutiveFailures);
-        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES)
-        {
-            Serial.println("Too many consecutive failures, rebooting to recover...");
-            delay(1000);
-            ESP.restart();
-        }
-    }
-}
-
-// Sweep all SMS currently on the SIM and forward each one. Used at startup
-// to drain anything that arrived while the bridge was offline.
-void sweepExistingSms()
-{
-    String data;
-    modem.sendAT("+CMGL=\"ALL\"");
-    int8_t res = modem.waitResponse(10000UL, data);
-    if (res != 1)
-    {
-        Serial.println("Initial CMGL sweep failed");
-        return;
-    }
-
-    int search = 0;
-    while (true)
-    {
-        int start = data.indexOf("+CMGL:", search);
-        if (start == -1)
-            break;
-        int colon = start + 6;
-        int comma = data.indexOf(',', colon);
-        if (comma == -1)
-            break;
-        int idx = data.substring(colon, comma).toInt();
-        search = comma;
-        if (idx > 0)
-        {
-            handleSmsIndex(idx);
-        }
-    }
-}
-
-// #define NETWORK_APN     "CHN-CT"
 
 void setup()
 {
@@ -699,7 +294,3 @@ void loop()
 
     delay(50);
 }
-
-#ifndef TINY_GSM_FORK_LIBRARY
-#error "No correct definition detected, Please copy all the [lib directories](https://github.com/Xinyuan-LilyGO/LilyGO-T-A76XX/tree/main/lib) to the arduino libraries directory , See README"
-#endif
