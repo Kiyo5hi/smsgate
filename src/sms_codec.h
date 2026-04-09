@@ -42,4 +42,20 @@ String humanReadablePhoneNumber(const String &number);
 // "+08:00" — matching what the previous implementation returned.
 String timestampToRFC3339(const String &timestamp);
 
+// Parse a `+CLIP: "<number>",<type>,...` URC line, extracting the
+// caller number field into `number`. Returns true if the line starts
+// with `+CLIP:` and has a quoted number field (even an empty one);
+// false on malformed input (no quotes, no colon, etc.).
+//
+// The parser is deliberately lenient about trailing fields — some
+// A76xx firmware versions emit only `+CLIP: "<number>",<type>` with
+// no trailing empty strings, others append extra fields. Everything
+// past the first quoted string is ignored.
+//
+// For withheld / anonymous callers the modem emits `+CLIP: "",128,...`
+// which yields `number = ""` and still returns true — the caller
+// should treat an empty number as "unknown" and still emit a
+// notification.
+bool parseClipLine(const String &line, String &number);
+
 } // namespace sms_codec

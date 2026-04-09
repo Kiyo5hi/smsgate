@@ -32,4 +32,11 @@ public:
     // Thin convenience: wait for OK with no response captured. Used on
     // fire-and-forget commands like AT+CMGD.
     virtual int8_t waitResponseOk(uint32_t timeoutMs) = 0;
+
+    // Hang up an active / ringing voice call. Forwards to TinyGSM's
+    // `callHangup()`, which on A76xx resolves to the base class impl
+    // at TinyGsmCalling.tpp:72-75 (sends `ATH`). Returns true iff the
+    // modem replied OK. Used by CallHandler to auto-reject incoming
+    // calls; see RFC-0005.
+    virtual bool callHangup() = 0;
 };

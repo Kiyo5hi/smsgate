@@ -15,6 +15,11 @@ What works today (verified on real T-A7670X hardware):
   to a single Telegram chat with sender + timestamp + body, and deletes
   the message from the SIM. End-to-end latency ~1s.
 - Drains any SMS that arrived while the bridge was offline at startup.
+- Detects incoming voice calls via `RING` + `+CLIP` URCs, posts a
+  Telegram notification with the caller's number (or "Unknown" for
+  withheld / anonymous callers), and auto-hangs-up the call so the
+  caller gets a busy signal instead of ringing forever. See
+  "Call notify" under Architecture.
 - Reboots itself after 8 consecutive Telegram POST failures to escape
   stuck TLS / WiFi states.
 
@@ -114,21 +119,27 @@ already reset the board). The `pio.exe` python is at
 ### Source layout
 
 - `src/main.cpp` — composition root. Owns the `TinyGsm modem` instance,
-  modem power-up, WiFi, NTP, and the `+CMTI` URC drainer in `loop()`.
-  Constructs a `RealModem`, `RealBotClient`, and a reboot lambda, and
-  wires them into an `SmsHandler`. No SMS logic lives here.
+  modem power-up, WiFi, NTP, and the `+CMTI` / `RING` / `+CLIP` URC
+  drainer in `loop()`. Constructs a `RealModem`, `RealBotClient`, and
+  a reboot lambda, and wires them into an `SmsHandler` + a
+  `CallHandler`. No SMS / call logic lives here.
 - `src/sms_codec.{h,cpp}` — pure (Arduino-`String`-only) helpers:
   `decodeUCS2`, `parseCmgrBody`, `humanReadablePhoneNumber`,
-  `timestampToRFC3339`. No hardware deps. Compiled into both the
-  firmware env and the native test env.
+  `timestampToRFC3339`, `parseClipLine`. No hardware deps. Compiled
+  into both the firmware env and the native test env.
 - `src/sms_handler.{h,cpp}` — stateful SMS pipeline as a class.
   Constructor takes `IModem&`, `IBotClient&`, and a `RebootFn`. Owns
   the consecutive-failure counter and `MAX_CONSECUTIVE_FAILURES = 8`.
   Methods: `handleSmsIndex(int)`, `sweepExistingSms()`.
+- `src/call_handler.{h,cpp}` — stateful incoming-call pipeline as a
+  class. Constructor takes `IModem&`, `IBotClient&`, and a `ClockFn`.
+  Consumes `RING` / `+CLIP` URC lines via `onUrcLine(line)`; the
+  loop also calls `tick()` each iteration to drive the unknown-number
+  deadline and the cooldown-to-idle transition.
 - `src/imodem.h` — narrow interface over TinyGSM (`sendAT`,
-  `waitResponse`, `waitResponseOk`). `RealModem` in `real_modem.h` is
-  the production adapter; `FakeModem` in `test/support/` is the test
-  double.
+  `waitResponse`, `waitResponseOk`, `callHangup`). `RealModem` in
+  `real_modem.h` is the production adapter; `FakeModem` in
+  `test/support/` is the test double.
 - `src/ibot_client.h` — narrow interface for "post text to the bot".
   `RealBotClient` in `telegram.cpp` is the production impl; owns the
   file-static `WiFiClientSecure` and the full Content-Length drain
@@ -141,8 +152,8 @@ already reset the board). The `pio.exe` python is at
   upstream `LilyGo-Modem-Series/examples/*/utilities.h`. Selects the
   right `TINY_GSM_MODEM_xxx` based on the `LILYGO_T_*` build flag.
 - `src/secrets.h` — gitignored, see "Secrets" below.
-- `test/test_native/` — Unity tests for `sms_codec` and `sms_handler`.
-  Runs on the host via `pio test -e native`.
+- `test/test_native/` — Unity tests for `sms_codec`, `sms_handler`,
+  and `call_handler`. Runs on the host via `pio test -e native`.
 - `test/support/` — hand-rolled `Arduino.h` stub (+ `.cpp` storage for
   the `Serial` no-op), plus `fake_modem.h` and `fake_bot_client.h`.
   The stub covers ~18 `String` methods actually used by the modules
@@ -173,9 +184,10 @@ export PATH="/c/Users/Kiyoshi Guo/AppData/Local/Microsoft/WinGet/Packages/Brecht
 ```
 
 The native env (`[env:native]` in `platformio.ini`) uses
-`build_src_filter = +<sms_codec.cpp> +<sms_handler.cpp> -<main.cpp>
--<telegram.cpp>` so hardware-dependent TUs never hit the host compiler.
-See `rfc/0007-testability-native-tests-di.md` for the full design.
+`build_src_filter = +<sms_codec.cpp> +<sms_handler.cpp>
++<call_handler.cpp> -<main.cpp> -<telegram.cpp>` so hardware-dependent
+TUs never hit the host compiler. See
+`rfc/0007-testability-native-tests-di.md` for the full design.
 
 ### SMS receive path (URC-driven, not polling)
 
@@ -192,6 +204,37 @@ See `rfc/0007-testability-native-tests-di.md` for the full design.
 4. `sweepExistingSms()` (sms.cpp) runs once at the end of `setup()` to
    drain any messages that arrived while the bridge was offline.
 
+### Call notify (RFC-0005)
+
+1. `setup()` enables `+CLIP=1` right after `+CNMI`, so each incoming
+   call produces a `RING` URC followed by (or preceded by, depending
+   on firmware) `+CLIP: "<number>",<type>,...` carrying the caller
+   number.
+2. The same `loop()` drain that dispatches `+CMTI` hands every URC
+   line to `callHandler.onUrcLine(line)` after the SMS check.
+   `CallHandler` only acts on lines starting with `RING` or `+CLIP:`
+   and ignores everything else.
+3. Order-independent state machine: seeing EITHER a `RING` or a
+   `+CLIP:` transitions Idle → Ringing and starts an unknown-number
+   deadline timer (`kUnknownNumberDeadlineMs = 1500ms`). Receiving
+   the other half of the pair commits the event immediately.
+   If only `RING` arrives and no `+CLIP` shows up before the
+   deadline, the event is still committed with "Unknown" as the
+   caller — driven by `callHandler.tick()` from the main loop.
+4. On commit: the handler posts `📞 Incoming call from <number>
+   (auto-rejected)` via `bot_.sendMessage(...)`, then calls
+   `modem_.callHangup()` (which sends `ATH` on A76xx). If the TinyGSM
+   call returns false, a raw `AT+CHUP` fallback is sent.
+5. After commit the handler enters a Cooldown state for
+   `kDedupeWindowMs = 6000ms` during which further RING / +CLIP URCs
+   are silently dropped. This is what turns the ~3s repeating RING
+   stream of a single call into a single Telegram notification. The
+   cooldown-to-idle transition is also driven by `tick()`; two calls
+   separated by more than 6s produce two notifications as expected.
+6. Dedupe is keyed on TIME, not phone number, so two back-to-back
+   calls from the same caller still produce two notifications once
+   the cooldown expires.
+
 ### Two non-obvious traps (already fixed, do not regress)
 
 - **The modem and the ESP32 are on independent power rails.** After an
@@ -203,8 +246,9 @@ See `rfc/0007-testability-native-tests-di.md` for the full design.
   See the `Probing modem...` block in `setup()`.
 - **Do not call `modem.maintain()` in `loop()`.** TinyGSM's `maintain()`
   internally calls `waitResponse()` which eats unknown URCs and only prints
-  `### Unhandled: ...` in debug mode. That includes `+CMTI`, so SMS arrival
-  events would silently disappear. We drain `SerialAT` ourselves.
+  `### Unhandled: ...` in debug mode. That includes `+CMTI`, `RING`, and
+  `+CLIP`, so SMS / call arrival events would silently disappear. We
+  drain `SerialAT` ourselves.
 
 ### TLS state
 

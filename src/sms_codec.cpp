@@ -220,4 +220,38 @@ bool parseCmgrBody(const String &raw, String &sender, String &timestamp, String 
     return true;
 }
 
+// ---------- +CLIP URC parsing ----------
+
+bool parseClipLine(const String &line, String &number)
+{
+    // Expected shapes (count of trailing fields varies by firmware):
+    //   +CLIP: "+8613800138000",145,"",,"",0
+    //   +CLIP: "13800138000",129
+    //   +CLIP: "",128,"",,"",0           (withheld / anonymous)
+    //
+    // The only field we actually care about is the first quoted number.
+    // A comma MUST follow the closing quote — a bare `+CLIP: "13800"`
+    // with nothing after it is not a well-formed URC in the wild, and
+    // we reject it so truly garbage input (no comma at all) is caught.
+    if (!line.startsWith("+CLIP:"))
+        return false;
+
+    int q1 = line.indexOf('"');
+    if (q1 == -1)
+        return false;
+    int q2 = line.indexOf('"', q1 + 1);
+    if (q2 == -1)
+        return false;
+
+    // Require a comma after the closing quote — the field separator
+    // between the number and the type. Without it, the line is
+    // malformed (or a prefix of a partial read).
+    int comma = line.indexOf(',', q2 + 1);
+    if (comma == -1)
+        return false;
+
+    number = line.substring(q1 + 1, q2);
+    return true;
+}
+
 } // namespace sms_codec

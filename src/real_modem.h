@@ -29,6 +29,11 @@ public:
         return modem_.waitResponse(timeoutMs);
     }
 
+    bool callHangup() override
+    {
+        return modem_.callHangup();
+    }
+
 private:
     TinyGsm &modem_;
 };

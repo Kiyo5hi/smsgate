@@ -1,0 +1,92 @@
+#pragma once
+
+#include <Arduino.h>
+#include <functional>
+#include <stdint.h>
+
+#include "imodem.h"
+#include "ibot_client.h"
+
+// Clock callback injected from the composition root so tests can drive
+// a virtual clock instead of waiting for wall time. Production passes a
+// lambda over `millis()`; tests pass a lambda over a local counter.
+using ClockFn = std::function<uint32_t()>;
+
+// Stateful incoming-call pipeline. Watches RING / +CLIP URCs forwarded
+// from main.cpp's serial drain, coalesces the ~3s repeating RINGs into
+// a single event, posts a Telegram notification, and auto-hangs the
+// call. Depends only on the injected IModem + IBotClient + ClockFn so
+// the whole class is reachable from the native test env.
+//
+// State machine:
+//
+//   idle  -- RING received --> ringing (wait for +CLIP to carry number)
+//   idle  -- +CLIP received --> ringing (wait for RING to confirm it's
+//                                        actually a call)
+//
+// Entering `ringing` requires BOTH a RING and a +CLIP, OR a `tick()`
+// timeout in the "RING only, no +CLIP" case — some firmware stacks can
+// drop +CLIP under load. See `kUnknownNumberDeadlineMs`.
+//
+// Once the ringing event is committed (notification sent, hangup
+// issued), we enter a `cooldown` state for `kDedupeWindowMs` during
+// which further RING / +CLIP URCs from the same call are suppressed.
+// After the cooldown expires (via `tick()`), we return to idle and a
+// new call will re-arm the pipeline. A successful `callHangup()` also
+// starts the cooldown timer.
+class CallHandler
+{
+public:
+    // How long to suppress further RING/+CLIP URCs after committing a
+    // ringing event. Slightly longer than two ring periods (~3s each)
+    // so one real call never overlaps itself; short enough that two
+    // distinct back-to-back calls still produce two notifications.
+    static constexpr uint32_t kDedupeWindowMs = 6000;
+
+    // If we see a RING but no +CLIP ever arrives, commit the event
+    // anyway after this long with "Unknown" as the caller. Keeps
+    // withheld / CLI-stripped calls from being silently ignored.
+    static constexpr uint32_t kUnknownNumberDeadlineMs = 1500;
+
+    CallHandler(IModem &modem, IBotClient &bot, ClockFn clock);
+
+    // Called from main.cpp's SerialAT drain for every line that isn't
+    // a +CMTI: (which stays with SmsHandler). Safe to call with any
+    // line — unrecognized ones are ignored.
+    void onUrcLine(const String &line);
+
+    // Called once per loop iteration from main.cpp. Drives the
+    // unknown-number deadline (commit a "Unknown" event if we saw
+    // RING but no +CLIP within the window) and the cooldown-to-idle
+    // transition. Cheap — constant time, no AT traffic if nothing to do.
+    void tick();
+
+    // Test-only accessors.
+    enum class State
+    {
+        Idle,
+        Ringing,  // have seen at least one of {RING, +CLIP}, waiting for the other or for deadline
+        Cooldown, // event committed, suppressing further URCs until kDedupeWindowMs elapses
+    };
+    State state() const { return state_; }
+
+private:
+    void commitRinging();
+    void maybeTransitionToCooldown(uint32_t now);
+    void maybeExitCooldown(uint32_t now);
+
+    IModem &modem_;
+    IBotClient &bot_;
+    ClockFn clock_;
+
+    State state_ = State::Idle;
+
+    // Per-event scratch — cleared on every transition into `Idle`.
+    bool sawRing_ = false;
+    bool sawClip_ = false;
+    String number_;                 // populated from +CLIP; "" = withheld / not yet seen
+    uint32_t ringingStartedMs_ = 0; // when we first entered Ringing — drives the unknown-number deadline
+
+    // Cooldown bookkeeping — when the current suppression window ends.
+    uint32_t cooldownUntilMs_ = 0;
+};

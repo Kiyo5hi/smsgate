@@ -62,13 +62,37 @@ public:
         return code;
     }
 
+    bool callHangup() override
+    {
+        callHangupCalls_++;
+        if (!callHangupResults_.empty())
+        {
+            bool r = callHangupResults_.front();
+            callHangupResults_.erase(callHangupResults_.begin());
+            return r;
+        }
+        return callHangupDefault_;
+    }
+
+    // Queue the return value for the next callHangup() call. Falls back
+    // to `callHangupDefault_` (default true) if the queue is empty.
+    void queueCallHangupResult(bool ok) { callHangupResults_.push_back(ok); }
+
+    // Set the fallback return value for callHangup() when the queue is drained.
+    void setCallHangupDefault(bool ok) { callHangupDefault_ = ok; }
+
     // ---- Inspection helpers for tests ----
 
     const std::vector<String> &sentCommands() const { return sent_; }
 
     size_t responsesRemaining() const { return responses_.size(); }
 
+    int callHangupCalls() const { return callHangupCalls_; }
+
 private:
     std::vector<Response> responses_;
     std::vector<String> sent_;
+    std::vector<bool> callHangupResults_;
+    bool callHangupDefault_ = true;
+    int callHangupCalls_ = 0;
 };

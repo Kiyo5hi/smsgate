@@ -15,6 +15,7 @@
 #include "secrets.h"
 #include "telegram.h"
 #include "sms_handler.h"
+#include "call_handler.h"
 #include "real_modem.h"
 
 #ifdef TINY_GSM_MODEM_SIM7080
@@ -50,8 +51,8 @@ TinyGsm modem(SerialAT);
 static const char *ssid = WIFI_SSID;
 static const char *password = WIFI_PASSWORD;
 
-// Composition root state. These three objects are singletons for the
-// lifetime of the process; the SmsHandler borrows references to them.
+// Composition root state. These objects are singletons for the
+// lifetime of the process; the handlers borrow references to them.
 static RealModem realModem(modem);
 static RealBotClient realBot;
 static SmsHandler smsHandler(realModem, realBot, []() {
@@ -59,6 +60,9 @@ static SmsHandler smsHandler(realModem, realBot, []() {
     // line a chance to flush before the chip resets.
     delay(1000);
     ESP.restart();
+});
+static CallHandler callHandler(realModem, realBot, []() -> uint32_t {
+    return (uint32_t)millis();
 });
 
 void connectToWiFi()
@@ -249,6 +253,12 @@ void setup()
     modem.sendAT("+CNMI=2,1,0,0,0");
     modem.waitResponse(2000);
 
+    // Enable Caller Line Identification Presentation so incoming RINGs
+    // are followed by a +CLIP: "<number>",<type>,... URC carrying the
+    // caller's number. See RFC-0005 / call_handler.{h,cpp}.
+    modem.sendAT("+CLIP=1");
+    modem.waitResponse(2000);
+
     connectToWiFi();
     syncTime();
     if (!setupTelegramClient())
@@ -271,7 +281,7 @@ void loop()
     // consumed before we ever see it in SerialAT.available() below.
     // We drain the serial buffer ourselves and dispatch the URCs we care about.
 
-    // Consume unsolicited lines and react to +CMTI: "SM",<idx>
+    // Consume unsolicited lines and dispatch to the SMS / Call handlers.
     while (SerialAT.available())
     {
         String line = SerialAT.readStringUntil('\n');
@@ -291,8 +301,15 @@ void loop()
                 }
             }
         }
-        // Other URCs are ignored for now.
+
+        // CallHandler gobbles RING / +CLIP. Feed it every line; it
+        // does its own startsWith filtering and ignores anything else.
+        callHandler.onUrcLine(line);
     }
+
+    // Drive the CallHandler's unknown-number deadline + cooldown timer.
+    // Cheap: constant-time and does no AT traffic unless a deadline fires.
+    callHandler.tick();
 
     // Periodically verify WiFi is still up; ESP will auto-reconnect on its own
     // but if it can't, we'd rather reboot than loop forever.
