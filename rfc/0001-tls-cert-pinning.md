@@ -1,7 +1,8 @@
 ---
-status: in-progress
+status: implemented
 created: 2026-04-09
 updated: 2026-04-09
+owner: claude-opus-4-6
 ---
 
 # RFC-0001: TLS certificate validation for api.telegram.org

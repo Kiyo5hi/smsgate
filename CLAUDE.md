@@ -20,12 +20,13 @@ What works today (verified on real T-A7670X hardware):
 
 What does **not** work yet:
 
-- TLS is currently `setInsecure()` — not actually verifying the cert.
-  See `rfc/0001`.
 - Long / concatenated SMS arrive as un-stitched fragments because we
   use text mode, not PDU. See `rfc/0002`.
 - One-way only. No Telegram → SMS replies. See `rfc/0003`.
 - Hard dependency on WiFi. The SIM's data path is unused. See `rfc/0004`.
+
+TLS verification against `api.telegram.org` is now active — see the
+"TLS state" subsection below. RFC-0001 is implemented.
 
 ## First-time setup
 
@@ -208,10 +209,30 @@ See `rfc/0007-testability-native-tests-di.md` for the full design.
 
 ### TLS state
 
-Currently `WiFiClientSecure` (in `telegram.cpp`) runs with `setInsecure()`.
-The pinned ISRG Root X1 cert is in the source but unused — see
-`rfc/0001-tls-cert-pinning.md` for the open work. Cert verification failed
-in testing on the network this board is deployed on.
+TLS verification is **active**. `setupTelegramClient()` calls
+`telegramClient.setCACertBundle(rootca_crt_bundle_start)` where the
+symbol points at `data/cert/x509_crt_bundle.bin`, embedded into flash
+via `board_build.embed_files` in `[esp32dev_base]`. The bundle is a
+narrow set of roots (Go Daddy G2 + Class 2 cross-sign, DigiCert Global
+Root CA + G2, ISRG Root X1 + X2) — see `data/cert/README.md` for the
+selection rationale and regeneration steps. RFC-0001 is implemented.
+
+**Escape hatch.** A `-DALLOW_INSECURE_TLS` build flag is wired in
+`telegram.cpp`. When set, `setupTelegramClient()` calls `setInsecure()`
+and prints `[SECURITY WARNING] TLS verification disabled via
+-DALLOW_INSECURE_TLS` at boot. Default builds do **not** set this
+flag; it exists only as an explicit, logged-at-boot opt-out for
+networks that MITM HTTPS.
+
+**Gotcha for future bundle edits.** The chain Telegram actually serves
+terminates at the (Mozilla-removed) Go Daddy Class 2 root via a
+cross-sign over Go Daddy Root G2. `esp_crt_bundle` refuses to accept
+the handshake unless the bundle can look up the last self-signed
+cert's own issuer — meaning Class 2 must stay in the bundle as long as
+Telegram serves the cross-signed chain. See `data/cert/README.md`
+"The Class 2 gotcha" for the full explanation; don't remove Class 2
+without re-running `openssl s_client` against `api.telegram.org` and
+confirming the chain has shortened.
 
 ### Telegram POST response handling
 
