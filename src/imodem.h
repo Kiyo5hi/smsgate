@@ -39,4 +39,15 @@ public:
     // modem replied OK. Used by CallHandler to auto-reject incoming
     // calls; see RFC-0005.
     virtual bool callHangup() = 0;
+
+    // Send an outbound SMS via TinyGSM's text-mode `sendSMS` path
+    // (RFC-0003). Returns true iff the modem accepted the message.
+    //
+    // CRITICAL: TinyGSM's sendSMS internally flips the modem to text
+    // mode (`+CMGF=1`) and a GSM-7 charset (`+CSCS="GSM"`). After a
+    // successful send, the receive path (which expects PDU mode) is
+    // broken until something restores `+CMGF=0`. SmsSender is the
+    // only caller and is responsible for re-entering PDU mode after
+    // every send attempt (success or failure).
+    virtual bool sendSMS(const String &number, const String &text) = 0;
 };

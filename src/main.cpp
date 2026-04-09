@@ -17,6 +17,10 @@
 #include "sms_handler.h"
 #include "call_handler.h"
 #include "real_modem.h"
+#include "real_persist.h"
+#include "reply_target_map.h"
+#include "sms_sender.h"
+#include "telegram_poller.h"
 
 #ifdef TINY_GSM_MODEM_SIM7080
 #error "This modem has no SMS function"
@@ -55,6 +59,9 @@ static const char *password = WIFI_PASSWORD;
 // lifetime of the process; the handlers borrow references to them.
 static RealModem realModem(modem);
 static RealBotClient realBot;
+static RealPersist realPersist;
+static ReplyTargetMap replyTargets(realPersist);
+static SmsSender smsSender(realModem);
 static SmsHandler smsHandler(
     realModem, realBot,
     []() {
@@ -67,6 +74,23 @@ static SmsHandler smsHandler(
 static CallHandler callHandler(realModem, realBot, []() -> uint32_t {
     return (uint32_t)millis();
 });
+
+// TG -> SMS poller (RFC-0003). Allow-list is the configured chat id
+// parsed as int64. Constructed late so it can capture the parsed id.
+static int64_t parseChatIdAsInt64(const char *s)
+{
+    if (!s)
+        return 0;
+    return (int64_t)strtoll(s, nullptr, 10);
+}
+static const int64_t kAllowedChatId = parseChatIdAsInt64(TELEGRAM_CHAT_ID);
+static TelegramPoller telegramPoller(
+    realBot, smsSender, replyTargets, realPersist,
+    []() -> uint32_t { return (uint32_t)millis(); },
+    [](int64_t fromId) -> bool {
+        // Single-user allow list (RFC-0003 §4). Multi-user later.
+        return fromId != 0 && fromId == kAllowedChatId;
+    });
 
 void connectToWiFi()
 {
@@ -272,6 +296,24 @@ void setup()
         return;
     }
 
+    // RFC-0003 persistence: open NVS, hydrate the reply-target ring
+    // buffer and the last-seen update_id watermark, and wire the
+    // ring buffer into the SmsHandler so future SMS forwards
+    // populate it. If NVS init fails, log and continue without
+    // bidirectional support — receive-only is still useful.
+    if (!realPersist.begin())
+    {
+        Serial.println("RealPersist::begin failed; bidirectional TG->SMS disabled.");
+    }
+    else
+    {
+        replyTargets.load();
+        smsHandler.setReplyTargetMap(&replyTargets);
+        telegramPoller.begin();
+        Serial.print("TG->SMS poller online; reply-target slots in use: ");
+        Serial.println((unsigned long)replyTargets.occupiedSlots());
+    }
+
     realBot.sendMessage("🚀 Modem SMS to Telegram Bridge is now online!");
 
     // Drain anything that arrived while we were offline.
@@ -315,6 +357,12 @@ void loop()
     // Drive the CallHandler's unknown-number deadline + cooldown timer.
     // Cheap: constant-time and does no AT traffic unless a deadline fires.
     callHandler.tick();
+
+    // Drive the TG->SMS poller (RFC-0003). Rate-limited internally to
+    // kPollIntervalMs; uses short polling so it doesn't block the URC
+    // drain above. See telegram_poller.h "Implementation note" for
+    // why we don't long-poll in the first cut.
+    telegramPoller.tick();
 
     // Periodically verify WiFi is still up; ESP will auto-reconnect on its own
     // but if it can't, we'd rather reboot than loop forever.

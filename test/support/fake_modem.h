@@ -81,6 +81,33 @@ public:
     // Set the fallback return value for callHangup() when the queue is drained.
     void setCallHangupDefault(bool ok) { callHangupDefault_ = ok; }
 
+    // ---- IModem::sendSMS (RFC-0003) ----
+
+    struct SmsSendCall
+    {
+        String number;
+        String text;
+    };
+
+    bool sendSMS(const String &number, const String &text) override
+    {
+        SmsSendCall c;
+        c.number = number;
+        c.text = text;
+        smsSendCalls_.push_back(c);
+        if (!smsSendResults_.empty())
+        {
+            bool r = smsSendResults_.front();
+            smsSendResults_.erase(smsSendResults_.begin());
+            return r;
+        }
+        return smsSendDefault_;
+    }
+
+    void queueSmsSendResult(bool ok) { smsSendResults_.push_back(ok); }
+    void setSmsSendDefault(bool ok) { smsSendDefault_ = ok; }
+    const std::vector<SmsSendCall> &smsSendCalls() const { return smsSendCalls_; }
+
     // ---- Inspection helpers for tests ----
 
     const std::vector<String> &sentCommands() const { return sent_; }
@@ -95,4 +122,7 @@ private:
     std::vector<bool> callHangupResults_;
     bool callHangupDefault_ = true;
     int callHangupCalls_ = 0;
+    std::vector<SmsSendCall> smsSendCalls_;
+    std::vector<bool> smsSendResults_;
+    bool smsSendDefault_ = true;
 };

@@ -1,7 +1,8 @@
 ---
-status: proposed
+status: implemented
 created: 2026-04-09
 updated: 2026-04-09
+owner: claude-opus-4-6
 ---
 
 # RFC-0003: Bidirectional bridge — Telegram → SMS
@@ -125,3 +126,82 @@ Not started. The code is structured around `loop()` reading SMS URCs only.
   deployment network) before shipping bidirectional — otherwise an
   attacker on the bridge's network could inject fake Telegram updates
   and use this device as a free SMS relay.
+
+## Implementation note (claude-opus-4-6, 2026-04-09)
+
+Two deviations from the original plan, both in the spirit of "ship the
+first cut, document the rest as follow-ups":
+
+1. **Short polling, not long polling.** The plan said `timeout=25` to
+   long-poll Telegram and let the request block on their side. The
+   implementation uses `kPollTimeoutSec = 0` (short polling) on a 3-
+   second cadence (`kPollIntervalMs`). Reason: the loop is structured
+   around a synchronous IModem URC drain that runs every iteration. A
+   25-second blocking HTTP call inside the same loop would silently
+   drop +CMTI / RING / +CLIP URCs for the duration of the request,
+   which would break the SMS receive path and the call notify path.
+   The right fix is a non-blocking HTTPS state machine (issue request,
+   return immediately, resume when bytes are available); that's a
+   meaningful chunk of work and not in scope for the bidirectional
+   first cut. Data-cap cost of 3-second short polling is ~30 KB/day,
+   well below relevance for any deployment that's already paying for
+   WiFi. Tracked as a follow-up RFC if the data cost ever bites.
+
+2. **`sendMessageReturningId` was added as a parallel `IBotClient`
+   method rather than changing the `bool sendMessage(...)` return
+   type to `int32_t`.** Reason: the existing `CallHandler` and the
+   boot banner just want a yes/no answer. Adding a new method
+   keeps the bool overload as the cheap-and-cheerful path for code
+   that doesn't need the message id, and confines the int32 path
+   to `SmsHandler::forwardSingle` and the concat assembled-success
+   path. Both `RealBotClient::sendMessage` and
+   `RealBotClient::sendMessageReturningId` are thin wrappers around
+   the same private `doSendMessage` helper, so there's no logic
+   duplication.
+
+The other RFC bullets (ring buffer keyed by `message_id % 200` with
+both `{message_id, phone}` per slot, NVS persistence, fail-closed
+parsing, single-user allow-list reusing `TELEGRAM_CHAT_ID`, ASCII-only
+SMS body for the first cut) are implemented as written.
+
+Module map of what landed:
+
+- `src/ipersist.h` + `src/real_persist.h` + `test/support/fake_persist.h`
+  — narrow Preferences-backed key/value store interface, with an
+  in-memory fake for native tests.
+- `src/reply_target_map.{h,cpp}` — fixed-size 200-slot ring buffer
+  serialized as a versioned blob via IPersist. The "stale slot"
+  guard checks the stored message_id matches the lookup key before
+  returning the phone.
+- `src/sms_sender.{h,cpp}` (+ `ISmsSender` interface) — wraps
+  `IModem::sendSMS` with the ASCII gate and the post-send
+  `+CMGF=0` PDU-mode restoration.
+- `src/telegram_poller.{h,cpp}` — the loop-driven poller. Calls
+  `IBotClient::pollUpdates`, runs each update through the auth /
+  reply-target / sms-sender pipeline, advances the watermark
+  fail-closed, persists.
+- `src/ibot_client.h` — added `TelegramUpdate` struct and the
+  `sendMessageReturningId` and `pollUpdates` methods.
+- `src/imodem.h` + `src/real_modem.h` — added `sendSMS(number, body)`.
+- `src/sms_handler.{h,cpp}` — added optional `setReplyTargetMap()`
+  hook; the success path now writes the new Telegram message_id +
+  SMS sender phone into the ring buffer.
+- `src/main.cpp` — composition root wires the new modules; NVS
+  init failure logs and continues without bidirectional support
+  (receive-only is still useful).
+- `test/test_native/test_reply_target_map.cpp`,
+  `test/test_native/test_sms_sender.cpp`,
+  `test/test_native/test_telegram_poller.cpp` — host-side coverage
+  of the new modules. All 90 tests in the native suite pass
+  (24 new RFC-0003 tests + 66 pre-existing).
+
+The post-send PDU-mode restoration in `SmsSender` is the
+load-bearing fix for the previously-implicit assumption in CLAUDE.md
+that "this setup handles re-entry to PDU mode next time a URC fires".
+That assumption was incorrect — `setup()` runs `+CMGF=0` exactly
+once at boot, and TinyGSM's `sendSMSImpl` flips the modem to text
+mode mid-flight. Without the restoration step, the very first +CMTI
+after a successful TG->SMS reply would be parsed as text-mode CMGR
+output and would fail to decode as a PDU, dropping the message on
+the floor. The restoration makes it explicit: every send finishes
+with `AT+CMGF=0`, success or failure.

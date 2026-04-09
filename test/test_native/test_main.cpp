@@ -9,6 +9,9 @@ void run_sms_handler_tests();
 void run_call_handler_tests();
 void run_sms_pdu_tests();
 void run_sms_handler_pdu_tests();
+void run_reply_target_map_tests();
+void run_sms_sender_tests();
+void run_telegram_poller_tests();
 
 void setUp() {}
 void tearDown() {}
@@ -23,5 +26,8 @@ int main(int argc, char **argv)
     run_call_handler_tests();
     run_sms_pdu_tests();
     run_sms_handler_pdu_tests();
+    run_reply_target_map_tests();
+    run_sms_sender_tests();
+    run_telegram_poller_tests();
     return UNITY_END();
 }

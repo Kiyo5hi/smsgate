@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <vector>
 
 #include "ibot_client.h"
 
@@ -18,4 +19,15 @@ class RealBotClient : public IBotClient
 {
 public:
     bool sendMessage(const String &text) override;
+    int32_t sendMessageReturningId(const String &text) override;
+    bool pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
+                     std::vector<TelegramUpdate> &out) override;
+
+private:
+    // Shared HTTP-POST helper used by both sendMessage variants.
+    // On HTTP+API success, returns the parsed `result.message_id`
+    // (always > 0). On any failure (transport, HTTP non-2xx, JSON
+    // parse, ok!=true) returns 0. Tests don't see this — only the
+    // public overrides above.
+    int32_t doSendMessage(const String &text);
 };

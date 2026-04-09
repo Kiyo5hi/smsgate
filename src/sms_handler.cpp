@@ -1,5 +1,6 @@
 #include "sms_handler.h"
 #include "sms_codec.h"
+#include "reply_target_map.h"
 
 #include <algorithm>
 
@@ -88,7 +89,20 @@ void SmsHandler::evictLruUntilUnderCaps(size_t reservedExtraBytes)
 bool SmsHandler::forwardSingle(const sms_codec::SmsPdu &pdu, int /*simIndex*/)
 {
     String formatted = formatBotMessage(pdu.sender, pdu.timestamp, pdu.content);
-    return bot_.sendMessage(formatted);
+    int32_t mid = bot_.sendMessageReturningId(formatted);
+    if (mid <= 0)
+    {
+        return false;
+    }
+    // RFC-0003 §2: write the (telegram_message_id, sms_sender) pair
+    // into the reply-target ring buffer so a future user reply can
+    // route back. The map is optional — only set when bidirectional
+    // mode is enabled by main.cpp.
+    if (replyTargets_ != nullptr)
+    {
+        replyTargets_->put(mid, pdu.sender);
+    }
+    return true;
 }
 
 bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int simIndex,
@@ -270,11 +284,16 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
 
     String formatted = formatBotMessage(group->sender, group->firstTimestamp, assembled);
 
-    if (!bot_.sendMessage(formatted))
+    int32_t mid = bot_.sendMessageReturningId(formatted);
+    if (mid <= 0)
     {
         // Keep fragments in place; the caller will bump the failure
         // counter and eventually reboot.
         return false;
+    }
+    if (replyTargets_ != nullptr)
+    {
+        replyTargets_->put(mid, group->sender);
     }
 
     // Success: collect all SIM slots for deletion and drop the group.
