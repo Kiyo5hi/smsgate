@@ -7,6 +7,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A LilyGo A76XX / SIM7xxx firmware that forwards incoming SMS to a Telegram bot
 over WiFi + HTTPS. Forked out of the `examples/` tree of LilyGo-Modem-Series.
 
+## Current capabilities
+
+What works today (verified on real T-A7670X hardware):
+
+- Receives an SMS via `+CMTI` URC, decodes UCS2 (Chinese tested), forwards
+  to a single Telegram chat with sender + timestamp + body, and deletes
+  the message from the SIM. End-to-end latency ~1s.
+- Drains any SMS that arrived while the bridge was offline at startup.
+- Reboots itself after 8 consecutive Telegram POST failures to escape
+  stuck TLS / WiFi states.
+
+What does **not** work yet:
+
+- TLS is currently `setInsecure()` — not actually verifying the cert.
+  See `rfc/0001`.
+- Long / concatenated SMS arrive as un-stitched fragments because we
+  use text mode, not PDU. See `rfc/0002`.
+- One-way only. No Telegram → SMS replies. See `rfc/0003`.
+- Hard dependency on WiFi. The SIM's data path is unused. See `rfc/0004`.
+
+## First-time setup
+
+1. **Clone next to the upstream lib repo.** This project is a sibling
+   of `LilyGo-Modem-Series` (see "Repo dependency" below). If you
+   clone it standalone, the build will fail with a `lib_extra_dirs`
+   path error pointing at `../LilyGo-Modem-Series/lib`.
+2. **Get a Telegram bot token and chat id.** See the comments in
+   `src/secrets.h.example` — short version: talk to `@BotFather` to
+   create the bot, talk to `@userinfobot` to get your numeric chat id.
+3. **Create `src/secrets.h`** by copying `secrets.h.example` and filling
+   in WiFi + bot credentials. The file is gitignored.
+4. **Check whether your operator needs an APN.** Look near the top of
+   `setup()` in `src/main.cpp` for `NETWORK_APN` — it's commented out
+   by default. If your SIM is from a Chinese / regional operator that
+   requires one (e.g. `CHN-CT` for China Telecom) you need to define
+   it via `-DNETWORK_APN="..."` or uncomment the macro. Without it,
+   network registration may be silently denied.
+5. **Build, flash, watch the monitor.** A healthy boot sequence looks
+   roughly like:
+   ```
+   Probing modem... → Modem silent, pulsing PWRKEY... (or "already powered on")
+   Model Name:A7670G-... → Wait SMS Done. → Network registration successful
+   Connecting to WiFi → WiFi connected!
+   Syncing time... → Current time: ...
+   Reconnected to Telegram API server! → Telegram status: HTTP/1.1 200 OK
+   ```
+   If the log freezes at `Probing modem...` for more than ~10s,
+   power-cycle the whole board (USB unplug) — the modem is in a state
+   we can't recover via PWRKEY alone.
+
 ## Repo dependency
 
 This project does **not** vendor the TinyGSM fork or board pin definitions.
