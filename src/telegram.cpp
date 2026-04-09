@@ -80,14 +80,14 @@ bool setupTelegramClient()
     return keepTelegramClientAlive();
 }
 
-bool sendBotMessage(const String &message)
+bool RealBotClient::sendMessage(const String &text)
 {
     String url = String("/bot") + botToken + "/sendMessage";
 
-    size_t size = JSON_OBJECT_SIZE(2) + message.length() + 256;
+    size_t size = JSON_OBJECT_SIZE(2) + text.length() + 256;
     DynamicJsonDocument doc(size);
     doc["chat_id"] = chatID;
-    doc["text"] = message;
+    doc["text"] = text;
 
     String payload;
     serializeJson(doc, payload);

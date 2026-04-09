@@ -1,21 +1,14 @@
-#include "sms.h"
-#include "telegram.h"
-#include "utilities.h"
+#include "sms_codec.h"
 
-#include <Arduino.h>
-#include <TinyGsmClient.h>
+#include <stdint.h>
+#include <stddef.h>
+#include <ctype.h>
 
-// The single modem instance lives in main.cpp; we just borrow it.
-extern TinyGsm modem;
+namespace sms_codec {
 
-// After this many consecutive Telegram send failures, reboot to recover
-// from stuck TLS / WiFi / DNS / TinyGSM states.
-static const int MAX_CONSECUTIVE_FAILURES = 8;
-static int consecutiveFailures = 0;
+// ---------- formatting helpers ----------
 
-// ---------- formatting helpers (SMS-specific) ----------
-
-static String humanReadablePhoneNumber(const String &number)
+String humanReadablePhoneNumber(const String &number)
 {
     // xxxxxxxxxxx       -> +86 xxx-xxxx-xxxx
     // +86xxxxxxxxxxx    -> +86 xxx-xxxx-xxxx
@@ -35,7 +28,7 @@ static String humanReadablePhoneNumber(const String &number)
     }
 }
 
-static String timestampToRFC3339(const String &timestamp)
+String timestampToRFC3339(const String &timestamp)
 {
     // Input format:  "yy/MM/dd,HH:mm:ss+zz" (as returned in +CMGR headers)
     // Output format: "YYYY-MM-DDTHH:mm:ss+08:00"
@@ -70,7 +63,7 @@ static bool isHexString(const String &s)
 
 // ---------- UCS2 -> UTF-8 ----------
 
-static String decodeUCS2(String hex)
+String decodeUCS2(String hex)
 {
     // Remove whitespace/newlines
     String tmp;
@@ -93,7 +86,7 @@ static String decodeUCS2(String hex)
 
     auto hexVal = [](char c) -> int
     {
-        c = toupper(c);
+        c = (char)toupper((unsigned char)c);
         if (c >= '0' && c <= '9')
             return c - '0';
         if (c >= 'A' && c <= 'F')
@@ -187,15 +180,7 @@ static String decodeUCS2(String hex)
 
 // ---------- AT+CMGR parsing ----------
 
-// Parse the body of an AT+CMGR response. Expected shape (text mode):
-//
-//   +CMGR: "REC UNREAD","<sender-hex>","","<timestamp>"\r\n
-//   <content-hex>\r\n
-//   \r\n
-//   OK\r\n
-//
-// Returns true if a message was found; fills out sender/timestamp/content.
-static bool parseCmgrBody(const String &raw, String &sender, String &timestamp, String &content)
+bool parseCmgrBody(const String &raw, String &sender, String &timestamp, String &content)
 {
     int header = raw.indexOf("+CMGR:");
     if (header == -1)
@@ -235,97 +220,4 @@ static bool parseCmgrBody(const String &raw, String &sender, String &timestamp, 
     return true;
 }
 
-// ---------- Telegram bridge ----------
-
-static bool postSMSMessage(const String &sender, const String &timestamp, const String &content)
-{
-    String formattedMessage = humanReadablePhoneNumber(sender) + " | " + timestampToRFC3339(timestamp) +
-                              "\n-----\n" +
-                              content;
-
-    return sendBotMessage(formattedMessage);
-}
-
-// ---------- Public API ----------
-
-void handleSmsIndex(int idx)
-{
-    Serial.printf("-------- SMS @ index %d --------\n", idx);
-
-    String raw;
-    modem.sendAT("+CMGR=" + String(idx));
-    int8_t res = modem.waitResponse(5000UL, raw);
-    if (res != 1)
-    {
-        Serial.println("CMGR failed");
-        return;
-    }
-
-    String sender, timestamp, content;
-    if (!parseCmgrBody(raw, sender, timestamp, content))
-    {
-        Serial.println("Unable to parse CMGR body. Raw:");
-        Serial.println(raw);
-        // Nothing useful here; delete so we don't loop on a malformed slot.
-        modem.sendAT("+CMGD=" + String(idx));
-        modem.waitResponse(1000UL);
-        return;
-    }
-
-    Serial.print("Sender:    ");
-    Serial.println(sender);
-    Serial.print("Timestamp: ");
-    Serial.println(timestamp);
-    Serial.print("Content:   ");
-    Serial.println(content);
-
-    if (postSMSMessage(sender, timestamp, content))
-    {
-        consecutiveFailures = 0;
-        Serial.println("Posted to Telegram OK, deleting SMS.");
-        modem.sendAT("+CMGD=" + String(idx));
-        modem.waitResponse(1000UL);
-    }
-    else
-    {
-        consecutiveFailures++;
-        Serial.printf("Post to Telegram FAILED (%d consecutive). Keeping SMS on SIM.\n",
-                      consecutiveFailures);
-        if (consecutiveFailures >= MAX_CONSECUTIVE_FAILURES)
-        {
-            Serial.println("Too many consecutive failures, rebooting to recover...");
-            delay(1000);
-            ESP.restart();
-        }
-    }
-}
-
-void sweepExistingSms()
-{
-    String data;
-    modem.sendAT("+CMGL=\"ALL\"");
-    int8_t res = modem.waitResponse(10000UL, data);
-    if (res != 1)
-    {
-        Serial.println("Initial CMGL sweep failed");
-        return;
-    }
-
-    int search = 0;
-    while (true)
-    {
-        int start = data.indexOf("+CMGL:", search);
-        if (start == -1)
-            break;
-        int colon = start + 6;
-        int comma = data.indexOf(',', colon);
-        if (comma == -1)
-            break;
-        int idx = data.substring(colon, comma).toInt();
-        search = comma;
-        if (idx > 0)
-        {
-            handleSmsIndex(idx);
-        }
-    }
-}
+} // namespace sms_codec

@@ -113,18 +113,69 @@ already reset the board). The `pio.exe` python is at
 
 ### Source layout
 
-- `src/main.cpp` — boot/loop. Owns the `modem` instance, modem power-up,
-  network registration, WiFi, NTP, and the `+CMTI` URC drainer in `loop()`.
-- `src/sms.{h,cpp}` — SMS receive pipeline: `decodeUCS2`, `parseCmgrBody`,
-  `handleSmsIndex`, `sweepExistingSms`, plus the consecutive-failure
-  counter and reboot logic. Borrows the global `modem` via `extern`.
-- `src/telegram.{h,cpp}` — TLS client + Telegram bot. Owns
-  `WiFiClientSecure`, the (currently unused) ISRG Root X1 cert,
-  `setupTelegramClient`, and `sendBotMessage`.
+- `src/main.cpp` — composition root. Owns the `TinyGsm modem` instance,
+  modem power-up, WiFi, NTP, and the `+CMTI` URC drainer in `loop()`.
+  Constructs a `RealModem`, `RealBotClient`, and a reboot lambda, and
+  wires them into an `SmsHandler`. No SMS logic lives here.
+- `src/sms_codec.{h,cpp}` — pure (Arduino-`String`-only) helpers:
+  `decodeUCS2`, `parseCmgrBody`, `humanReadablePhoneNumber`,
+  `timestampToRFC3339`. No hardware deps. Compiled into both the
+  firmware env and the native test env.
+- `src/sms_handler.{h,cpp}` — stateful SMS pipeline as a class.
+  Constructor takes `IModem&`, `IBotClient&`, and a `RebootFn`. Owns
+  the consecutive-failure counter and `MAX_CONSECUTIVE_FAILURES = 8`.
+  Methods: `handleSmsIndex(int)`, `sweepExistingSms()`.
+- `src/imodem.h` — narrow interface over TinyGSM (`sendAT`,
+  `waitResponse`, `waitResponseOk`). `RealModem` in `real_modem.h` is
+  the production adapter; `FakeModem` in `test/support/` is the test
+  double.
+- `src/ibot_client.h` — narrow interface for "post text to the bot".
+  `RealBotClient` in `telegram.cpp` is the production impl; owns the
+  file-static `WiFiClientSecure` and the full Content-Length drain
+  loop. `FakeBotClient` in `test/support/` is the test double.
+- `src/real_modem.h` — header-only `RealModem` class, thin delegate to
+  `TinyGsm`. Only included from `main.cpp`.
+- `src/telegram.{h,cpp}` — `setupTelegramClient()` + `RealBotClient`.
+  Still has the ISRG Root X1 cert constant staged for RFC-0001.
 - `src/utilities.h` — board pin definitions, copied verbatim from
   upstream `LilyGo-Modem-Series/examples/*/utilities.h`. Selects the
   right `TINY_GSM_MODEM_xxx` based on the `LILYGO_T_*` build flag.
 - `src/secrets.h` — gitignored, see "Secrets" below.
+- `test/test_native/` — Unity tests for `sms_codec` and `sms_handler`.
+  Runs on the host via `pio test -e native`.
+- `test/support/` — hand-rolled `Arduino.h` stub (+ `.cpp` storage for
+  the `Serial` no-op), plus `fake_modem.h` and `fake_bot_client.h`.
+  The stub covers ~18 `String` methods actually used by the modules
+  under test; see the big comment at the top of `Arduino.h` for the
+  exact subset.
+
+### Running host unit tests
+
+The firmware logic is exercised on the host via a PlatformIO `native`
+env and Unity. No hardware needed:
+
+```bash
+# Run all host tests
+"$PIO" test -e native
+
+# Explicit filter (equivalent here — only one test folder)
+"$PIO" test -e native -f test_native
+```
+
+The native env needs a host C/C++ compiler in `PATH`. On this machine
+MinGW-w64 is installed via winget as
+`BrechtSanders.WinLibs.POSIX.UCRT`, at
+`C:\Users\Kiyoshi Guo\AppData\Local\Microsoft\WinGet\Packages\BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe\mingw64\bin`.
+Prepend that directory to `PATH` before running `pio test`:
+
+```bash
+export PATH="/c/Users/Kiyoshi Guo/AppData/Local/Microsoft/WinGet/Packages/BrechtSanders.WinLibs.POSIX.UCRT_Microsoft.Winget.Source_8wekyb3d8bbwe/mingw64/bin:$PATH"
+```
+
+The native env (`[env:native]` in `platformio.ini`) uses
+`build_src_filter = +<sms_codec.cpp> +<sms_handler.cpp> -<main.cpp>
+-<telegram.cpp>` so hardware-dependent TUs never hit the host compiler.
+See `rfc/0007-testability-native-tests-di.md` for the full design.
 
 ### SMS receive path (URC-driven, not polling)
 

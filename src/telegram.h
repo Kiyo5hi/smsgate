@@ -2,10 +2,20 @@
 
 #include <Arduino.h>
 
-// Initialize the TLS client and open the first connection to api.telegram.org.
-// Returns true on success.
+#include "ibot_client.h"
+
+// Initialize the TLS client and open the first connection to
+// api.telegram.org. Returns true on success. Separate from the
+// RealBotClient constructor because it does network I/O at startup
+// that we want to happen inside setup(), not at static-init time.
 bool setupTelegramClient();
 
-// POST a plain-text message to the configured chat. Returns true iff the
-// HTTP request returned 200 and the API replied "ok":true.
-bool sendBotMessage(const String &message);
+// Production IBotClient implementation. Thin shim: the TLS client and
+// HTTP formatting live as file-static state inside telegram.cpp (their
+// lifetime is the whole program, so there's no point storing them on
+// the instance).
+class RealBotClient : public IBotClient
+{
+public:
+    bool sendMessage(const String &text) override;
+};

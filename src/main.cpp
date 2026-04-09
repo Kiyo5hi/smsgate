@@ -2,8 +2,11 @@
  * @file      main.cpp
  * @brief     SMS -> Telegram bridge for LilyGo A76XX / SIM7xxx boards.
  *
- * Receives SMS via URC (+CMTI), reads each message with AT+CMGR, decodes
- * UCS2 when applicable, and forwards to a Telegram bot over WiFi + HTTPS.
+ * Composition root. Builds the real modem adapter, real Telegram bot
+ * client, and a reboot callback, then wires them into an SmsHandler.
+ * The SMS logic itself lives in src/sms_handler.{h,cpp} and the pure
+ * decoding helpers in src/sms_codec.{h,cpp} — both reachable from the
+ * native test env via platformio.ini's [env:native].
  *
  * Based on examples/ReadSMS.
  */
@@ -11,7 +14,8 @@
 #include "utilities.h"
 #include "secrets.h"
 #include "telegram.h"
-#include "sms.h"
+#include "sms_handler.h"
+#include "real_modem.h"
 
 #ifdef TINY_GSM_MODEM_SIM7080
 #error "This modem has no SMS function"
@@ -45,6 +49,17 @@ TinyGsm modem(SerialAT);
 
 static const char *ssid = WIFI_SSID;
 static const char *password = WIFI_PASSWORD;
+
+// Composition root state. These three objects are singletons for the
+// lifetime of the process; the SmsHandler borrows references to them.
+static RealModem realModem(modem);
+static RealBotClient realBot;
+static SmsHandler smsHandler(realModem, realBot, []() {
+    // Production reboot callback. Short delay gives the last Serial
+    // line a chance to flush before the chip resets.
+    delay(1000);
+    ESP.restart();
+});
 
 void connectToWiFi()
 {
@@ -242,10 +257,10 @@ void setup()
         return;
     }
 
-    sendBotMessage("🚀 Modem SMS to Telegram Bridge is now online!");
+    realBot.sendMessage("🚀 Modem SMS to Telegram Bridge is now online!");
 
     // Drain anything that arrived while we were offline.
-    sweepExistingSms();
+    smsHandler.sweepExistingSms();
 }
 
 void loop()
@@ -272,7 +287,7 @@ void loop()
                 int idx = line.substring(comma + 1).toInt();
                 if (idx > 0)
                 {
-                    handleSmsIndex(idx);
+                    smsHandler.handleSmsIndex(idx);
                 }
             }
         }
