@@ -54,12 +54,15 @@ static const char *password = WIFI_PASSWORD;
 // lifetime of the process; the SmsHandler borrows references to them.
 static RealModem realModem(modem);
 static RealBotClient realBot;
-static SmsHandler smsHandler(realModem, realBot, []() {
-    // Production reboot callback. Short delay gives the last Serial
-    // line a chance to flush before the chip resets.
-    delay(1000);
-    ESP.restart();
-});
+static SmsHandler smsHandler(
+    realModem, realBot,
+    []() {
+        // Production reboot callback. Short delay gives the last Serial
+        // line a chance to flush before the chip resets.
+        delay(1000);
+        ESP.restart();
+    },
+    []() -> unsigned long { return millis(); });
 
 void connectToWiFi()
 {
@@ -234,12 +237,14 @@ void setup()
     Serial.printf("Registration Status:%d\n", status);
     delay(1000);
 
-    // SMS in text mode, UCS2 character set so both sender and content come
-    // back as hex that our decoder can handle regardless of language.
-    modem.sendAT("+CMGF=1");
+    // SMS in PDU mode (RFC-0002). Raw PDU bytes come back from AT+CMGR /
+    // AT+CMGL as a hex blob that parseSmsPdu() decodes. CSCS is
+    // irrelevant in PDU mode, so we don't configure it on the receive
+    // path — TinyGSM's sendSMS / sendSMS_UTF16 flip the module back
+    // into text mode with their own CSCS before each send, and this
+    // setup handles re-entry to PDU mode next time a URC fires.
+    modem.sendAT("+CMGF=0");
     modem.waitResponse(10000);
-    modem.sendAT("+CSCS=\"UCS2\"");
-    modem.waitResponse(2000);
 
     // Show text parameters in CMGR/CMGL headers.
     modem.sendAT("+CSDH=1");

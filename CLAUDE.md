@@ -11,9 +11,13 @@ over WiFi + HTTPS. Forked out of the `examples/` tree of LilyGo-Modem-Series.
 
 What works today (verified on real T-A7670X hardware):
 
-- Receives an SMS via `+CMTI` URC, decodes UCS2 (Chinese tested), forwards
-  to a single Telegram chat with sender + timestamp + body, and deletes
-  the message from the SIM. End-to-end latency ~1s.
+- Receives an SMS via `+CMTI` URC, decodes the PDU (GSM-7 default
+  alphabet, UCS-2, and 8-bit), forwards to a single Telegram chat with
+  sender + timestamp + body, and deletes the message from the SIM.
+  End-to-end latency ~1s.
+- Stitches concatenated (long) SMS back together via UDH reference
+  (IEI 0x00 and 0x08), buffering fragments in RAM until all parts
+  arrive. Incomplete groups stay on the SIM so a reboot rehydrates them.
 - Drains any SMS that arrived while the bridge was offline at startup.
 - Reboots itself after 8 consecutive Telegram POST failures to escape
   stuck TLS / WiFi states.
@@ -22,8 +26,6 @@ What does **not** work yet:
 
 - TLS is currently `setInsecure()` — not actually verifying the cert.
   See `rfc/0001`.
-- Long / concatenated SMS arrive as un-stitched fragments because we
-  use text mode, not PDU. See `rfc/0002`.
 - One-way only. No Telegram → SMS replies. See `rfc/0003`.
 - Hard dependency on WiFi. The SIM's data path is unused. See `rfc/0004`.
 
@@ -179,18 +181,37 @@ See `rfc/0007-testability-native-tests-di.md` for the full design.
 
 ### SMS receive path (URC-driven, not polling)
 
-1. `setup()` (main.cpp) configures: `+CMGF=1` (text mode), `+CSCS="UCS2"`
-   (everything comes back as UTF-16BE hex, sender included), `+CSDH=1`,
-   and `+CNMI=2,1,0,0,0` so new SMS produce a `+CMTI: "SM",<idx>` URC.
-2. `loop()` (main.cpp) reads raw lines from `SerialAT`, looks for `+CMTI:`,
-   extracts `<idx>`, and dispatches to `handleSmsIndex` from `sms.cpp`.
-3. `handleSmsIndex(idx)` (sms.cpp) issues `AT+CMGR=<idx>`, parses
-   sender/timestamp/content out of the response, decodes UCS2 → UTF-8,
-   posts to Telegram via `sendBotMessage`, and `AT+CMGD`s the slot
-   **only on success**. On failure the SMS stays on the SIM and a
-   counter increments; after `MAX_CONSECUTIVE_FAILURES` (8) the ESP reboots.
-4. `sweepExistingSms()` (sms.cpp) runs once at the end of `setup()` to
-   drain any messages that arrived while the bridge was offline.
+1. `setup()` (main.cpp) configures: `+CMGF=0` (**PDU mode**, RFC-0002),
+   `+CSDH=1`, and `+CNMI=2,1,0,0,0` so new SMS produce a
+   `+CMTI: "SM",<idx>` URC. CSCS is intentionally NOT set — it's
+   irrelevant in PDU mode, and TinyGSM's send paths flip the module
+   back into text mode with their own CSCS on every `sendSMS*` call.
+2. `loop()` (main.cpp) reads raw lines from `SerialAT`, looks for
+   `+CMTI:`, extracts `<idx>`, and dispatches to `SmsHandler::handleSmsIndex`.
+3. `handleSmsIndex(idx)` (sms_handler.cpp) issues `AT+CMGR=<idx>`,
+   extracts the hex PDU from the response envelope, and hands it to
+   `sms_codec::parseSmsPdu`. The parser handles GSM 7-bit (packed
+   septets + extension escape), UCS-2 / UTF-16BE (with surrogate
+   pairs), and 8-bit data; and when TP-UDHI is set it extracts the
+   concat reference / total / part number from IEI 0x00 (8-bit ref)
+   and IEI 0x08 (16-bit ref) UDH elements.
+4. **Single-part** messages: post to Telegram, delete the slot on
+   success, leave it on failure, bump the consecutive-failure counter
+   on failure. After `MAX_CONSECUTIVE_FAILURES` (8) the ESP reboots.
+5. **Concat fragments**: buffered in `SmsHandler::concatGroups_`, keyed
+   by (sender, ref_number). Once all parts have arrived the assembled
+   body is posted and every contributing SIM slot is `AT+CMGD`d on
+   success. Incomplete groups are NOT deleted from the SIM — the SIM
+   is the source of truth so a reboot rehydrates them via
+   `sweepExistingSms`. Per-key hard caps (RFC-0002):
+   **24-hour TTL**, **max 8 concurrent keys** (LRU evict on overflow),
+   **max 2 KB per key**, **max 8 KB total across all keys** (LRU
+   evict on overflow). Tests wire a mock clock via the `ClockFn`
+   parameter so TTL/LRU paths are deterministic on host.
+6. `sweepExistingSms()` runs once at the end of `setup()` to drain any
+   messages that arrived while the bridge was offline. In PDU mode it
+   reuses the same `handleSmsIndex` path, so concat rehydration works
+   symmetrically at boot.
 
 ### Two non-obvious traps (already fixed, do not regress)
 

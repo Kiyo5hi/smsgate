@@ -6,6 +6,8 @@
 
 void run_sms_codec_tests();
 void run_sms_handler_tests();
+void run_sms_pdu_tests();
+void run_sms_handler_pdu_tests();
 
 void setUp() {}
 void tearDown() {}
@@ -17,5 +19,7 @@ int main(int argc, char **argv)
     UNITY_BEGIN();
     run_sms_codec_tests();
     run_sms_handler_tests();
+    run_sms_pdu_tests();
+    run_sms_handler_pdu_tests();
     return UNITY_END();
 }
