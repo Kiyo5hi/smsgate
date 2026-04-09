@@ -8,6 +8,7 @@
 // it directly.
 
 #include <Arduino.h>
+#include <stdint.h>
 
 namespace sms_codec {
 
@@ -57,5 +58,44 @@ String timestampToRFC3339(const String &timestamp);
 // should treat an empty number as "unknown" and still emit a
 // notification.
 bool parseClipLine(const String &line, String &number);
+
+// ---------- PDU mode (RFC-0002) ----------
+
+// Parsed SMS-DELIVER PDU. All String fields are UTF-8.
+struct SmsPdu
+{
+    // Sender phone number. For international format numbers, starts
+    // with "+" (matches what text-mode CSCS="UCS2" would have given us
+    // after UCS2 decoding of an international number).
+    String sender;
+
+    // Raw timestamp in the same "yy/MM/dd,HH:mm:ss+zz" shape that
+    // timestampToRFC3339 already consumes. The "+zz" suffix is the
+    // raw BCD timezone nibble as returned by the PDU (quarter hours);
+    // timestampToRFC3339 currently ignores it and hardcodes +08:00.
+    String timestamp;
+
+    // Decoded message content (UTF-8).
+    String content;
+
+    // Concatenation metadata from the User Data Header, if present.
+    bool isConcatenated = false;
+    uint16_t concatRefNumber = 0; // 8-bit refs are widened to 16-bit
+    uint8_t concatTotalParts = 0;
+    uint8_t concatPartNumber = 0;
+};
+
+// Parse a hex-encoded SMS-DELIVER PDU as returned by AT+CMGR / AT+CMGL
+// in PDU mode (AT+CMGF=0). Returns true on success, false on any
+// malformed / truncated / unsupported PDU. Supports:
+//   - TP-DCS 0x00 (GSM 7-bit default alphabet, packed)
+//   - TP-DCS 0x04 (8-bit data, passed through as-is)
+//   - TP-DCS 0x08 (UCS-2 / UTF-16BE)
+//   - User Data Header concatenation IEIs 0x00 (8-bit ref) and 0x08 (16-bit ref)
+//   - SCTS semi-octet timestamp
+// Does NOT support: compressed messages, status reports, SMS-SUBMIT,
+// USSD, flash / silent SMS special handling (they still decode; they
+// just aren't flagged as such).
+bool parseSmsPdu(const String &hexPdu, SmsPdu &out);
 
 } // namespace sms_codec

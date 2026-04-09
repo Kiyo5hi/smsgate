@@ -1,7 +1,7 @@
 #include "call_handler.h"
 #include "sms_codec.h"
 
-CallHandler::CallHandler(IModem &modem, IBotClient &bot, ClockFn clock)
+CallHandler::CallHandler(IModem &modem, IBotClient &bot, CallHandler::ClockFn clock)
     : modem_(modem), bot_(bot), clock_(std::move(clock))
 {
 }

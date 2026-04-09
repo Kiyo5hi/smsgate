@@ -7,11 +7,6 @@
 #include "imodem.h"
 #include "ibot_client.h"
 
-// Clock callback injected from the composition root so tests can drive
-// a virtual clock instead of waiting for wall time. Production passes a
-// lambda over `millis()`; tests pass a lambda over a local counter.
-using ClockFn = std::function<uint32_t()>;
-
 // Stateful incoming-call pipeline. Watches RING / +CLIP URCs forwarded
 // from main.cpp's serial drain, coalesces the ~3s repeating RINGs into
 // a single event, posts a Telegram notification, and auto-hangs the
@@ -47,6 +42,13 @@ public:
     // anyway after this long with "Unknown" as the caller. Keeps
     // withheld / CLI-stripped calls from being silently ignored.
     static constexpr uint32_t kUnknownNumberDeadlineMs = 1500;
+
+    // Clock callback injected from the composition root so tests can
+    // drive a virtual clock instead of waiting for wall time. Production
+    // passes a lambda over `millis()`; tests pass a lambda over a local
+    // counter. Nested in the class to avoid colliding with the
+    // SmsHandler::ClockFn alias defined at namespace scope in sms_handler.h.
+    using ClockFn = std::function<uint32_t()>;
 
     CallHandler(IModem &modem, IBotClient &bot, ClockFn clock);
 

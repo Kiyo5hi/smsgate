@@ -1,9 +1,333 @@
 #include "sms_handler.h"
 #include "sms_codec.h"
 
-SmsHandler::SmsHandler(IModem &modem, IBotClient &bot, RebootFn reboot)
-    : modem_(modem), bot_(bot), reboot_(std::move(reboot))
+#include <algorithm>
+
+SmsHandler::SmsHandler(IModem &modem, IBotClient &bot, RebootFn reboot, ClockFn clock)
+    : modem_(modem), bot_(bot), reboot_(std::move(reboot)), clock_(std::move(clock))
 {
+    if (!clock_)
+    {
+        // Default: use Arduino millis(). In the host test env this is
+        // the stubbed-zero millis() from test/support/Arduino.h — tests
+        // that care about TTL/LRU pass their own clock lambda.
+        clock_ = []() -> unsigned long { return millis(); };
+    }
+}
+
+// ---------- helpers ----------
+
+static String formatBotMessage(const String &sender, const String &timestamp, const String &body)
+{
+    return sms_codec::humanReadablePhoneNumber(sender) + " | " +
+           sms_codec::timestampToRFC3339(timestamp) +
+           "\n-----\n" +
+           body;
+}
+
+SmsHandler::ConcatGroup *SmsHandler::findGroup(const String &sender, uint16_t ref)
+{
+    for (auto &g : concatGroups_)
+    {
+        if (g.sender == sender && g.refNumber == ref)
+            return &g;
+    }
+    return nullptr;
+}
+
+void SmsHandler::evictExpiredLocked(unsigned long now)
+{
+    // Walk the list, drop any entries whose firstSeenMs is more than
+    // CONCAT_TTL_MS ago. Note: unsigned subtraction handles wrap-around
+    // safely on 32-bit millis().
+    for (auto it = concatGroups_.begin(); it != concatGroups_.end();)
+    {
+        unsigned long age = now - it->firstSeenMs;
+        if (age > CONCAT_TTL_MS)
+        {
+            Serial.print("SMS concat TTL expiry, dropping ref=");
+            Serial.println(it->refNumber);
+            totalBufferedBytes_ -= it->byteCount;
+            it = concatGroups_.erase(it);
+        }
+        else
+        {
+            ++it;
+        }
+    }
+}
+
+void SmsHandler::evictLruUntilUnderCaps(size_t reservedExtraBytes)
+{
+    // While we're over any cap, drop the LRU group. "LRU" here means
+    // the lowest lastSeenMs.
+    auto over = [&]() -> bool {
+        if (concatGroups_.size() > MAX_CONCAT_KEYS)
+            return true;
+        if (totalBufferedBytes_ + reservedExtraBytes > MAX_BYTES_TOTAL)
+            return true;
+        return false;
+    };
+
+    while (over() && !concatGroups_.empty())
+    {
+        // Find the LRU.
+        size_t lruIdx = 0;
+        for (size_t i = 1; i < concatGroups_.size(); ++i)
+        {
+            if (concatGroups_[i].lastSeenMs < concatGroups_[lruIdx].lastSeenMs)
+                lruIdx = i;
+        }
+        Serial.print("SMS concat LRU eviction, ref=");
+        Serial.println(concatGroups_[lruIdx].refNumber);
+        totalBufferedBytes_ -= concatGroups_[lruIdx].byteCount;
+        concatGroups_.erase(concatGroups_.begin() + lruIdx);
+    }
+}
+
+bool SmsHandler::forwardSingle(const sms_codec::SmsPdu &pdu, int /*simIndex*/)
+{
+    String formatted = formatBotMessage(pdu.sender, pdu.timestamp, pdu.content);
+    return bot_.sendMessage(formatted);
+}
+
+bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int simIndex,
+                                            std::vector<int> &deleteSlots)
+{
+    deleteSlots.clear();
+    if (!pdu.isConcatenated || pdu.concatTotalParts == 0 || pdu.concatPartNumber == 0 ||
+        pdu.concatPartNumber > pdu.concatTotalParts)
+    {
+        return false;
+    }
+
+    unsigned long now = clock_();
+
+    // First, age out expired groups.
+    evictExpiredLocked(now);
+
+    // Reject oversized individual fragments: any fragment body > per-
+    // key cap on its own is dropped (we still want to wipe the SIM
+    // slot so we don't loop on it, so the handler upstream treats this
+    // as a parse failure).
+    size_t fragmentBytes = pdu.content.length();
+    if (fragmentBytes > MAX_BYTES_PER_KEY)
+    {
+        Serial.println("SMS concat fragment exceeds per-key cap, dropping.");
+        return false;
+    }
+
+    ConcatGroup *group = findGroup(pdu.sender, pdu.concatRefNumber);
+    if (group)
+    {
+        // Reject if adding this fragment would blow the per-key cap.
+        if (group->byteCount + fragmentBytes > MAX_BYTES_PER_KEY)
+        {
+            Serial.print("SMS concat group exceeds per-key cap, dropping ref=");
+            Serial.println(group->refNumber);
+            // Drop the whole group (LRU-style) — better to lose partial
+            // than to keep a half-full ever-growing bucket.
+            totalBufferedBytes_ -= group->byteCount;
+            concatGroups_.erase(concatGroups_.begin() + (group - concatGroups_.data()));
+            return false;
+        }
+
+        // Deduplicate by part number — if a retry or rehydrate hands us
+        // the same part twice, overwrite in place.
+        bool replaced = false;
+        for (auto &f : group->fragments)
+        {
+            if (f.partNumber == pdu.concatPartNumber)
+            {
+                totalBufferedBytes_ -= f.content.length();
+                group->byteCount -= f.content.length();
+                f.content = pdu.content;
+                f.simIndex = simIndex;
+                group->byteCount += pdu.content.length();
+                totalBufferedBytes_ += pdu.content.length();
+                replaced = true;
+                break;
+            }
+        }
+        if (!replaced)
+        {
+            ConcatFragment frag;
+            frag.partNumber = pdu.concatPartNumber;
+            frag.simIndex = simIndex;
+            frag.content = pdu.content;
+            group->fragments.push_back(frag);
+            group->byteCount += fragmentBytes;
+            totalBufferedBytes_ += fragmentBytes;
+        }
+        group->lastSeenMs = now;
+
+        // The current group may still be under its per-key cap but
+        // could have pushed totalBufferedBytes_ over MAX_BYTES_TOTAL.
+        // Evict OTHER LRU groups (not this one) until we're back under.
+        // Snapshot our key so the evictor can skip it.
+        String myKeySender = group->sender;
+        uint16_t myKeyRef = group->refNumber;
+        while (totalBufferedBytes_ > MAX_BYTES_TOTAL && concatGroups_.size() > 1)
+        {
+            // Find LRU that ISN'T the current group.
+            int lruIdx = -1;
+            for (size_t i = 0; i < concatGroups_.size(); ++i)
+            {
+                if (concatGroups_[i].sender == myKeySender &&
+                    concatGroups_[i].refNumber == myKeyRef)
+                    continue;
+                if (lruIdx == -1 ||
+                    concatGroups_[i].lastSeenMs < concatGroups_[lruIdx].lastSeenMs)
+                    lruIdx = (int)i;
+            }
+            if (lruIdx == -1)
+                break;
+            Serial.print("SMS concat total-cap LRU eviction, ref=");
+            Serial.println(concatGroups_[lruIdx].refNumber);
+            totalBufferedBytes_ -= concatGroups_[lruIdx].byteCount;
+            concatGroups_.erase(concatGroups_.begin() + lruIdx);
+        }
+        // Re-resolve group pointer — erasing may have invalidated it.
+        group = findGroup(myKeySender, myKeyRef);
+        if (!group)
+            return false; // shouldn't happen but be defensive
+    }
+    else
+    {
+        // Need room for a new group. Make sure we don't exceed caps.
+        // Tentatively evict to make room for one extra key + this
+        // fragment's bytes.
+        // First, simulate as if we'll add a new group of size fragmentBytes.
+        // evictLruUntilUnderCaps needs to consider the new key too:
+        if (concatGroups_.size() + 1 > MAX_CONCAT_KEYS)
+        {
+            // Add a phantom count by temporarily raising totalBufferedBytes.
+            // Simpler: just evict until (size+1 <= cap && total+frag <= cap).
+            while (concatGroups_.size() + 1 > MAX_CONCAT_KEYS && !concatGroups_.empty())
+            {
+                size_t lruIdx = 0;
+                for (size_t i = 1; i < concatGroups_.size(); ++i)
+                {
+                    if (concatGroups_[i].lastSeenMs < concatGroups_[lruIdx].lastSeenMs)
+                        lruIdx = i;
+                }
+                Serial.print("SMS concat key-count LRU eviction, ref=");
+                Serial.println(concatGroups_[lruIdx].refNumber);
+                totalBufferedBytes_ -= concatGroups_[lruIdx].byteCount;
+                concatGroups_.erase(concatGroups_.begin() + lruIdx);
+            }
+        }
+        evictLruUntilUnderCaps(fragmentBytes);
+
+        ConcatGroup g;
+        g.sender = pdu.sender;
+        g.firstTimestamp = pdu.timestamp;
+        g.refNumber = pdu.concatRefNumber;
+        g.totalParts = pdu.concatTotalParts;
+        g.firstSeenMs = now;
+        g.lastSeenMs = now;
+
+        ConcatFragment frag;
+        frag.partNumber = pdu.concatPartNumber;
+        frag.simIndex = simIndex;
+        frag.content = pdu.content;
+        g.fragments.push_back(frag);
+        g.byteCount = fragmentBytes;
+        totalBufferedBytes_ += fragmentBytes;
+
+        concatGroups_.push_back(g);
+        group = &concatGroups_.back();
+    }
+
+    // Check completeness.
+    if (group->fragments.size() < group->totalParts)
+    {
+        return false; // still waiting
+    }
+
+    // Assemble in part order.
+    std::vector<ConcatFragment> sorted = group->fragments;
+    std::sort(sorted.begin(), sorted.end(),
+              [](const ConcatFragment &a, const ConcatFragment &b) {
+                  return a.partNumber < b.partNumber;
+              });
+
+    // Sanity: every part number 1..totalParts must be present exactly once.
+    for (uint8_t i = 0; i < group->totalParts; ++i)
+    {
+        if (sorted[i].partNumber != (uint8_t)(i + 1))
+        {
+            // Missing or duplicate — leave the group in place. (This
+            // shouldn't happen since dedupe collapses duplicates, but
+            // be defensive.)
+            return false;
+        }
+    }
+
+    String assembled;
+    for (const auto &f : sorted)
+        assembled += f.content;
+
+    String formatted = formatBotMessage(group->sender, group->firstTimestamp, assembled);
+
+    if (!bot_.sendMessage(formatted))
+    {
+        // Keep fragments in place; the caller will bump the failure
+        // counter and eventually reboot.
+        return false;
+    }
+
+    // Success: collect all SIM slots for deletion and drop the group.
+    for (const auto &f : sorted)
+    {
+        if (f.simIndex > 0)
+            deleteSlots.push_back(f.simIndex);
+    }
+    totalBufferedBytes_ -= group->byteCount;
+    concatGroups_.erase(concatGroups_.begin() + (group - concatGroups_.data()));
+    return true;
+}
+
+void SmsHandler::noteTelegramFailure()
+{
+    consecutiveFailures_++;
+    Serial.print("Post to Telegram FAILED (");
+    Serial.print(consecutiveFailures_);
+    Serial.println(" consecutive). Keeping SMS on SIM.");
+    if (consecutiveFailures_ >= MAX_CONSECUTIVE_FAILURES)
+    {
+        Serial.println("Too many consecutive failures, rebooting to recover...");
+        if (reboot_)
+        {
+            reboot_();
+        }
+    }
+}
+
+// ---------- CMGR PDU response parsing ----------
+
+// Extract the PDU hex blob from a PDU-mode +CMGR response. The
+// expected shape is:
+//   +CMGR: <stat>,[<alpha>],<length>\r\n
+//   <hex PDU>\r\n
+//   \r\nOK\r\n
+// We accept a missing trailing OK for robustness (mirrors the old
+// text-mode parser's behaviour).
+static bool extractPduHexFromCmgr(const String &raw, String &hex)
+{
+    int header = raw.indexOf("+CMGR:");
+    if (header == -1)
+        return false;
+    int headerEnd = raw.indexOf("\r\n", header);
+    if (headerEnd == -1)
+        return false;
+    int bodyStart = headerEnd + 2;
+    int bodyEnd = raw.indexOf("\r\n", bodyStart);
+    if (bodyEnd == -1)
+        bodyEnd = raw.length();
+    hex = raw.substring(bodyStart, bodyEnd);
+    hex.trim();
+    return hex.length() > 0;
 }
 
 void SmsHandler::handleSmsIndex(int idx)
@@ -21,50 +345,88 @@ void SmsHandler::handleSmsIndex(int idx)
         return;
     }
 
-    String sender, timestamp, content;
-    if (!sms_codec::parseCmgrBody(raw, sender, timestamp, content))
+    String pduHex;
+    if (!extractPduHexFromCmgr(raw, pduHex))
     {
-        Serial.println("Unable to parse CMGR body. Raw:");
+        Serial.println("Unable to extract PDU from CMGR response. Raw:");
         Serial.println(raw);
-        // Nothing useful here; delete so we don't loop on a malformed slot.
+        // Wipe the slot so we don't loop on a malformed response.
+        modem_.sendAT("+CMGD=" + String(idx));
+        modem_.waitResponseOk(1000UL);
+        return;
+    }
+
+    sms_codec::SmsPdu pdu;
+    if (!sms_codec::parseSmsPdu(pduHex, pdu))
+    {
+        Serial.println("Unable to parse PDU. Raw hex:");
+        Serial.println(pduHex);
         modem_.sendAT("+CMGD=" + String(idx));
         modem_.waitResponseOk(1000UL);
         return;
     }
 
     Serial.print("Sender:    ");
-    Serial.println(sender);
+    Serial.println(pdu.sender);
     Serial.print("Timestamp: ");
-    Serial.println(timestamp);
+    Serial.println(pdu.timestamp);
     Serial.print("Content:   ");
-    Serial.println(content);
+    Serial.println(pdu.content);
 
-    String formatted = sms_codec::humanReadablePhoneNumber(sender) + " | " +
-                       sms_codec::timestampToRFC3339(timestamp) +
-                       "\n-----\n" +
-                       content;
+    if (!pdu.isConcatenated)
+    {
+        if (forwardSingle(pdu, idx))
+        {
+            consecutiveFailures_ = 0;
+            Serial.println("Posted to Telegram OK, deleting SMS.");
+            modem_.sendAT("+CMGD=" + String(idx));
+            modem_.waitResponseOk(1000UL);
+        }
+        else
+        {
+            noteTelegramFailure();
+        }
+        return;
+    }
 
-    if (bot_.sendMessage(formatted))
+    // ---- Concatenated path ----
+    Serial.print("Concat fragment: ref=");
+    Serial.print(pdu.concatRefNumber);
+    Serial.print(" part=");
+    Serial.print((int)pdu.concatPartNumber);
+    Serial.print("/");
+    Serial.println((int)pdu.concatTotalParts);
+
+    std::vector<int> deleteSlots;
+    bool posted = insertFragmentAndMaybePost(pdu, idx, deleteSlots);
+    if (posted)
     {
         consecutiveFailures_ = 0;
-        Serial.println("Posted to Telegram OK, deleting SMS.");
-        modem_.sendAT("+CMGD=" + String(idx));
-        modem_.waitResponseOk(1000UL);
+        Serial.print("Assembled concat message posted OK, deleting ");
+        Serial.print((int)deleteSlots.size());
+        Serial.println(" SIM slot(s).");
+        for (int slot : deleteSlots)
+        {
+            modem_.sendAT("+CMGD=" + String(slot));
+            modem_.waitResponseOk(1000UL);
+        }
+        return;
+    }
+
+    // Not posted. Either (a) still waiting for more parts -> leave SIM
+    // slot in place (it's the source of truth across reboots), or (b)
+    // Telegram POST failed mid-assembly -> count that as a failure.
+    ConcatGroup *g = findGroup(pdu.sender, pdu.concatRefNumber);
+    if (g != nullptr && g->fragments.size() >= g->totalParts)
+    {
+        // All parts landed but bot rejected the send. Failure path.
+        noteTelegramFailure();
     }
     else
     {
-        consecutiveFailures_++;
-        Serial.print("Post to Telegram FAILED (");
-        Serial.print(consecutiveFailures_);
-        Serial.println(" consecutive). Keeping SMS on SIM.");
-        if (consecutiveFailures_ >= MAX_CONSECUTIVE_FAILURES)
-        {
-            Serial.println("Too many consecutive failures, rebooting to recover...");
-            if (reboot_)
-            {
-                reboot_();
-            }
-        }
+        // Incomplete — do NOT bump the failure counter; this is
+        // expected. Leave the SIM slot alone so a reboot rehydrates.
+        Serial.println("Concat incomplete, leaving SIM slot in place.");
     }
 }
 
