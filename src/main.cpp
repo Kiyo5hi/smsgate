@@ -1206,7 +1206,28 @@ void setup()
         }
     }
     {
-        String bootMsg = String("\xF0\x9F\x9A\x80 Bridge online\n"); // U+1F680 rocket
+        // RFC-0116: Differentiate boot banner by reset reason so unexpected
+        // reboots (watchdog, panic, brownout) stand out from normal restarts.
+        String bootHeader;
+        switch (s_resetReason)
+        {
+        case ESP_RST_POWERON:
+            bootHeader = String("\xF0\x9F\x9A\x80 Bridge online\n");       // 🚀
+            break;
+        case ESP_RST_WDT:
+            bootHeader = String("\xE2\x9A\xA0\xEF\xB8\x8F Bridge restarted (watchdog timeout!)\n"); // ⚠️
+            break;
+        case ESP_RST_PANIC:
+            bootHeader = String("\xF0\x9F\x9A\xA8 Bridge restarted (panic/exception!)\n"); // 🚨
+            break;
+        case ESP_RST_BROWNOUT:
+            bootHeader = String("\xE2\x9A\xA1 Bridge restarted (brownout!)\n"); // ⚡
+            break;
+        default:
+            bootHeader = String("\xF0\x9F\x94\x84 Bridge restarted\n");    // 🔄
+            break;
+        }
+        String bootMsg = bootHeader;
         if (statusFn)
             bootMsg += statusFn();
         else
