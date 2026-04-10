@@ -232,6 +232,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("Usage: /send <number> <message>\nExample: /send +8613800138000 Hello!"));
                 return;
             }
+            // RFC-0049: Reject immediately if body exceeds 10-part limit.
+            // countSmsParts returns 0 when buildSmsSubmitPduMulti returns
+            // empty (body too long for the 10-part cap).
+            int parts = sms_codec::countSmsParts(body);
+            if (parts == 0)
+            {
+                sendErrorReply(u.chatId,
+                    String("Message too long (max ~1530 GSM-7 / ~670 Unicode chars)."));
+                return;
+            }
             int64_t requesterChatId = u.chatId;
             String capturedPhone = phone;
             smsSender_.enqueue(phone, body,
@@ -248,7 +258,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             String preview = body.substring(0, 30);
             if (body.length() > 30) preview += "\xE2\x80\xA6"; // U+2026 ellipsis
             // RFC-0037: Append part count when message will be split.
-            int parts = sms_codec::countSmsParts(body);
+            // `parts` already computed above for the length check (RFC-0049).
             String confirmText = String("\xE2\x9C\x85 Queued to ") + phone + String(": ") + preview;
             if (parts > 1)
                 confirmText += String(" (") + String(parts) + String(" parts)");
