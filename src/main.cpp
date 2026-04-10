@@ -180,6 +180,8 @@ static int cachedSimUsed  = -1; // -1 = not yet queried
 static int cachedSimTotal = 0;
 // RFC-0038: Boot timestamp — captured once on first successful NTP sync.
 static time_t s_bootTimestamp = 0;
+// RFC-0041: Wall-clock time of the most recently forwarded SMS (0 = none yet).
+static time_t s_lastSmsTimestamp = 0;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -637,6 +639,14 @@ void setup()
 
         msg += "\n\xF0\x9F\x93\xA8 SMS\n"; // 📨
         msg += "  Forwarded: "; msg += String(smsHandler.smsForwarded()); msg += "\n";
+        // RFC-0041: Last SMS received timestamp.
+        if (s_lastSmsTimestamp > 0) {
+            time_t lt = s_lastSmsTimestamp + TIMEZONE_OFFSET_SEC;
+            struct tm *lt2 = gmtime(&lt);
+            char lastSmsBuf[32];
+            strftime(lastSmsBuf, sizeof(lastSmsBuf), "%Y-%m-%d %H:%M", lt2);
+            msg += "  Last rcvd: "; msg += lastSmsBuf; msg += " "; msg += tzLabel; msg += "\n";
+        }
         msg += "  Failed: ";    msg += String(smsHandler.smsFailed()); msg += "\n";
         msg += "  Consec. failures: "; msg += String(smsHandler.consecutiveFailures()); msg += "\n";
         msg += "  Concat in-flight: "; msg += String((int)smsHandler.concatKeyCount()); msg += "\n";
@@ -844,6 +854,7 @@ void setup()
         replyTargets.load();
         smsHandler.setReplyTargetMap(&replyTargets);
         smsHandler.setDebugLog(&smsDebugLog);
+        smsHandler.setOnForwarded([]() { s_lastSmsTimestamp = time(nullptr); }); // RFC-0041
         telegramPoller->setDebugLog(&smsDebugLog);
         smsSender.setDebugLog(&smsDebugLog); // RFC-0035: log outbound failures
         telegramPoller->begin();

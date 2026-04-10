@@ -104,6 +104,7 @@ bool SmsHandler::forwardSingle(const sms_codec::SmsPdu &pdu, int /*simIndex*/)
         replyTargets_->put(mid, pdu.sender);
     }
     smsForwarded_++;
+    if (onForwarded_) onForwarded_();
     return true;
 }
 
@@ -298,6 +299,7 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
         replyTargets_->put(mid, group->sender);
     }
     smsForwarded_++;
+    if (onForwarded_) onForwarded_();
 
     // Success: collect all SIM slots for deletion and drop the group.
     for (const auto &f : sorted)

@@ -73,6 +73,11 @@ public:
     // command.
     void setDebugLog(SmsDebugLog *log) { debugLog_ = log; }
 
+    // RFC-0041: Optional callback fired after each successful SMS forward
+    // (single-part or assembled concat). Production wires this to a lambda
+    // that records time(nullptr) so /status can show the last-received time.
+    void setOnForwarded(std::function<void()> cb) { onForwarded_ = std::move(cb); }
+
     // Optional: set an SMS sender block list (RFC-0018). When set,
     // any incoming SMS whose sender exactly matches an entry in the
     // list is silently deleted from the SIM without forwarding to
@@ -185,6 +190,7 @@ private:
     ClockFn clock_;
     ReplyTargetMap *replyTargets_ = nullptr;
     SmsDebugLog *debugLog_ = nullptr;
+    std::function<void()> onForwarded_;
     const char (*blockList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;
     int blockListCount_ = 0;
     const char (*runtimeList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;
