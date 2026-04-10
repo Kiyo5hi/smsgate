@@ -1208,9 +1208,17 @@ void loop()
             }
         }
         // RFC-0066: Low heap warning. Hysteresis: alert at <15 KB, clear at >25 KB.
+        // RFC-0073: Critical threshold at <8 KB — send final message and reboot.
         {
             uint32_t freeHeap = ESP.getFreeHeap();
-            if (freeHeap < 15u * 1024u && !s_lowHeapWarnSent) {
+            if (freeHeap < 8u * 1024u) {
+                // RFC-0073: Too close to the edge — reboot before we crash silently.
+                String critMsg = String("\xF0\x9F\x92\x80 Critical heap: "); // 💀
+                critMsg += String((int)freeHeap); critMsg += " B free — rebooting now.";
+                realBot.sendMessage(critMsg);
+                delay(500);
+                ESP.restart();
+            } else if (freeHeap < 15u * 1024u && !s_lowHeapWarnSent) {
                 String heapMsg = String("\xE2\x9A\xA0\xEF\xB8\x8F Low heap: "); // ⚠️
                 heapMsg += String((int)freeHeap); heapMsg += " B free. Device may become unstable.";
                 realBot.sendMessage(heapMsg);
