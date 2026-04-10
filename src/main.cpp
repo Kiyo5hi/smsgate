@@ -213,6 +213,11 @@ static uint32_t s_lastDailyDigestMs = 0;
 // RFC-0079: NTP retry. Retry every 5 minutes while clock is still invalid.
 static uint32_t s_lastNtpRetryMs = 0;
 static constexpr uint32_t kNtpRetryIntervalMs = 5UL * 60UL * 1000UL;
+// RFC-0096: Stuck-queue alert. Fire if any entry is older than 5 minutes.
+static bool     s_stuckQueueAlertSent = false;
+static uint32_t s_lastStuckQueueCheckMs = 0;
+static constexpr uint32_t kStuckQueueThresholdMs = 5UL * 60UL * 1000UL;  // 5 min
+static constexpr uint32_t kStuckQueueCheckIntervalMs = 60UL * 1000UL;    // 1 min
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -1354,6 +1359,44 @@ void loop()
                     realBot.sendMessage(
                         String("\xF0\x9F\x95\x90 Clock synced via NTP.")); // 🕐
                 }
+            }
+        }
+
+        // RFC-0096: Stuck-queue alert. Check every minute; fire if any entry
+        // has been waiting > kStuckQueueThresholdMs without delivering.
+        if (millis() - s_lastStuckQueueCheckMs >= kStuckQueueCheckIntervalMs)
+        {
+            s_lastStuckQueueCheckMs = millis();
+            auto snapshot = smsSender.getQueueSnapshot();
+            bool hasStuck = false;
+            uint32_t nowMs2 = (uint32_t)millis();
+            String oldestPhone;
+            uint32_t oldestAgeSec = 0;
+            int stuckCount = 0;
+            for (const auto &e : snapshot) {
+                if (e.queuedAtMs > 0 && nowMs2 >= e.queuedAtMs &&
+                    (nowMs2 - e.queuedAtMs) >= kStuckQueueThresholdMs)
+                {
+                    hasStuck = true;
+                    stuckCount++;
+                    uint32_t ageSec = (nowMs2 - e.queuedAtMs) / 1000;
+                    if (ageSec > oldestAgeSec) {
+                        oldestAgeSec = ageSec;
+                        oldestPhone  = e.phone;
+                    }
+                }
+            }
+            if (hasStuck && !s_stuckQueueAlertSent) {
+                String alert = String("\xE2\x9A\xA0\xEF\xB8\x8F Queue stuck: "); // ⚠️
+                alert += String(stuckCount);
+                alert += String(" entr"); alert += (stuckCount == 1 ? "y" : "ies");
+                alert += String(" waiting >5m. Oldest: "); alert += oldestPhone;
+                alert += String(" ("); alert += String((int)(oldestAgeSec / 60)); alert += "m)\n";
+                alert += String("Use /queue to inspect, /flushqueue to retry, /clearqueue to discard.");
+                realBot.sendMessage(alert);
+                s_stuckQueueAlertSent = true;
+            } else if (!hasStuck) {
+                s_stuckQueueAlertSent = false; // reset when queue clears
             }
         }
 
