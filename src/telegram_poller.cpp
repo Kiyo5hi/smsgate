@@ -86,6 +86,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         {
             String help;
             help += "/ping \xe2\x80\x94 Liveness check\n";
+            help += "/echo <text> \xe2\x80\x94 Reflect text back (connectivity test)\n";
             help += "/time \xe2\x80\x94 Show current UTC time\n";
             help += "/ntp \xe2\x80\x94 Force NTP time resync\n";
             help += "/status \xe2\x80\x94 Device health & stats\n";
@@ -193,18 +194,32 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
-        // RFC-0040: /cleardebug — wipe the SMS debug log.
+        // RFC-0040/0067: /cleardebug — wipe the SMS debug log, report count.
         if (lower == "/cleardebug")
         {
             if (debugLog_)
             {
+                size_t cleared = debugLog_->count();
                 debugLog_->clear();
-                bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x97\x91 Debug log cleared.")); // 🗑
+                String msg = String("\xF0\x9F\x97\x91 Cleared "); // 🗑
+                msg += String((int)cleared);
+                msg += String(" debug log entr");
+                msg += (cleared == 1 ? "y." : "ies.");
+                bot_.sendMessageTo(u.chatId, msg);
             }
             else
             {
                 bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
             }
+            return;
+        }
+
+        // RFC-0067: /echo — reflect back the argument; useful for connectivity testing.
+        if (lower.startsWith("/echo"))
+        {
+            String arg = u.text.length() > 5 ? u.text.substring(5) : String();
+            arg.trim();
+            bot_.sendMessageTo(u.chatId, arg.length() > 0 ? arg : String("(empty)"));
             return;
         }
 
