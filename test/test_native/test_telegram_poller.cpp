@@ -8138,6 +8138,97 @@ void test_TelegramPoller_schedexport_repeating_slot_shows_recurring()
     TEST_ASSERT_TRUE(sawRecurring);
 }
 
+// RFC-0259: /schedexport with 5 long-body slots must not produce a message > 4096 chars.
+void test_TelegramPoller_schedexport_truncates_long_bodies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 10000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Fill all 5 slots with 1530-char bodies via setSchedQueue.
+    // Without RFC-0259: 5 slots × ~1578 chars ≈ 7890 chars > 4096.
+    String longBody;
+    for (int k = 0; k < 1530; k++) longBody += 'A';
+
+    auto q = poller.getSchedQueue();
+    for (int i = 0; i < (int)TelegramPoller::kScheduledQueueSize; i++)
+    {
+        q[i].sendAtMs = clk.nowMs + 3600000u;
+        q[i].phone    = String("+11100000");
+        q[i].body     = longBody;
+    }
+    poller.setSchedQueue(q);
+
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(30001, kAllowedFromId, 0,
+        "/schedexport", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(30001, poller.lastUpdateId());
+
+    const auto &msgs = bot.sentMessages();
+    TEST_ASSERT_TRUE_MESSAGE(msgs.size() > 0,
+        "Expected at least one reply to /schedexport");
+    for (const auto &m : msgs)
+    {
+        TEST_ASSERT_TRUE_MESSAGE((int)m.length() <= 4096,
+            "/schedexport reply exceeds 4096-char Telegram limit (RFC-0259)");
+    }
+    bool sawOmitted = false;
+    for (const auto &m : msgs)
+        if (m.indexOf("omitted") >= 0) { sawOmitted = true; break; }
+    TEST_ASSERT_TRUE_MESSAGE(sawOmitted,
+        "Expected /schedexport to report omitted slots (RFC-0259)");
+}
+
+// RFC-0260: /help output (~7500+ chars) must be split into multiple messages ≤ 4096 chars each.
+void test_TelegramPoller_help_paginates_multiple_messages()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick(); // drain initial empty poll
+
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(30002, kAllowedFromId, 0,
+        "/help", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(30002, poller.lastUpdateId());
+
+    const auto &msgs = bot.sentMessages();
+    // /help is well over 4096 chars; must be split into at least 2 pages.
+    TEST_ASSERT_TRUE_MESSAGE(msgs.size() >= 2,
+        "/help should send multiple pages (RFC-0260)");
+    for (const auto &m : msgs)
+    {
+        TEST_ASSERT_TRUE_MESSAGE((int)m.length() <= 4096,
+            "/help page exceeds 4096-char Telegram limit (RFC-0260)");
+    }
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -9353,6 +9444,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_schedexport_shows_commands);
     RUN_TEST(test_TelegramPoller_schedexport_empty_queue);
     RUN_TEST(test_TelegramPoller_schedexport_repeating_slot_shows_recurring);
+    RUN_TEST(test_TelegramPoller_schedexport_truncates_long_bodies); // RFC-0259
+    // RFC-0260: /help pagination
+    RUN_TEST(test_TelegramPoller_help_paginates_multiple_messages);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);
