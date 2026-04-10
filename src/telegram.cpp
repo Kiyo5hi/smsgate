@@ -145,6 +145,11 @@ bool registerBotCommands(RealBotClient &bot)
     JsonArray cmds = doc.createNestedArray("commands");
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "help";
+        c["description"] = "Show available commands";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "ping";
         c["description"] = "Check if the bridge is alive";
     }
@@ -253,7 +258,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /ping /debug /cleardebug /status /blocklist /block /unblock /restart /send /queue /cancel");
+        Serial.println("Bot commands registered: /help /ping /debug /cleardebug /status /blocklist /block /unblock /restart /send /queue /cancel");
     }
     else
     {

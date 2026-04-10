@@ -80,6 +80,28 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         }
         lower.trim();
 
+        // RFC-0053: /help — list available commands.
+        if (lower == "/help")
+        {
+            String help;
+            help += "/ping \xe2\x80\x94 Liveness check\n";
+            help += "/status \xe2\x80\x94 Device health & stats\n";
+            help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
+            help += "/cleardebug \xe2\x80\x94 Clear SMS diagnostic log\n";
+            help += "/send <num> <msg> \xe2\x80\x94 Send outbound SMS\n";
+            help += "/queue \xe2\x80\x94 Show pending outbound queue\n";
+            help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
+            help += "/restart \xe2\x80\x94 Soft reboot\n";
+            if (smsBlockMutator_) {
+                help += "/blocklist \xe2\x80\x94 Show block list\n";
+                help += "/block <num|prefix*> \xe2\x80\x94 Block sender\n";
+                help += "/unblock <num|prefix*> \xe2\x80\x94 Unblock sender\n";
+            }
+            help += "\nReply to a forwarded SMS to send a response.";
+            bot_.sendMessageTo(u.chatId, help);
+            return;
+        }
+
         // RFC-0042: /ping — instant liveness check.
         if (lower == "/ping")
         {
@@ -339,7 +361,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         Serial.println("TelegramPoller: no reply_to_message_id, dropping");
         {
             String help = "Reply to a forwarded SMS to send a response. ";
-            help += "Commands: /ping, /debug, /cleardebug, /status, /restart, /send <num> <msg>, /queue, /cancel <N>";
+            help += "Commands: /help, /ping, /debug, /cleardebug, /status, /restart, /send <num> <msg>, /queue, /cancel <N>";
             if (smsBlockMutator_)
                 help += ", /blocklist, /block <num>, /unblock <num>";
             sendErrorReply(u.chatId, help);
