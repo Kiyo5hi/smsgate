@@ -150,6 +150,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/ip \xe2\x80\x94 WiFi IP address, SSID, and RSSI\n";
             help += "/smsslots \xe2\x80\x94 SIM SMS slot usage\n";
             help += "/smscount \xe2\x80\x94 SIM SMS storage capacity (used/total) via AT+CPMS?\n";
+            help += "/smshandlerinfo \xe2\x80\x94 SMS handler config + stats snapshot\n";
             help += "/setblockmode on|off \xe2\x80\x94 Enable/suspend SMS block list enforcement\n";
             help += "/blockcheck <phone> \xe2\x80\x94 Test if a number would be blocked\n";
             help += "/setcallnotify on|off \xe2\x80\x94 Enable/mute call Telegram notifications\n";
@@ -793,6 +794,20 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             else
             {
                 bot_.sendMessageTo(u.chatId, String("(callstatus not configured)"));
+            }
+            return;
+        }
+
+        // RFC-0174: /smshandlerinfo — SmsHandler configuration and stats snapshot.
+        if (lower == "/smshandlerinfo")
+        {
+            if (smsHandlerInfoFn_)
+            {
+                bot_.sendMessageTo(u.chatId, smsHandlerInfoFn_());
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("(smshandlerinfo not configured)"));
             }
             return;
         }

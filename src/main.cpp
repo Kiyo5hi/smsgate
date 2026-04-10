@@ -1437,6 +1437,33 @@ void setup()
         telegramPoller->setFwdTagFn([&smsHandler](const String &tag) { // RFC-0172
             smsHandler.setFwdTag(tag);
         });
+        telegramPoller->setSmsHandlerInfoFn([&smsHandler, &smsSender]() -> String { // RFC-0174
+            String s;
+            s += "\xF0\x9F\x93\xB1 SMS handler info:\n"; // 📱
+            s += "  Forwarding: ";
+            s += (smsHandler.forwardingEnabled() ? "ON" : "OFF"); s += "\n";
+            s += "  Block enforcement: ";
+            s += (smsHandler.blockingEnabled() ? "ON" : "OFF"); s += "\n";
+            s += "  Max fail count: ";
+            s += String(smsHandler.maxConsecutiveFailures()); s += "\n";
+            s += "  Concat TTL: ";
+            s += String(smsHandler.concatTtlMs() / 1000); s += "s\n";
+            s += "  Dedup window: ";
+            s += String(smsHandler.dedupWindowMs() / 1000); s += "s\n";
+            s += "  Max SMS parts: ";
+            s += String(smsSender.maxParts()); s += "\n";
+            s += "  GMT offset: UTC";
+            int gmt = smsHandler.gmtOffsetHours();
+            if (gmt >= 0) s += "+";
+            s += String(gmt); s += "\n";
+            s += "  Fwd tag: ";
+            s += (smsHandler.fwdTag().length() > 0 ? ("\"" + smsHandler.fwdTag() + "\"") : "(none)"); s += "\n";
+            s += "  Session: fwd=";
+            s += String(smsHandler.smsForwarded());
+            s += " blk="; s += String(smsHandler.smsBlocked());
+            s += " dup="; s += String(smsHandler.smsDeduplicated());
+            return s;
+        });
         telegramPoller->setCallStatusFn([&callHandler]() -> String { // RFC-0173
             String s;
             s += "\xF0\x9F\x93\x9E Call handler status:\n"; // 📞

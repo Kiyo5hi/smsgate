@@ -588,6 +588,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "callstatus";
         c["description"] = "Show call handler config (notify, dedup, deadline, call count)";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "smshandlerinfo";
+        c["description"] = "SMS handler config + session stats snapshot";
+    }
     String payload;
     serializeJson(doc, payload);
 
