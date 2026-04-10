@@ -165,7 +165,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             String arg = extractArg(lower, "/block ");
             if (arg.length() == 0)
             {
-                bot_.sendMessageTo(u.chatId, String("Usage: /block <number>"));
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /block <number>  (append * for prefix: /block +8613*)"));
                 return;
             }
             if (!smsBlockMutator_)
@@ -179,9 +180,14 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, reason);
                 return;
             }
-            bot_.sendMessageTo(u.chatId,
-                String("Blocked: ") + arg +
-                String(". Note: matching is exact — check the serial log to confirm the format your carrier sends."));
+            {
+                bool isPrefix = arg.length() > 0 && arg[arg.length()-1] == '*';
+                String note = isPrefix
+                    ? String(". Prefix match — all numbers starting with ")
+                      + arg.substring(0, arg.length()-1) + String(" will be blocked.")
+                    : String(". Exact match — check the serial log to confirm the format your carrier sends.");
+                bot_.sendMessageTo(u.chatId, String("Blocked: ") + arg + note);
+            }
             return;
         }
 

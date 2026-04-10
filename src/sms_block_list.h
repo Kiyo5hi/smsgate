@@ -55,7 +55,10 @@ inline int parseBlockList(const char *csv,
     return count;
 }
 
-// Return true if `number` exactly matches any entry in `list[0..count-1]`.
+// Return true if `number` matches any entry in `list[0..count-1]`.
+// RFC-0052: If an entry ends with '*', it is treated as a prefix match —
+// the entry "+8613*" blocks any number starting with "+8613".
+// Otherwise the match is exact (unchanged from RFC-0018).
 inline bool isBlocked(const char *number,
                       const char (*list)[kSmsBlockListMaxNumberLen + 1],
                       int count)
@@ -63,8 +66,19 @@ inline bool isBlocked(const char *number,
     if (!number || !list || count <= 0) return false;
     for (int i = 0; i < count; i++)
     {
-        if (strcmp(number, list[i]) == 0)
-            return true;
+        const char *entry = list[i];
+        size_t entryLen = strlen(entry);
+        if (entryLen > 0 && entry[entryLen - 1] == '*')
+        {
+            // Prefix match: strip trailing '*' and compare the prefix.
+            if (strncmp(number, entry, entryLen - 1) == 0)
+                return true;
+        }
+        else
+        {
+            if (strcmp(number, entry) == 0)
+                return true;
+        }
     }
     return false;
 }

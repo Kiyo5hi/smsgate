@@ -168,6 +168,33 @@ void test_isBlocked_e164_does_not_match_national_entry()
     TEST_ASSERT_FALSE(isBlocked("+8610086", list, 1));
 }
 
+// RFC-0052: prefix wildcard matching (entry ending with '*').
+void test_isBlocked_wildcard_prefix_matches_number()
+{
+    char list[1][kSmsBlockListMaxNumberLen + 1];
+    strncpy(list[0], "+8613*", kSmsBlockListMaxNumberLen + 1);
+    TEST_ASSERT_TRUE(isBlocked("+86130001234", list, 1));
+    TEST_ASSERT_TRUE(isBlocked("+8613", list, 1)); // exact prefix length
+    TEST_ASSERT_FALSE(isBlocked("+8614001234", list, 1)); // different prefix
+}
+
+void test_isBlocked_wildcard_does_not_match_shorter_number()
+{
+    char list[1][kSmsBlockListMaxNumberLen + 1];
+    strncpy(list[0], "+8613*", kSmsBlockListMaxNumberLen + 1);
+    // Number shorter than prefix ("+861" doesn't start with "+8613")
+    TEST_ASSERT_FALSE(isBlocked("+861", list, 1));
+}
+
+void test_isBlocked_exact_entry_not_mistaken_for_wildcard()
+{
+    // An entry that doesn't end in '*' still uses exact matching.
+    char list[1][kSmsBlockListMaxNumberLen + 1];
+    strncpy(list[0], "+8613", kSmsBlockListMaxNumberLen + 1);
+    TEST_ASSERT_TRUE(isBlocked("+8613", list, 1));
+    TEST_ASSERT_FALSE(isBlocked("+86130001234", list, 1)); // substring, not match
+}
+
 // ---- Unity plumbing ----
 
 void run_sms_block_list_tests()
@@ -192,4 +219,7 @@ void run_sms_block_list_tests()
     RUN_TEST(test_isBlocked_suffix_does_not_match);
     RUN_TEST(test_isBlocked_e164_matches_e164_entry);
     RUN_TEST(test_isBlocked_e164_does_not_match_national_entry);
+    RUN_TEST(test_isBlocked_wildcard_prefix_matches_number);
+    RUN_TEST(test_isBlocked_wildcard_does_not_match_shorter_number);
+    RUN_TEST(test_isBlocked_exact_entry_not_mistaken_for_wildcard);
 }
