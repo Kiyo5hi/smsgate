@@ -367,6 +367,7 @@ void setup()
 #endif
 
     SerialAT.begin(115200, SERIAL_8N1, MODEM_RX_PIN, MODEM_TX_PIN);
+    SerialAT.setTimeout(100); // RFC-0229: prevent 1-second stalls on empty-stream reads
 
     // The modem and ESP32 are on independent power rails. After an ESP-only
     // reset (upload, watchdog, ESP.restart) the modem may still be powered on
@@ -2690,6 +2691,36 @@ void loop()
         {
             lastNtpResyncMs = nowMs2; // initialise to now (first boot sync already done)
         }
+    }
+
+    // RFC-0229: Periodic modem AT health check.
+    // If the A76XX silently hangs, +CMTI URCs stop arriving and SMS is
+    // silently lost. testAT() sends "AT" and waits up to 3 s for "OK".
+    // Three consecutive failures → Telegram alert + reboot.
+    static unsigned long lastModemCheck   = 0;
+    static int           modemFailStreak  = 0;
+    if (millis() - lastModemCheck > 300000UL) // every 5 minutes
+    {
+        lastModemCheck = millis();
+        esp_task_wdt_reset();
+        if (!modem.testAT(3000))
+        {
+            modemFailStreak++;
+            Serial.print("Modem health check failed (streak=");
+            Serial.print(modemFailStreak);
+            Serial.println(")");
+            if (modemFailStreak >= 3)
+            {
+                realBot.sendMessage(String("\xe2\x9a\xa0\xef\xb8\x8f Modem unresponsive (3 checks) — rebooting.")); // ⚠️
+                delay(1000);
+                ESP.restart();
+            }
+        }
+        else
+        {
+            modemFailStreak = 0;
+        }
+        esp_task_wdt_reset();
     }
 
     // Periodically verify the active transport is still viable.

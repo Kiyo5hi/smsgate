@@ -58,7 +58,7 @@ public:
     // How long between successive getUpdates requests, in
     // milliseconds. The first poll happens immediately on the
     // first tick after construction.
-    static constexpr uint32_t kPollIntervalMs = 3000;
+    static constexpr uint32_t kPollIntervalMs = 1000; // RFC-0229: 1s for better command latency
 
     // RFC-0217: Queue stuck alert thresholds (not configurable).
     static constexpr uint32_t kQueueStuckThresholdMs     = 30U * 60U * 1000U;
