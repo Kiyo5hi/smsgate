@@ -558,6 +558,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "nvsinfo";
         c["description"] = "NVS flash storage usage (used/free/total entries)";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setgmtoffset";
+        c["description"] = "Timezone offset for SMS timestamps (-12 to +14): /setgmtoffset <h>";
+    }
     String payload;
     serializeJson(doc, payload);
 

@@ -5857,6 +5857,31 @@ void test_TelegramPoller_nvsinfo_calls_fn_and_replies()
     TEST_ASSERT_TRUE(msgs.back().indexOf("used=12") >= 0);
 }
 
+// RFC-0169: /setgmtoffset command
+void test_TelegramPoller_setgmtoffset_calls_fn_with_hours()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    int captured = 999;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setGmtOffsetFn([&captured](int h) { captured = h; });
+
+    bot.queueUpdateBatch({makeUpdate(1091, kAllowedFromId, 0, "/setgmtoffset -5", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1091, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(-5, captured);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -6109,6 +6134,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_settings_calls_fn_and_replies);
     // RFC-0168: /nvsinfo command
     RUN_TEST(test_TelegramPoller_nvsinfo_calls_fn_and_replies);
+    // RFC-0169: /setgmtoffset command
+    RUN_TEST(test_TelegramPoller_setgmtoffset_calls_fn_with_hours);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

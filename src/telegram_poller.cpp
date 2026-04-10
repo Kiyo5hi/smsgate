@@ -153,6 +153,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/setcallnotify on|off \xe2\x80\x94 Enable/mute call Telegram notifications\n";
             help += "/setcalldedup <s> \xe2\x80\x94 Call dedup cooldown window in seconds (1\xe2\x80\x9360)\n";
             help += "/setunknowndeadline <ms> \xe2\x80\x94 RING-without-CLIP deadline in ms (500\xe2\x80\x9310000)\n";
+            help += "/setgmtoffset <h> \xe2\x80\x94 Timezone for SMS timestamps (-12 to +14, default +8)\n";
             help += "/settings \xe2\x80\x94 Show all runtime-configurable parameters\n";
             help += "/nvsinfo \xe2\x80\x94 NVS flash storage usage (used/free/total entries)\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
@@ -1545,6 +1546,36 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Unknown-number deadline set to ") // ✅
                 + String(ms) + String("ms."));
+            return;
+        }
+
+        // RFC-0169: /setgmtoffset <hours> — set timezone offset for SMS timestamps.
+        if (lower == "/setgmtoffset" || lower.startsWith("/setgmtoffset "))
+        {
+            if (!gmtOffsetFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setgmtoffset not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/setgmtoffset ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setgmtoffset <hours>\nRange: -12 to +14\nExamples: /setgmtoffset 8  /setgmtoffset -5"));
+                return;
+            }
+            int hours = (int)arg.toInt();
+            if (hours < -12 || hours > 14)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Error: hours must be -12 to +14"));
+                return;
+            }
+            gmtOffsetFn_(hours);
+            String sign = (hours >= 0) ? "+" : "";
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 GMT offset set to UTC") // ✅
+                + sign + String(hours) + String("."));
             return;
         }
 
