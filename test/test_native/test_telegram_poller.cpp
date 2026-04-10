@@ -1086,6 +1086,14 @@ void test_TelegramPoller_send_happy_path_enqueues_and_confirms()
         if (m.indexOf(String("Queued to")) >= 0 && m.indexOf(String("Hello world")) >= 0) { sawQueued = true; break; }
     }
     TEST_ASSERT_TRUE(sawQueued);
+
+    // RFC-0030: confirmation message_id should be stored in reply-target map
+    // so the user can reply to the confirmation to send another SMS.
+    // FakeBotClient.lastFakeMsgId_ starts at 1000, first call returns 1001.
+    String foundPhone;
+    bool found = rtm.lookup(bot.lastIssuedMessageId(), foundPhone);
+    TEST_ASSERT_TRUE(found);
+    TEST_ASSERT_EQUAL_STRING("+8613800138000", foundPhone.c_str());
 }
 
 // /send with no argument at all: usage error, nothing enqueued.

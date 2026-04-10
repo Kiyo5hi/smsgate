@@ -171,6 +171,10 @@ static int cachedCsq = 0;
 static RegStatus cachedRegStatus = REG_NO_RESULT;
 // RFC-0027: Operator name (AT+COPS?), refreshed every 30s alongside CSQ.
 static String cachedOperatorName;
+// RFC-0031: CSQ trend — last 6 readings (one per 30s refresh = 3 min window).
+static int csqHistory[6] = {0, 0, 0, 0, 0, 0};
+static int csqHistoryIdx = 0;
+static bool csqHistoryFull = false;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -595,8 +599,24 @@ void setup()
         msg += "  WiFi: ";      msg += String(WiFi.RSSI()); msg += " dBm\n";
         msg += "  Modem: CSQ "; msg += String(cachedCsq); msg += " ("; msg += csqLabel; msg += ")  "; msg += regStr;
         if (cachedOperatorName.length() > 0) { msg += " ("; msg += cachedOperatorName; msg += ")"; }
+        // RFC-0031: Append CSQ trend (oldest→newest, only if we have history).
+        if (csqHistoryFull || csqHistoryIdx > 0)
+        {
+            msg += " [";
+            int total = csqHistoryFull ? 6 : csqHistoryIdx;
+            int start = csqHistoryFull ? csqHistoryIdx : 0;
+            for (int i = 0; i < total; i++)
+            {
+                if (i > 0) msg += " ";
+                msg += String(csqHistory[(start + i) % 6]);
+            }
+            msg += "]";
+        }
         msg += "\n";
         msg += "  Heap: ";      msg += String((int)ESP.getFreeHeap()); msg += " B\n";
+        // RFC-0030b: Flash usage.
+        msg += "  Flash: ";     msg += String((int)(ESP.getSketchSize() / 1024)); msg += "kB / ";
+        msg += String((int)((ESP.getSketchSize() + ESP.getFreeSketchSpace()) / 1024)); msg += "kB\n";
         msg += "  Reset: ";     msg += resetReasonStr(s_resetReason); msg += "\n";
 
         msg += "\n\xF0\x9F\x93\xA8 SMS\n"; // 📨
@@ -954,6 +974,10 @@ void loop()
         lastStatusRefreshMs = millis();
         cachedCsq = modem.getSignalQuality();
         cachedRegStatus = modem.getRegistrationStatus();
+        // RFC-0031: Record CSQ sample in rolling history.
+        csqHistory[csqHistoryIdx] = cachedCsq;
+        csqHistoryIdx = (csqHistoryIdx + 1) % 6;
+        if (csqHistoryIdx == 0) csqHistoryFull = true;
         // RFC-0027: Cache operator name via AT+COPS?
         {
             String copsResp;
