@@ -298,10 +298,13 @@ public:
 
     // RFC-0152: Reset the update_id watermark so Telegram re-delivers
     // recent updates. Persists immediately.
+    // RFC-0264: use saveLastUpdateId (key "uid") to match the load path in
+    // begin(); the previous saveBlob("last_update_id",...) wrote to a key
+    // that begin() never reads, so the reset was not durable across reboots.
     void resetWatermark()
     {
         lastUpdateId_ = 0;
-        persist_.saveBlob("last_update_id", &lastUpdateId_, sizeof(lastUpdateId_));
+        persist_.saveLastUpdateId(lastUpdateId_);
     }
 
     // RFC-0153: Optional forward enable/disable fn. When set, /setforward
