@@ -1648,6 +1648,8 @@ void setup()
             s += "\n";
             s += "  Fwd tag: ";
             s += (smsHandler.fwdTag().length() > 0 ? ("\"" + smsHandler.fwdTag() + "\"") : "(none)"); s += "\n";
+            s += "  Age filter: "; // RFC-0190
+            { int a = smsHandler.maxSmsAgeHours(); s += (a > 0 ? (String(a) + "h") : "off"); s += "\n"; }
             s += "  Session: fwd=";
             s += String(smsHandler.smsForwarded());
             s += " blk="; s += String(smsHandler.smsBlocked());

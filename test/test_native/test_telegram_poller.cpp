@@ -6560,6 +6560,41 @@ void test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot()
     TEST_ASSERT_TRUE(rebootCalled);
 }
 
+// RFC-0197: /schedrename 1 +9999 → changes slot 1 phone to +9999.
+void test_TelegramPoller_schedrename_changes_phone()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs = 1000;
+
+    // Schedule an entry.
+    bot.queueUpdateBatch({makeUpdate(6001, kAllowedFromId, 0, "/schedulesend 30 +1111 Hi", kAllowedFromId)});
+    poller.tick();
+    clk.nowMs += 4000;
+    bot.clearMessages();
+
+    // Rename the phone.
+    bot.queueUpdateBatch({makeUpdate(6002, kAllowedFromId, 0, "/schedrename 1 +9999", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(6002, poller.lastUpdateId());
+    bool sawChanged = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("+9999") >= 0 || m.indexOf("changed") >= 0) { sawChanged = true; break; }
+    TEST_ASSERT_TRUE(sawChanged);
+}
+
 // RFC-0196: /scheddelay 1 15 → extends slot 1 by 15 minutes.
 void test_TelegramPoller_scheddelay_extends_slot()
 {
@@ -7151,6 +7186,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_testpdu_no_arg_sends_usage);
     // RFC-0192: /pausefwd command
     RUN_TEST(test_TelegramPoller_pausefwd_calls_fn);
+    // RFC-0197: /schedrename command
+    RUN_TEST(test_TelegramPoller_schedrename_changes_phone);
     // RFC-0196: /scheddelay command
     RUN_TEST(test_TelegramPoller_scheddelay_extends_slot);
     // RFC-0195: /clearschedule command

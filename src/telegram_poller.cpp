@@ -139,6 +139,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/cancelsched <N> \xe2\x80\x94 Cancel a scheduled SMS slot\n";
             help += "/clearschedule \xe2\x80\x94 Cancel all pending scheduled SMS\n"; // RFC-0195
             help += "/scheddelay <N> <min> \xe2\x80\x94 Extend scheduled slot N by extra minutes\n"; // RFC-0196
+            help += "/schedrename <N> <phone> \xe2\x80\x94 Change destination phone of scheduled slot N\n"; // RFC-0197
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/mute [min] \xe2\x80\x94 Snooze proactive alerts (default 60m)\n";
             help += "/unmute \xe2\x80\x94 Cancel alert snooze\n";
@@ -2610,6 +2611,43 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             scheduledQueue_[n - 1].body     = String();
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Slot ") + String(n) + String(" cancelled.")); // ✅
+            return;
+        }
+
+        // RFC-0197: /schedrename <N> <phone> — change destination of a scheduled slot.
+        if (lower == "/schedrename" || lower.startsWith("/schedrename "))
+        {
+            String arg = extractArg(u.text, "/schedrename ");
+            arg.trim();
+            int sp = arg.indexOf(' ');
+            if (sp <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /schedrename <slot> <phone>\n"
+                           "Example: /schedrename 1 +447911123456"));
+                return;
+            }
+            int n = (int)arg.substring(0, sp).toInt();
+            String rawPhone = arg.substring(sp + 1);
+            rawPhone.trim();
+            String newPhone = sms_codec::normalizePhoneNumber(rawPhone);
+            if (n < 1 || n > (int)kScheduledQueueSize || scheduledQueue_[n - 1].sendAtMs == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Slot ") + String(n) // ❌
+                    + String(" is empty or out of range."));
+                return;
+            }
+            if (newPhone.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Phone number cannot be empty.")); // ❌
+                return;
+            }
+            scheduledQueue_[n - 1].phone = newPhone;
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Slot ") + String(n) // ✅
+                + String(" phone changed to ") + newPhone + String("."));
             return;
         }
 
