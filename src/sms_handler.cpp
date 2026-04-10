@@ -88,7 +88,7 @@ void SmsHandler::evictExpiredLocked(unsigned long now)
 void SmsHandler::evictLruUntilUnderCaps(size_t reservedExtraBytes)
 {
     // While we're over any cap, drop the LRU group. "LRU" here means
-    // the lowest lastSeenMs.
+    // the group idle the longest (largest elapsed time since lastSeenMs).
     auto over = [&]() -> bool {
         if (concatGroups_.size() > MAX_CONCAT_KEYS)
             return true;
@@ -99,11 +99,14 @@ void SmsHandler::evictLruUntilUnderCaps(size_t reservedExtraBytes)
 
     while (over() && !concatGroups_.empty())
     {
-        // Find the LRU.
+        // RFC-0270: use elapsed-time comparison (wraparound-safe).
+        uint32_t evictNow = (uint32_t)(clock_ ? clock_() : 0);
         size_t lruIdx = 0;
         for (size_t i = 1; i < concatGroups_.size(); ++i)
         {
-            if (concatGroups_[i].lastSeenMs < concatGroups_[lruIdx].lastSeenMs)
+            // Group i is "more LRU" if it has been idle longer.
+            if ((uint32_t)(evictNow - concatGroups_[i].lastSeenMs) >
+                (uint32_t)(evictNow - concatGroups_[lruIdx].lastSeenMs))
                 lruIdx = i;
         }
         Serial.print("SMS concat LRU eviction, ref=");
@@ -233,8 +236,9 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
                 if (concatGroups_[i].sender == myKeySender &&
                     concatGroups_[i].refNumber == myKeyRef)
                     continue;
-                if (lruIdx == -1 ||
-                    concatGroups_[i].lastSeenMs < concatGroups_[lruIdx].lastSeenMs)
+                if (lruIdx == -1 || // RFC-0270: elapsed-time comparison (wraparound-safe)
+                    (uint32_t)((uint32_t)now - concatGroups_[i].lastSeenMs) >
+                    (uint32_t)((uint32_t)now - concatGroups_[lruIdx].lastSeenMs))
                     lruIdx = (int)i;
             }
             if (lruIdx == -1)
@@ -264,8 +268,9 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
             {
                 size_t lruIdx = 0;
                 for (size_t i = 1; i < concatGroups_.size(); ++i)
-                {
-                    if (concatGroups_[i].lastSeenMs < concatGroups_[lruIdx].lastSeenMs)
+                {   // RFC-0270: elapsed-time comparison (wraparound-safe)
+                    if ((uint32_t)((uint32_t)now - concatGroups_[i].lastSeenMs) >
+                        (uint32_t)((uint32_t)now - concatGroups_[lruIdx].lastSeenMs))
                         lruIdx = i;
                 }
                 Serial.print("SMS concat key-count LRU eviction, ref=");

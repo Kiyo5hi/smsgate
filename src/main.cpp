@@ -2794,8 +2794,8 @@ void loop()
             uint32_t oldestAgeSec = 0;
             int stuckCount = 0;
             for (const auto &e : snapshot) {
-                if (e.queuedAtMs > 0 && nowMs2 >= e.queuedAtMs &&
-                    (nowMs2 - e.queuedAtMs) >= kStuckQueueThresholdMs)
+                if (e.queuedAtMs > 0 && // RFC-0270: unsigned subtraction is wraparound-safe
+                    (uint32_t)(nowMs2 - e.queuedAtMs) >= kStuckQueueThresholdMs)
                 {
                     hasStuck = true;
                     stuckCount++;

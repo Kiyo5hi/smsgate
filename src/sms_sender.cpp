@@ -161,7 +161,9 @@ void SmsSender::drainQueue(uint32_t nowMs)
     {
         if (!e.occupied)
             continue;
-        if (nowMs < e.nextRetryMs)
+        // RFC-0270: wraparound-safe "now >= nextRetryMs". Sentinel 0 = fire now.
+        // (uint32_t)(now - target) < 0x80000000 ↔ now >= target (millis-safe).
+        if (e.nextRetryMs != 0 && (uint32_t)(nowMs - e.nextRetryMs) >= 0x80000000UL)
             continue;
 
         // This entry is due — record first-drain timestamp (RFC-0095).
