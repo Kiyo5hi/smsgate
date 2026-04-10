@@ -222,6 +222,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/schedrename <N> <phone> \xe2\x80\x94 Change destination phone of scheduled slot N\n"; // RFC-0197
             help += "/schedbody <N> <text> \xe2\x80\x94 Edit the body of scheduled slot N\n"; // RFC-0207
             help += "/schedclone <N> <min> \xe2\x80\x94 Duplicate a scheduled slot with a new delay\n"; // RFC-0215
+            help += "/schedrepeat <N> <min> \xe2\x80\x94 Make slot N repeat every <min> min (0=one-shot)\n"; // RFC-0221
             help += "/schedpause \xe2\x80\x94 Pause all scheduled SMS delivery (volatile)\n"; // RFC-0218
             help += "/schedresume \xe2\x80\x94 Resume scheduled SMS delivery\n"; // RFC-0218
             help += "/snooze <phone> <min> \xe2\x80\x94 Suppress forwarding from a number for N minutes\n"; // RFC-0219
@@ -2844,7 +2845,14 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 pending++;
                 String eta = schedEtaStr(scheduledQueue_[i].sendAtMs, nowMs2, wallTimeFn_); // RFC-0202
                 out += String(i + 1) + String(". ") + scheduledQueue_[i].phone
-                    + String(" ") + eta + String(": ");
+                    + String(" ") + eta;
+                if (scheduledQueue_[i].repeatIntervalMs > 0) // RFC-0221
+                {
+                    uint32_t rmin = scheduledQueue_[i].repeatIntervalMs / 60000U;
+                    out += String(" \xf0\x9f\x94\x81"); // 🔁
+                    out += String(rmin) + String("m");
+                }
+                out += String(": ");
                 String preview = scheduledQueue_[i].body;
                 if (preview.length() > 40) preview = preview.substring(0, 40) + String("...");
                 out += preview;
@@ -3034,8 +3042,13 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             String eta = schedEtaStr(scheduledQueue_[n - 1].sendAtMs, nowMs4, wallTimeFn_); // RFC-0202
             String reply = String("\xe2\x8f\xb0 Slot ") + String(n) + String(":\n") // ⏰
                          + String("To: ") + scheduledQueue_[n - 1].phone + String("\n")
-                         + String("ETA: ") + eta + String("\n")
-                         + String("Body: ") + scheduledQueue_[n - 1].body;
+                         + String("ETA: ") + eta + String("\n");
+            if (scheduledQueue_[n - 1].repeatIntervalMs > 0) // RFC-0221
+            {
+                uint32_t rmin = scheduledQueue_[n - 1].repeatIntervalMs / 60000U;
+                reply += String("Repeat: every ") + String(rmin) + String("m\n"); // 🔁
+            }
+            reply += String("Body: ") + scheduledQueue_[n - 1].body;
             bot_.sendMessageTo(u.chatId, reply);
             return;
         }
@@ -3169,6 +3182,52 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                          + String(" (fires ") + eta + String(")")
                          + quietHoursWarning(sendAtClone, nowMsClone, quietStart_, quietEnd_, wallTimeFn_); // RFC-0212
             bot_.sendMessageTo(u.chatId, reply);
+            return;
+        }
+
+        // RFC-0221: /schedrepeat <N> <min> — make slot N repeat every <min> minutes.
+        // /schedrepeat <N> 0 converts the slot back to one-shot.
+        if (lower == "/schedrepeat" || lower.startsWith("/schedrepeat "))
+        {
+            String arg = extractArg(lower, "/schedrepeat ");
+            int sp = arg.indexOf(' ');
+            if (sp < 0 || arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /schedrepeat <slot> <min>\n"
+                           "Example: /schedrepeat 1 60\n"
+                           "/schedrepeat <slot> 0 converts to one-shot."));
+                return;
+            }
+            int n = (int)arg.substring(0, sp).toInt();
+            long rmin = arg.substring(sp + 1).toInt();
+            if (n < 1 || n > (int)kScheduledQueueSize || scheduledQueue_[n - 1].sendAtMs == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Slot ") + String(n) // ❌
+                    + String(" is empty or out of range."));
+                return;
+            }
+            if (rmin < 0 || rmin > 10080)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Interval must be 0\xe2\x80\x93 10080 min (7 days).")); // ❌ –
+                return;
+            }
+            scheduledQueue_[n - 1].repeatIntervalMs = (uint32_t)rmin * 60000UL;
+            if (persistSchedFn_) persistSchedFn_(); // RFC-0200
+            if (rmin == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 Slot ") + String(n) // ✅
+                    + String(" is now one-shot (no repeat)."));
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xf0\x9f\x94\x81 Slot ") + String(n) // 🔁
+                    + String(" will repeat every ") + String(rmin) + String("m after each send."));
+            }
             return;
         }
 
@@ -3722,7 +3781,11 @@ void TelegramPoller::tick()
                 if (preview.length() > 60) preview = preview.substring(0, 60) + String("...");
                 bot_.sendMessage(String("\xe2\x9c\x85 Scheduled SMS to ") // ✅
                                  + slot.phone + String(" sent: ") + preview);
-                slot.sendAtMs = 0; // free the slot
+                // RFC-0221: re-arm repeating slots instead of clearing them.
+                if (slot.repeatIntervalMs > 0)
+                    slot.sendAtMs = now + slot.repeatIntervalMs;
+                else
+                    slot.sendAtMs = 0; // free the one-shot slot
                 schedFired = true;
             }
         }

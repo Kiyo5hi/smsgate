@@ -442,9 +442,10 @@ public:
     // RFC-0188/RFC-0200: Scheduled SMS slot — public so getSchedQueue/setSchedQueue
     // callers (main.cpp, tests) can use the type without naming a private nested type.
     struct ScheduledSms {
-        uint32_t sendAtMs = 0; // millis() when to fire; 0 = free slot
+        uint32_t sendAtMs = 0;          // millis() when to fire; 0 = free slot
         String   phone;
         String   body;
+        uint32_t repeatIntervalMs = 0;  // RFC-0221: 0 = one-shot; >0 = re-arm after fire
     };
     static constexpr size_t kScheduledQueueSize = 5;
 

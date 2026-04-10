@@ -2034,14 +2034,15 @@ void setup()
                        + String(" | Concat: ") + String(c);
             return out;
         });
-        // RFC-0200: Serialize scheduled SMS queue to NVS after any mutation.
-        // Blob layout: 1 version byte + 5 × 164-byte slots.
-        // Slot: uint32_t sendAtUnix (0 = free), char phone[32], char body[128].
+        // RFC-0200/RFC-0221: Serialize scheduled SMS queue to NVS after any mutation.
+        // Blob layout v0x02: 1 version byte + 5 × 168-byte slots.
+        // Slot: uint32_t sendAtUnix (4), char phone[32], char body[128],
+        //       uint32_t repeatIntervalSec (4) [RFC-0221].
         telegramPoller->setPersistSchedFn([&]() {
-            static const size_t kSlotSize = sizeof(uint32_t) + 32 + 128; // 164
+            static const size_t kSlotSize = sizeof(uint32_t) + 32 + 128 + sizeof(uint32_t); // 168
             static const size_t kNumSlots = 5;
             uint8_t blob[1 + kNumSlots * kSlotSize] = {};
-            blob[0] = 0x01; // version byte
+            blob[0] = 0x02; // version byte (bumped for RFC-0221)
             const auto& q = telegramPoller->getSchedQueue();
             long nowSec = (long)time(nullptr);
             long nowMs  = (long)(uint32_t)millis();
@@ -2054,21 +2055,23 @@ void setup()
                 memcpy(slotPtr, &sendAtUnix, 4);
                 q[i].phone.toCharArray((char*)(slotPtr + 4), 32);
                 q[i].body.toCharArray((char*)(slotPtr + 4 + 32), 128);
+                uint32_t repeatSec = q[i].repeatIntervalMs / 1000U; // RFC-0221
+                memcpy(slotPtr + 4 + 32 + 128, &repeatSec, 4);
             }
             realPersist.saveBlob("sched_queue", blob, sizeof(blob));
         });
 
         telegramPoller->begin();
 
-        // RFC-0200: Load persisted scheduled SMS queue. NTP has already synced
+        // RFC-0200/RFC-0221: Load persisted scheduled SMS queue. NTP has already synced
         // above (syncTime()), so time(nullptr) is valid here.
         {
-            static const size_t kSlotSize = sizeof(uint32_t) + 32 + 128; // 164
+            static const size_t kSlotSize = sizeof(uint32_t) + 32 + 128 + sizeof(uint32_t); // 168
             static const size_t kNumSlots = 5;
             static const size_t kExpectedSize = 1 + kNumSlots * kSlotSize;
             uint8_t blob[kExpectedSize] = {};
             if (realPersist.loadBlob("sched_queue", blob, kExpectedSize) == kExpectedSize
-                && blob[0] == 0x01)
+                && blob[0] == 0x02)
             {
                 long nowSec = (long)time(nullptr);
                 long nowMs  = (long)(uint32_t)millis();
@@ -2081,15 +2084,21 @@ void setup()
                     memcpy(&sendAtUnix, slotPtr, 4);
                     if (sendAtUnix == 0) continue; // free slot
                     long ageSeconds = nowSec - (long)sendAtUnix;
-                    if (ageSeconds >= 2L * 3600L) continue; // stale (>= 2h past): drop
+                    // RFC-0221: repeating slots may be past-due; only stale
+                    // one-shots are dropped. For repeating slots (repeatSec > 0)
+                    // we accept any past-due time and fire on next tick.
+                    uint32_t repeatSec = 0;
+                    memcpy(&repeatSec, slotPtr + 4 + 32 + 128, 4);
+                    if (ageSeconds >= 2L * 3600L && repeatSec == 0) continue; // stale one-shot: drop
                     char phone[33] = {};
                     char body[129] = {};
                     memcpy(phone, slotPtr + 4,      32);
                     memcpy(body,  slotPtr + 4 + 32, 128);
                     q[i].phone = String(phone);
                     q[i].body  = String(body);
+                    q[i].repeatIntervalMs = repeatSec * 1000U; // RFC-0221
                     if (ageSeconds > 0L) {
-                        q[i].sendAtMs = 1; // past due but < 2h: fire on next tick
+                        q[i].sendAtMs = 1; // past due: fire on next tick
                     } else {
                         long deltaMs = ((long)sendAtUnix - nowSec) * 1000L;
                         q[i].sendAtMs = (uint32_t)(nowMs + deltaMs);

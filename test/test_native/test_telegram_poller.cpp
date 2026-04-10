@@ -7699,6 +7699,110 @@ void test_TelegramPoller_snooze_expires()
     TEST_ASSERT_FALSE(poller.isSnoozed(String("+9002"))); // expired
 }
 
+// RFC-0221: /schedrepeat marks a slot to fire again after each send.
+void test_TelegramPoller_schedrepeat_fires_and_reschedules()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 10000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Schedule a slot.
+    bot.queueUpdateBatch({makeUpdate(22001, kAllowedFromId, 0,
+        "/schedulesend 60 +5551 Hello", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(22001, poller.lastUpdateId());
+
+    // Set it to repeat every 5 minutes.
+    bot.queueUpdateBatch({makeUpdate(22002, kAllowedFromId, 0,
+        "/schedrepeat 1 5", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(22002, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL_UINT32(5U * 60000U, poller.getSchedQueue()[0].repeatIntervalMs);
+
+    bool sawRepeatConfirm = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("repeat") >= 0 || m.indexOf("5m") >= 0)
+        { sawRepeatConfirm = true; break; }
+    TEST_ASSERT_TRUE(sawRepeatConfirm);
+
+    // Force the slot to fire by setting sendAtMs to past.
+    {
+        auto sq = poller.getSchedQueue();
+        sq[0].sendAtMs = clk.nowMs - 1;
+        poller.setSchedQueue(sq);
+    }
+    // Drain the rate-limit interval.
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Slot should be re-armed, not cleared.
+    const auto &q2 = poller.getSchedQueue();
+    TEST_ASSERT_NOT_EQUAL(0U, q2[0].sendAtMs);
+    // Re-armed time should be approximately now + 5min.
+    uint32_t expectedRearm = clk.nowMs + 5U * 60000U;
+    // Allow small drift (the slot fires at nowMs inside tick() before clock advances).
+    TEST_ASSERT_TRUE(q2[0].sendAtMs >= expectedRearm - 5000U);
+    TEST_ASSERT_TRUE(q2[0].sendAtMs <= expectedRearm + 5000U);
+}
+
+// RFC-0221: /schedrepeat 0 converts back to one-shot.
+void test_TelegramPoller_schedrepeat_clears_repeat()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 10000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Schedule a slot then set it repeating.
+    bot.queueUpdateBatch({makeUpdate(22010, kAllowedFromId, 0,
+        "/schedulesend 60 +5552 Ping", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    bot.queueUpdateBatch({makeUpdate(22011, kAllowedFromId, 0,
+        "/schedrepeat 1 10", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL_UINT32(10U * 60000U, poller.getSchedQueue()[0].repeatIntervalMs);
+
+    // Clear repeat.
+    bot.queueUpdateBatch({makeUpdate(22012, kAllowedFromId, 0,
+        "/schedrepeat 1 0", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL_UINT32(0U, poller.getSchedQueue()[0].repeatIntervalMs);
+
+    bool sawOneShot = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("one-shot") >= 0)
+        { sawOneShot = true; break; }
+    TEST_ASSERT_TRUE(sawOneShot);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -8383,6 +8487,9 @@ void run_telegram_poller_tests()
     // RFC-0219: /snooze command
     RUN_TEST(test_TelegramPoller_snooze_marks_phone);
     RUN_TEST(test_TelegramPoller_snooze_expires);
+    // RFC-0221: /schedrepeat command
+    RUN_TEST(test_TelegramPoller_schedrepeat_fires_and_reschedules);
+    RUN_TEST(test_TelegramPoller_schedrepeat_clears_repeat);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);
