@@ -165,6 +165,12 @@ public:
     // a lambda that formats cachedCsq / cachedRegStatus / cachedOperatorName.
     void setCsqFn(std::function<String()> fn) { csqFn_ = std::move(fn); }
 
+    // RFC-0098: Optional alert mute/unmute callbacks. When set, /mute <minutes>
+    // calls muteFn(minutes) and /unmute calls unmuteFn(). Production wires
+    // these to lambdas that set/clear s_alertsMutedUntilMs in main.cpp.
+    void setMuteFn(std::function<void(uint32_t)> fn)   { muteFn_   = std::move(fn); }
+    void setUnmuteFn(std::function<void()> fn)          { unmuteFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -198,6 +204,8 @@ private:
     String versionStr_ = "(unknown build)";   // RFC-0074
     SmsAliasStore *aliasStore_ = nullptr;     // RFC-0088
     std::function<String()> csqFn_;          // RFC-0092
+    std::function<void(uint32_t)> muteFn_;  // RFC-0098
+    std::function<void()> unmuteFn_;        // RFC-0098
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

@@ -218,6 +218,9 @@ static bool     s_stuckQueueAlertSent = false;
 static uint32_t s_lastStuckQueueCheckMs = 0;
 static constexpr uint32_t kStuckQueueThresholdMs = 5UL * 60UL * 1000UL;  // 5 min
 static constexpr uint32_t kStuckQueueCheckIntervalMs = 60UL * 1000UL;    // 1 min
+// RFC-0098: Alert mute. 0 = not muted; else millis() timestamp until which alerts are silenced.
+static uint32_t s_alertsMutedUntilMs = 0;
+inline bool alertsMuted() { return (uint32_t)millis() < s_alertsMutedUntilMs; }
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -1013,6 +1016,12 @@ void setup()
         });
         smsSender.setDebugLog(&smsDebugLog); // RFC-0035: log outbound failures
         telegramPoller->setAliasStore(&smsAliasStore); // RFC-0088
+        telegramPoller->setMuteFn([](uint32_t minutes) { // RFC-0098
+            s_alertsMutedUntilMs = (uint32_t)millis() + minutes * 60000UL;
+        });
+        telegramPoller->setUnmuteFn([]() {              // RFC-0098
+            s_alertsMutedUntilMs = 0;
+        });
         telegramPoller->setCsqFn([]() -> String {      // RFC-0092
             const char *csqLabel;
             if (cachedCsq == 99)      csqLabel = "none";
@@ -1270,12 +1279,14 @@ void loop()
                                : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
                                :                                         "unknown";
             if (!regOk && !s_regLostAlertSent && cachedCsq > 0) {
-                realBot.sendMessage(
-                    String("\xF0\x9F\x93\xB5 Network registration lost (") + regTxt + ")"); // 📵
+                if (!alertsMuted()) // RFC-0098
+                    realBot.sendMessage(
+                        String("\xF0\x9F\x93\xB5 Network registration lost (") + regTxt + ")"); // 📵
                 s_regLostAlertSent = true;
             } else if (regOk && s_regLostAlertSent) {
-                realBot.sendMessage(
-                    String("\xE2\x9C\x85 Network registration restored (") + regTxt + ")"); // ✅
+                if (!alertsMuted()) // RFC-0098
+                    realBot.sendMessage(
+                        String("\xE2\x9C\x85 Network registration restored (") + regTxt + ")"); // ✅
                 s_regLostAlertSent = false;
             }
         }
@@ -1330,9 +1341,11 @@ void loop()
         // RFC-0081: CSQ low-signal alert. Hysteresis: alert at ≤5, clear at >10.
         // CSQ==0 means "unknown" (modem not yet polled) — skip.
         if (cachedCsq > 0 && cachedCsq <= 5 && !s_lowCsqWarnSent) {
-            String csqMsg = String("\xF0\x9F\x93\xB6 Low signal: CSQ "); // 📶
-            csqMsg += String(cachedCsq); csqMsg += ". SMS delivery may be unreliable.";
-            realBot.sendMessage(csqMsg);
+            if (!alertsMuted()) { // RFC-0098
+                String csqMsg = String("\xF0\x9F\x93\xB6 Low signal: CSQ "); // 📶
+                csqMsg += String(cachedCsq); csqMsg += ". SMS delivery may be unreliable.";
+                realBot.sendMessage(csqMsg);
+            }
             s_lowCsqWarnSent = true;
         } else if (cachedCsq > 10) {
             s_lowCsqWarnSent = false;
@@ -1396,13 +1409,15 @@ void loop()
                 }
             }
             if (hasStuck && !s_stuckQueueAlertSent) {
-                String alert = String("\xE2\x9A\xA0\xEF\xB8\x8F Queue stuck: "); // ⚠️
-                alert += String(stuckCount);
-                alert += String(" entr"); alert += (stuckCount == 1 ? "y" : "ies");
-                alert += String(" waiting >5m. Oldest: "); alert += oldestPhone;
-                alert += String(" ("); alert += String((int)(oldestAgeSec / 60)); alert += "m)\n";
-                alert += String("Use /queue to inspect, /flushqueue to retry, /clearqueue to discard.");
-                realBot.sendMessage(alert);
+                if (!alertsMuted()) { // RFC-0098
+                    String alert = String("\xE2\x9A\xA0\xEF\xB8\x8F Queue stuck: "); // ⚠️
+                    alert += String(stuckCount);
+                    alert += String(" entr"); alert += (stuckCount == 1 ? "y" : "ies");
+                    alert += String(" waiting >5m. Oldest: "); alert += oldestPhone;
+                    alert += String(" ("); alert += String((int)(oldestAgeSec / 60)); alert += "m)\n";
+                    alert += String("Use /queue to inspect, /flushqueue to retry, /clearqueue to discard.");
+                    realBot.sendMessage(alert);
+                }
                 s_stuckQueueAlertSent = true;
             } else if (!hasStuck) {
                 s_stuckQueueAlertSent = false; // reset when queue clears

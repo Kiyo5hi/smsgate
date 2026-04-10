@@ -210,6 +210,16 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "mute";
+        c["description"] = "Snooze proactive alerts: /mute [minutes]";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "unmute";
+        c["description"] = "Cancel alert snooze";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "heap";
         c["description"] = "Show free heap stats";
     }
@@ -338,7 +348,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /heap /csq /version /restart /send /sendall /test /queue /flushqueue /clearqueue /cancel /aliases /addalias /rmalias");
+        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /mute /unmute /heap /csq /version /restart /send /sendall /test /queue /flushqueue /clearqueue /cancel /aliases /addalias /rmalias");
     }
     else
     {

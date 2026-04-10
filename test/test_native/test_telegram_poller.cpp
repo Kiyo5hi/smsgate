@@ -1358,6 +1358,63 @@ void test_TelegramPoller_send_delivery_notification()
     TEST_ASSERT_TRUE(sawSent);
 }
 
+// ---------- RFC-0098: /mute and /unmute ----------
+
+void test_TelegramPoller_mute_calls_mute_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    uint32_t mutedMinutes = 0;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    poller.setMuteFn([&](uint32_t minutes) { mutedMinutes = minutes; });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(850, kAllowedFromId, 0, "/mute 30", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(30u, mutedMinutes);
+    bool sawReply = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+        if (m.text.indexOf(String("30 minute")) >= 0) { sawReply = true; break; }
+    TEST_ASSERT_TRUE(sawReply);
+    TEST_ASSERT_EQUAL(850, poller.lastUpdateId());
+}
+
+void test_TelegramPoller_unmute_calls_unmute_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool unmuteCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    poller.setUnmuteFn([&]() { unmuteCalled = true; });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(851, kAllowedFromId, 0, "/unmute", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(unmuteCalled);
+    bool sawUnmuted = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+        if (m.text.indexOf(String("unmuted")) >= 0) { sawUnmuted = true; break; }
+    TEST_ASSERT_TRUE(sawUnmuted);
+}
+
 // ---------- RFC-0094: /sendall ----------
 
 void test_TelegramPoller_sendall_broadcasts_to_all_aliases()
@@ -1764,6 +1821,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_clearqueue_discards_entries);
     // RFC-0092: /csq command
     RUN_TEST(test_TelegramPoller_csq_command_calls_csq_fn);
+    // RFC-0098: /mute and /unmute commands
+    RUN_TEST(test_TelegramPoller_mute_calls_mute_fn);
+    RUN_TEST(test_TelegramPoller_unmute_calls_unmute_fn);
     // RFC-0094: /sendall command
     RUN_TEST(test_TelegramPoller_sendall_broadcasts_to_all_aliases);
     RUN_TEST(test_TelegramPoller_sendall_no_aliases_sends_error);

@@ -102,6 +102,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/clearqueue \xe2\x80\x94 Discard all pending outbound SMS\n";
             help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
+            help += "/mute [min] \xe2\x80\x94 Snooze proactive alerts (default 60m)\n";
+            help += "/unmute \xe2\x80\x94 Cancel alert snooze\n";
             help += "/heap \xe2\x80\x94 Show free/min/max-block heap\n";
             help += "/csq \xe2\x80\x94 Quick signal strength snapshot\n";
             help += "/version \xe2\x80\x94 Show firmware build timestamp\n";
@@ -260,6 +262,44 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             {
                 bot_.sendMessageTo(u.chatId, String("(WiFi reconnect not configured)"));
             }
+            return;
+        }
+
+        // RFC-0098: /mute [minutes] — snooze proactive alerts.
+        if (lower == "/mute" || lower.startsWith("/mute "))
+        {
+            if (!muteFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(mute not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/mute ");
+            uint32_t minutes = 60; // default 1 hour
+            if (arg.length() > 0)
+            {
+                int parsed = arg.toInt();
+                if (parsed > 0 && parsed <= 1440) minutes = (uint32_t)parsed;
+                else if (parsed > 1440) minutes = 1440; // cap at 24h
+            }
+            muteFn_(minutes);
+            String reply = String("\xF0\x9F\x94\x95 Alerts muted for "); // 🔕
+            reply += String((int)minutes);
+            reply += String(" minute"); reply += (minutes == 1 ? "." : "s.");
+            bot_.sendMessageTo(u.chatId, reply);
+            return;
+        }
+
+        // RFC-0098: /unmute — cancel alert snooze.
+        if (lower == "/unmute")
+        {
+            if (!unmuteFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(unmute not configured)"));
+                return;
+            }
+            unmuteFn_();
+            bot_.sendMessageTo(u.chatId,
+                String("\xF0\x9F\x94\x94 Alerts unmuted.")); // 🔔
             return;
         }
 
