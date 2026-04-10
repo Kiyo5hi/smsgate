@@ -180,6 +180,8 @@ static String cachedOperatorName;
 static String cachedModemFirmware;
 // RFC-0076: Modem IMEI (AT+GSN), queried once at boot.
 static String cachedImei;
+// RFC-0077: SIM ICCID (AT+CICCID), queried once at boot.
+static String cachedIccid;
 // RFC-0031: CSQ trend — last 6 readings (one per 30s refresh = 3 min window).
 static int csqHistory[6] = {0, 0, 0, 0, 0, 0};
 static int csqHistoryIdx = 0;
@@ -665,6 +667,7 @@ void setup()
         if (cachedOperatorName.length() > 0) { msg += " ("; msg += cachedOperatorName; msg += ")"; }
         if (cachedModemFirmware.length() > 0) { msg += "\n  FW: "; msg += cachedModemFirmware; } // RFC-0045
         if (cachedImei.length() > 0) { msg += "\n  IMEI: "; msg += cachedImei; }                 // RFC-0076
+        if (cachedIccid.length() > 0) { msg += "\n  ICCID: "; msg += cachedIccid; }              // RFC-0077
         // RFC-0031: Append CSQ trend (oldest→newest, only if we have history).
         if (csqHistoryFull || csqHistoryIdx > 0)
         {
@@ -1008,6 +1011,11 @@ void setup()
     {
         cachedImei = modem.getIMEI();
         cachedImei.trim();
+    }
+    // RFC-0077: Query SIM ICCID once at boot (changes only on SIM swap).
+    {
+        cachedIccid = modem.getSimCCID();
+        cachedIccid.trim();
     }
     // RFC-0036: Prime SIM slot usage at boot.
     {
