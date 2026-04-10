@@ -2735,6 +2735,12 @@ void loop()
             lastPeriodicSweepMs != 0) // skip first iteration (boot sweep already done)
         {
             lastPeriodicSweepMs = millis();
+            // RFC-0242: Re-arm URC subscriptions before each sweep in case
+            // the A76xx firmware lost +CNMI/+CLIP during the 30-min window.
+            realModem.sendAT("+CNMI=2,1,0,0,0");
+            realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CLIP=1");
+            realModem.waitResponseOk(2000UL);
             esp_task_wdt_reset();
             smsHandler.sweepExistingSms();
             esp_task_wdt_reset();
@@ -2910,6 +2916,13 @@ void loop()
         else
         {
             modemFailStreak = 0;
+            // RFC-0242: Re-arm URC subscriptions after a silence period.
+            // Extended silence can follow an internal modem state change
+            // that clears +CNMI/+CLIP without triggering an AT failure.
+            realModem.sendAT("+CNMI=2,1,0,0,0");
+            realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CLIP=1");
+            realModem.waitResponseOk(2000UL);
         }
         esp_task_wdt_reset();
     }
