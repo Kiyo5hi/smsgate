@@ -523,7 +523,11 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             if (body.length() > 30) preview += "\xE2\x80\xA6"; // U+2026 ellipsis
             // RFC-0037: Append part count when message will be split.
             // `parts` already computed above for the length check (RFC-0049).
-            String confirmText = String("\xE2\x9C\x85 Queued to ") + phone + String(": ") + preview;
+            // RFC-0093: display alias name when used.
+            String displayPhone = (rawPhone.length() > 0 && rawPhone[0] == '@')
+                ? rawPhone + String(" (") + phone + String(")")
+                : phone;
+            String confirmText = String("\xE2\x9C\x85 Queued to ") + displayPhone + String(": ") + preview;
             if (parts > 1)
                 confirmText += String(" (") + String(parts) + String(" parts)");
             // RFC-0030: Use sendMessageReturningId so we can store the
@@ -589,8 +593,12 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     bot_.sendMessageTo(requesterChatId,
                         String("\xE2\x9C\x85 Test SMS to ") + capturedPhone + " sent."); // ✅
                 });
+            // RFC-0093: display alias name when used.
+            String displayPhone = (arg.length() > 0 && arg[0] == '@')
+                ? arg + String(" (") + phone + String(")")
+                : phone;
             bot_.sendMessageTo(u.chatId,
-                String("\xF0\x9F\x93\xA4 Test SMS queued to ") + phone); // 📤
+                String("\xF0\x9F\x93\xA4 Test SMS queued to ") + displayPhone); // 📤
             return;
         }
 
