@@ -61,6 +61,12 @@
 #  error "HEARTBEAT_INTERVAL_SEC must be 0 (disabled) or >= 300 (5 minutes)"
 #endif
 
+// Timezone offset from UTC in seconds for the /status time display.
+// Set in secrets.h, e.g.: #define TIMEZONE_OFFSET_SEC 28800  // UTC+8
+#ifndef TIMEZONE_OFFSET_SEC
+#  define TIMEZONE_OFFSET_SEC 0
+#endif
+
 #define SerialMon Serial
 #define TINY_GSM_DEBUG SerialMon
 
@@ -128,12 +134,6 @@ static CallHandler callHandler(realModem, realBot, []() -> uint32_t {
 // reachable by the native test env).
 static int64_t allowedIds[10] = {};
 static int     allowedIdCount = 0;
-
-// RFC-0019: Runtime user list, loaded from NVS at startup and mutated
-// at runtime via /adduser and /removeuser. Max 10 entries.
-// Only compile-time users (allowedIds[]) may mutate this list.
-static int64_t runtimeIds[10] = {};
-static int     runtimeIdCount = 0;
 
 // RFC-0018: SMS sender block list. Declared as file-scope statics so
 // the pointer passed to smsHandler.setBlockList() remains valid for the
@@ -535,21 +535,34 @@ void setup()
         unsigned long days = uptimeSec / 86400UL;
         unsigned long hours = (uptimeSec % 86400UL) / 3600UL;
         unsigned long mins = (uptimeSec % 3600UL) / 60UL;
-        String uptime;
-        uptime += String((int)days);
-        uptime += "d ";
-        uptime += String((int)hours);
-        uptime += "h ";
-        uptime += String((int)mins);
-        uptime += "m";
 
-        // --- WiFi RSSI ---
-        int rssi = WiFi.RSSI();
+        // --- current time with timezone offset ---
+        char timeBuf[32] = "(no NTP)";
+        {
+            time_t now = time(nullptr);
+            if (now > 8 * 3600 * 2) // NTP has synced
+            {
+                time_t local = now + TIMEZONE_OFFSET_SEC;
+                struct tm *t = gmtime(&local);
+                strftime(timeBuf, sizeof(timeBuf), "%Y-%m-%d %H:%M", t);
+            }
+        }
+        // Timezone label: "UTC" or "UTC+8" / "UTC-5"
+        char tzLabel[16] = "UTC";
+        if (TIMEZONE_OFFSET_SEC != 0)
+        {
+            int offsetH = TIMEZONE_OFFSET_SEC / 3600;
+            int offsetM = (TIMEZONE_OFFSET_SEC % 3600) / 60;
+            if (offsetM != 0)
+                snprintf(tzLabel, sizeof(tzLabel), "UTC%+d:%02d", offsetH, offsetM < 0 ? -offsetM : offsetM);
+            else
+                snprintf(tzLabel, sizeof(tzLabel), "UTC%+d", offsetH);
+        }
 
         // --- CSQ interpretation ---
-        String csqLabel;
+        const char *csqLabel;
         if (cachedCsq == 99)
-            csqLabel = "unknown/no signal";
+            csqLabel = "none";
         else if (cachedCsq <= 9)
             csqLabel = "marginal";
         else if (cachedCsq <= 14)
@@ -560,68 +573,49 @@ void setup()
             csqLabel = "excellent";
 
         // --- registration status ---
-        String regStr;
+        const char *regStr;
         switch (cachedRegStatus)
         {
-        case REG_OK_HOME:      regStr = "home";      break;
-        case REG_OK_ROAMING:   regStr = "roaming";   break;
-        case REG_SEARCHING:    regStr = "searching"; break;
-        case REG_DENIED:       regStr = "denied";    break;
-        case REG_UNREGISTERED: regStr = "unregistered"; break;
-        default:               regStr = "unknown";   break;
+        case REG_OK_HOME:      regStr = "home";          break;
+        case REG_OK_ROAMING:   regStr = "roaming";       break;
+        case REG_SEARCHING:    regStr = "searching";     break;
+        case REG_DENIED:       regStr = "denied";        break;
+        case REG_UNREGISTERED: regStr = "unregistered";  break;
+        default:               regStr = "unknown";       break;
         }
-
-        // --- heap ---
-        uint32_t freeHeap = ESP.getFreeHeap();
-
-        // --- reboot reason (RFC-0020) ---
-        // s_resetReason was captured once at the top of setup() via
-        // esp_reset_reason(); resetReasonStr() converts it to a string.
-        String rebootReason = String(resetReasonStr(s_resetReason));
 
         // --- assemble message ---
         String msg;
-        msg += "--- Device Status ---\n";
-        msg += "Uptime: ";          msg += uptime;                     msg += "\n";
-        msg += "WiFi RSSI: ";       msg += String(rssi);               msg += " dBm\n";
-        msg += "Modem CSQ: ";       msg += String(cachedCsq);
-        msg += " (";                msg += csqLabel;                   msg += ")\n";
-        msg += "Registration: ";    msg += regStr;                     msg += "\n";
-        msg += "Free heap: ";       msg += String((int)freeHeap);      msg += " bytes\n";
-        msg += "Reboot reason: ";   msg += rebootReason;               msg += "\n";
-        msg += "\n";
-        msg += "--- SMS Stats ---\n";
-        msg += "Forwarded: ";       msg += String(smsHandler.smsForwarded());      msg += "\n";
-        msg += "Failed: ";          msg += String(smsHandler.smsFailed());         msg += "\n";
-        msg += "Consecutive failures: ";
-        msg += String(smsHandler.consecutiveFailures());               msg += "\n";
-        msg += "Concat groups in flight: ";
-        msg += String((int)smsHandler.concatKeyCount());               msg += "\n";
-        msg += "\n";
-        msg += "--- Telegram ---\n";
-        msg += "Reply-target slots: ";
-        msg += String((int)replyTargets.occupiedSlots());
-        msg += "/";
-        msg += String((int)ReplyTargetMap::kSlotCount);                msg += "\n";
+
+        msg += "\xF0\x9F\x93\xA1 Device\n"; // 📡
+        msg += "  Time: ";      msg += timeBuf; msg += " "; msg += tzLabel; msg += "\n";
+        msg += "  Uptime: ";    msg += String((int)days); msg += "d "; msg += String((int)hours); msg += "h "; msg += String((int)mins); msg += "m\n";
+        msg += "  WiFi: ";      msg += String(WiFi.RSSI()); msg += " dBm\n";
+        msg += "  Modem: CSQ "; msg += String(cachedCsq); msg += " ("; msg += csqLabel; msg += ")  "; msg += regStr; msg += "\n";
+        msg += "  Heap: ";      msg += String((int)ESP.getFreeHeap()); msg += " B\n";
+        msg += "  Reset: ";     msg += resetReasonStr(s_resetReason); msg += "\n";
+
+        msg += "\n\xF0\x9F\x93\xA8 SMS\n"; // 📨
+        msg += "  Forwarded: "; msg += String(smsHandler.smsForwarded()); msg += "\n";
+        msg += "  Failed: ";    msg += String(smsHandler.smsFailed()); msg += "\n";
+        msg += "  Consec. failures: "; msg += String(smsHandler.consecutiveFailures()); msg += "\n";
+        msg += "  Concat in-flight: "; msg += String((int)smsHandler.concatKeyCount()); msg += "\n";
+
+        msg += "\n\xF0\x9F\x92\xAC Telegram\n"; // 💬
+        msg += "  Reply slots: ";
+        msg += String((int)replyTargets.occupiedSlots()); msg += "/"; msg += String((int)ReplyTargetMap::kSlotCount); msg += "\n";
         if (telegramPoller)
         {
-            msg += "Poll attempts: ";
-            msg += String(telegramPoller->pollAttempts());             msg += "\n";
-            msg += "Last update_id: ";
-            msg += String((long)telegramPoller->lastUpdateId());       msg += "\n";
+            msg += "  Polls: ";     msg += String(telegramPoller->pollAttempts()); msg += "\n";
+            msg += "  update_id: "; msg += String((long)telegramPoller->lastUpdateId()); msg += "\n";
         }
-        msg += "\n";
-        msg += "--- Debug Log ---\n";
-        msg += "Entries: ";
-        msg += String((int)smsDebugLog.count());
-        msg += "/";
-        msg += String((int)SmsDebugLog::kMaxEntries);                  msg += "\n";
-        msg += "\n";
-        msg += "--- Configuration ---\n";
-        msg += "Users (compile+runtime): ";
-        msg += String(allowedIdCount + runtimeIdCount);                msg += "\n";
-        msg += "Block list (compile+runtime): ";
-        msg += String(sBlockListCount + sRuntimeBlockListCount);       msg += "\n";
+
+        msg += "\n\xF0\x9F\x90\x9B Debug log: "; // 🐛
+        msg += String((int)smsDebugLog.count()); msg += "/"; msg += String((int)SmsDebugLog::kMaxEntries); msg += "\n";
+
+        msg += "\n\xE2\x9A\x99\xEF\xB8\x8F Config\n"; // ⚙️
+        msg += "  Users: ";      msg += String(allowedIdCount); msg += "\n";
+        msg += "  Block list: "; msg += String(sBlockListCount + sRuntimeBlockListCount); msg += "\n";
         return msg;
     };
 
@@ -629,112 +623,22 @@ void setup()
         realBot, smsSender, replyTargets, realPersist,
         []() -> uint32_t { return (uint32_t)millis(); },
         [](int64_t fromId) -> bool {
-            // RFC-0014: scan the compile-time allow list.
-            // RFC-0019: also scan the runtime NVS list.
-            // Both arrays are file-scope statics with process lifetime —
-            // safe to read without explicit capture syntax.
             if (fromId == 0) return false;
             for (int i = 0; i < allowedIdCount; i++)
             {
                 if (fromId == allowedIds[i]) return true;
             }
-            for (int i = 0; i < runtimeIdCount; i++)
-            {
-                if (fromId == runtimeIds[i]) return true;
-            }
             return false;
         },
         statusFn,
-        // RFC-0019: ListMutatorFn — handles /adduser, /removeuser, /listusers.
-        // Admin check (callerId in compile-time list) is performed here,
-        // not in TelegramPoller. All state is file-scope statics with
-        // process lifetime.
-        [](int64_t callerId, const String &cmd, int64_t targetId, String &reason) -> bool {
+        // ListMutatorFn — only handles /restart (RFC-0023). Admin check
+        // (callerId in compile-time list) performed here.
+        [](int64_t callerId, const String &cmd, int64_t /*targetId*/, String &reason) -> bool {
             bool isAdmin = false;
             for (int i = 0; i < allowedIdCount; i++)
             {
                 if (callerId == allowedIds[i]) { isAdmin = true; break; }
             }
-
-            if (cmd == "list")
-            {
-                // /listusers — any authorized user (auth already passed upstream).
-                String out = "Compile-time users (" + String(allowedIdCount) + "):\n";
-                for (int i = 0; i < allowedIdCount; i++)
-                {
-                    out += "  " + String((long long)allowedIds[i]);
-                    if (i == 0) out += " [admin]";
-                    out += "\n";
-                }
-                out += "Runtime users (" + String(runtimeIdCount) + "):\n";
-                for (int i = 0; i < runtimeIdCount; i++)
-                {
-                    out += "  " + String((long long)runtimeIds[i]) + "\n";
-                }
-                out += "Total: " + String(allowedIdCount + runtimeIdCount);
-                reason = out;
-                return true;
-            }
-
-            if (!isAdmin)
-            {
-                reason = String("Permission denied. Only compile-time users may manage the user list.");
-                return false;
-            }
-
-            if (cmd == "add")
-            {
-                for (int i = 0; i < allowedIdCount; i++)
-                {
-                    if (targetId == allowedIds[i])
-                    {
-                        reason = String("User is already a compile-time admin user.");
-                        return false;
-                    }
-                }
-                for (int i = 0; i < runtimeIdCount; i++)
-                {
-                    if (targetId == runtimeIds[i])
-                    {
-                        reason = String("User is already in the runtime list.");
-                        return false;
-                    }
-                }
-                if (runtimeIdCount >= 10)
-                {
-                    reason = String("Runtime user list is full (maximum 10). Remove a user first.");
-                    return false;
-                }
-                runtimeIds[runtimeIdCount++] = targetId;
-            }
-            else if (cmd == "remove")
-            {
-                for (int i = 0; i < allowedIdCount; i++)
-                {
-                    if (targetId == allowedIds[i])
-                    {
-                        reason = String("Cannot remove a compile-time user. Edit secrets.h and reflash.");
-                        return false;
-                    }
-                }
-                int idx = -1;
-                for (int i = 0; i < runtimeIdCount; i++)
-                {
-                    if (runtimeIds[i] == targetId) { idx = i; break; }
-                }
-                if (idx < 0)
-                {
-                    reason = String("User ") + String((long long)targetId) + " not in the runtime list.";
-                    return false;
-                }
-                for (int i = idx; i < runtimeIdCount - 1; i++)
-                {
-                    runtimeIds[i] = runtimeIds[i + 1];
-                }
-                runtimeIdCount--;
-            }
-
-            // RFC-0023: /restart — admin only, deferred via flag.
             if (cmd == "restart")
             {
                 if (!isAdmin)
@@ -742,17 +646,12 @@ void setup()
                     reason = String("Admin access required.");
                     return false;
                 }
-                reason = String("\xF0\x9F\x94\x84 Restarting..."); // U+1F504 counterclockwise arrows
+                reason = String("\xF0\x9F\x94\x84 Restarting..."); // U+1F504
                 s_pendingRestart = true;
                 return true;
             }
-
-            // Persist to NVS.
-            struct { int32_t count; int64_t ids[10]; } blob{};
-            blob.count = runtimeIdCount;
-            memcpy(blob.ids, runtimeIds, (size_t)runtimeIdCount * sizeof(int64_t));
-            realPersist.saveBlob("ulist", &blob, sizeof(blob));
-            return true;
+            reason = String("Unknown command.");
+            return false;
         },
         // RFC-0021: SmsBlockMutatorFn — handles /block, /unblock, /blocklist.
         // Admin check (callerId in compile-time list) performed here.
@@ -869,23 +768,6 @@ void setup()
     }
     else
     {
-        // RFC-0019: Load runtime user list from NVS. Must happen before the
-        // first telegramPoller->tick() so the AuthFn lambda sees the
-        // persisted list. The lambda captures runtimeIds/runtimeIdCount by
-        // implicit reference (file-scope statics), so values written here are
-        // visible on the first tick().
-        {
-            struct { int32_t count; int64_t ids[10]; } blob{};
-            size_t got = realPersist.loadBlob("ulist", &blob, sizeof(blob));
-            if (got >= sizeof(int32_t) && blob.count >= 0 && blob.count <= 10)
-            {
-                runtimeIdCount = blob.count;
-                memcpy(runtimeIds, blob.ids, (size_t)blob.count * sizeof(int64_t));
-            }
-            Serial.printf("Runtime user list: %d entr%s\n",
-                          runtimeIdCount, runtimeIdCount == 1 ? "y" : "ies");
-        }
-
         // RFC-0021: Load runtime SMS block list from NVS.
         {
             struct { int32_t count; char numbers[20][21]; } blob{};

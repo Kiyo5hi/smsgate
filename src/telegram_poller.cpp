@@ -105,92 +105,6 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
-        // /listusers — any authorized user (auth already passed above).
-        if (lower == "/listusers")
-        {
-            if (!mutator_)
-            {
-                bot_.sendMessageTo(u.chatId, String("User management is not configured."));
-                return;
-            }
-            String reason;
-            if (mutator_(u.fromId, String("list"), 0, reason))
-            {
-                bot_.sendMessageTo(u.chatId, reason);
-            }
-            else
-            {
-                bot_.sendMessageTo(u.chatId, reason);
-            }
-            return;
-        }
-
-        // /adduser <id> — admin only (enforced inside mutator_).
-        // Use trailing-space guard to avoid matching /addusers, /adduser_etc.
-        if (lower == "/adduser" || lower.startsWith("/adduser "))
-        {
-            String arg = extractArg(lower, "/adduser ");
-            if (arg.length() == 0)
-            {
-                bot_.sendMessageTo(u.chatId, String("Usage: /adduser <telegram_user_id>"));
-                return;
-            }
-            char *end = nullptr;
-            int64_t targetId = (int64_t)strtoll(arg.c_str(), &end, 10);
-            if (!end || *end != '\0' || targetId <= 0)
-            {
-                bot_.sendMessageTo(u.chatId, String("Invalid user ID. Must be a positive integer."));
-                return;
-            }
-            if (!mutator_)
-            {
-                bot_.sendMessageTo(u.chatId, String("User management is not configured."));
-                return;
-            }
-            String reason;
-            if (!mutator_(u.fromId, String("add"), targetId, reason))
-            {
-                bot_.sendMessageTo(u.chatId, reason);
-                return;
-            }
-            bot_.sendMessageTo(u.chatId,
-                String("User ") + String((long long)targetId) +
-                " added. They can now use /status, /debug, /listusers, and send SMS replies.");
-            return;
-        }
-
-        // /removeuser <id> — admin only (enforced inside mutator_).
-        if (lower == "/removeuser" || lower.startsWith("/removeuser "))
-        {
-            String arg = extractArg(lower, "/removeuser ");
-            if (arg.length() == 0)
-            {
-                bot_.sendMessageTo(u.chatId, String("Usage: /removeuser <telegram_user_id>"));
-                return;
-            }
-            char *end = nullptr;
-            int64_t targetId = (int64_t)strtoll(arg.c_str(), &end, 10);
-            if (!end || *end != '\0' || targetId <= 0)
-            {
-                bot_.sendMessageTo(u.chatId, String("Invalid user ID. Must be a positive integer."));
-                return;
-            }
-            if (!mutator_)
-            {
-                bot_.sendMessageTo(u.chatId, String("User management is not configured."));
-                return;
-            }
-            String reason;
-            if (!mutator_(u.fromId, String("remove"), targetId, reason))
-            {
-                bot_.sendMessageTo(u.chatId, reason);
-                return;
-            }
-            bot_.sendMessageTo(u.chatId,
-                String("User ") + String((long long)targetId) + " removed.");
-            return;
-        }
-
         // RFC-0023: /restart — admin-only soft reboot (deferred via flag in main.cpp).
         if (lower == "/restart")
         {
@@ -274,7 +188,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         Serial.println("TelegramPoller: no reply_to_message_id, dropping");
         {
             String help = "Reply to a forwarded SMS to send a response. ";
-            help += "Commands: /debug, /status, /listusers";
+            help += "Commands: /debug, /status, /restart";
             if (smsBlockMutator_)
                 help += ", /blocklist, /block <num>, /unblock <num>";
             sendErrorReply(u.chatId, help);

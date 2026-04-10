@@ -137,9 +137,8 @@ bool registerBotCommands(RealBotClient &bot)
 
     String url = String("/bot") + botToken + "/setMyCommands";
 
-    // RFC-0022: Register all 8 commands so Telegram's autocomplete menu
-    // shows the full feature set (the / menu IS the /help command).
-    DynamicJsonDocument doc(1024);
+    // Register all commands so Telegram's autocomplete menu shows them.
+    DynamicJsonDocument doc(512);
     JsonArray cmds = doc.createNestedArray("commands");
     {
         JsonObject c = cmds.createNestedObject();
@@ -153,38 +152,23 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
-        c["command"] = "listusers";
-        c["description"] = "List authorized Telegram users";
-    }
-    {
-        JsonObject c = cmds.createNestedObject();
-        c["command"] = "adduser";
-        c["description"] = "Add a Telegram user (admin only)";
-    }
-    {
-        JsonObject c = cmds.createNestedObject();
-        c["command"] = "removeuser";
-        c["description"] = "Remove a Telegram user (admin only)";
-    }
-    {
-        JsonObject c = cmds.createNestedObject();
         c["command"] = "blocklist";
-        c["description"] = "Show SMS sender block lists";
+        c["description"] = "Show SMS sender block list";
     }
     {
         JsonObject c = cmds.createNestedObject();
         c["command"] = "block";
-        c["description"] = "Block an SMS sender (admin only)";
+        c["description"] = "Block an SMS sender";
     }
     {
         JsonObject c = cmds.createNestedObject();
         c["command"] = "unblock";
-        c["description"] = "Unblock an SMS sender (admin only)";
+        c["description"] = "Unblock an SMS sender";
     }
     {
         JsonObject c = cmds.createNestedObject();
         c["command"] = "restart";
-        c["description"] = "Soft reboot the bridge (admin only)";
+        c["description"] = "Soft reboot the bridge";
     }
 
     String payload;
@@ -241,7 +225,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /debug /status /listusers /adduser /removeuser /blocklist /block /unblock /restart");
+        Serial.println("Bot commands registered: /debug /status /blocklist /block /unblock /restart");
     }
     else
     {
