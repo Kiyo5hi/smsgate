@@ -7943,6 +7943,88 @@ void test_TelegramPoller_schedulesend_unknown_alias_error()
     TEST_ASSERT_EQUAL(0U, poller.getSchedQueue()[0].sendAtMs);
 }
 
+// RFC-0225: /phoneinfo shows alias and snooze info.
+void test_TelegramPoller_phoneinfo_shows_alias_and_snooze()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 10000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    store.set(String("carol"), String("+5551111"));
+    poller.setAliasStore(&store);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Snooze +5551111 for 30 min.
+    bot.queueUpdateBatch({makeUpdate(26001, kAllowedFromId, 0,
+        "/snooze +5551111 30", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(26001, poller.lastUpdateId());
+
+    // Query phoneinfo.
+    bot.queueUpdateBatch({makeUpdate(26002, kAllowedFromId, 0,
+        "/phoneinfo +5551111", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(26002, poller.lastUpdateId());
+
+    bool sawAlias = false, sawSnooze = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf("carol") >= 0) sawAlias = true;
+        if (m.indexOf("Snooze") >= 0 || m.indexOf("remaining") >= 0) sawSnooze = true;
+    }
+    TEST_ASSERT_TRUE(sawAlias);
+    TEST_ASSERT_TRUE(sawSnooze);
+}
+
+// RFC-0225: /phoneinfo with @alias resolves correctly.
+void test_TelegramPoller_phoneinfo_with_alias_arg()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 10000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    store.set(String("dave"), String("+5552222"));
+    poller.setAliasStore(&store);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(26003, kAllowedFromId, 0,
+        "/phoneinfo @dave", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(26003, poller.lastUpdateId());
+
+    bool sawPhone = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("+5552222") >= 0) { sawPhone = true; break; }
+    TEST_ASSERT_TRUE(sawPhone);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -8744,6 +8826,9 @@ void run_telegram_poller_tests()
     // RFC-0224: @alias in scheduling commands
     RUN_TEST(test_TelegramPoller_schedulesend_alias_resolves);
     RUN_TEST(test_TelegramPoller_schedulesend_unknown_alias_error);
+    // RFC-0225: /phoneinfo command
+    RUN_TEST(test_TelegramPoller_phoneinfo_shows_alias_and_snooze);
+    RUN_TEST(test_TelegramPoller_phoneinfo_with_alias_arg);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);

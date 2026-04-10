@@ -309,6 +309,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/smshandlerinfo \xe2\x80\x94 SMS handler config + stats snapshot\n";
             help += "/setblockmode on|off \xe2\x80\x94 Enable/suspend SMS block list enforcement\n";
             help += "/blockcheck <phone> \xe2\x80\x94 Test if a number would be blocked\n";
+            help += "/phoneinfo <phone|@alias> \xe2\x80\x94 Block/snooze/alias/log summary for a number\n"; // RFC-0225
             help += "/setcallnotify on|off \xe2\x80\x94 Enable/mute call Telegram notifications\n";
             help += "/callstatus \xe2\x80\x94 Show call handler config and state\n";
             help += "/setcalldedup <s> \xe2\x80\x94 Call dedup cooldown window in seconds (1\xe2\x80\x9360)\n";
@@ -1094,6 +1095,77 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 return;
             }
             bot_.sendMessageTo(u.chatId, blockCheckFn_(arg));
+            return;
+        }
+
+        // RFC-0225: /phoneinfo <phone|@alias> — consolidated info about a number.
+        if (lower == "/phoneinfo" || lower.startsWith("/phoneinfo "))
+        {
+            String piArg = extractArg(u.text, "/phoneinfo ");
+            piArg.trim();
+            if (piArg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /phoneinfo <phone|@alias>\n"
+                           "Example: /phoneinfo +8613912345678"));
+                return;
+            }
+            String piErr;
+            String piPhone = resolvePhone(piArg, aliasStore_, piErr);
+            if (piPhone.length() == 0)
+            {
+                sendErrorReply(u.chatId, piErr.length() > 0
+                    ? piErr : String("\xe2\x9d\x8c Invalid phone number.")); // ❌
+                return;
+            }
+            String piOut = String("\xf0\x9f\x93\x9e ") + piPhone + String(":\n"); // 📞
+
+            // Aliases.
+            String piAliases;
+            if (aliasStore_)
+            {
+                aliasStore_->forEach([&](const String &name, const String &phone) {
+                    if (phone == piPhone)
+                    {
+                        if (piAliases.length() > 0) piAliases += String(", ");
+                        piAliases += String("@") + name;
+                    }
+                });
+            }
+            piOut += String("  Aliases: ") + (piAliases.length() > 0 ? piAliases : String("(none)")) + String("\n");
+
+            // Block status.
+            if (blockCheckFn_)
+            {
+                String bcResult = blockCheckFn_(piPhone);
+                bool isBlocked = (bcResult.indexOf("BLOCKED") >= 0);
+                piOut += String("  Block: ") + (isBlocked ? String("BLOCKED") : String("allowed")) + String("\n");
+            }
+
+            // Snooze status.
+            uint32_t piNow = clock_ ? clock_() : 0;
+            bool snoozed = false;
+            for (const auto &s : snoozeList_)
+            {
+                if (s.first == piPhone && piNow < s.second)
+                {
+                    uint32_t remMs = s.second - piNow;
+                    uint32_t remMin = (remMs + 59999U) / 60000U;
+                    piOut += String("  Snooze: ") + String(remMin) + String("m remaining\n");
+                    snoozed = true;
+                    break;
+                }
+            }
+            if (!snoozed)
+                piOut += String("  Snooze: (not snoozed)\n");
+
+            // Recent log entries.
+            if (debugLog_)
+            {
+                String recent = debugLog_->dumpBriefFiltered(3, piPhone);
+                piOut += String("  Recent: ") + recent;
+            }
+            bot_.sendMessageTo(u.chatId, piOut);
             return;
         }
 
