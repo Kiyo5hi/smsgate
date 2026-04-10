@@ -1123,11 +1123,24 @@ void loop()
         if ((uint32_t)(nowMs - lastHeartbeatMs) >= (uint32_t)HEARTBEAT_INTERVAL_SEC * 1000u)
         {
             lastHeartbeatMs = nowMs;  // advance regardless of send result
-            if (statusFn)
+            esp_task_wdt_reset();  // heartbeat sendMessage can block; pet WDT first
+            // RFC-0051: compact one-line heartbeat (uptime | signal | fwd | queue).
             {
-                esp_task_wdt_reset();  // heartbeat sendMessage can block; pet WDT first
-                String msg = String("⏱ Heartbeat\n") + statusFn();
-                if (!realBot.sendMessage(msg))
+                unsigned long uptimeSec2 = millis() / 1000UL;
+                unsigned long days2  = uptimeSec2 / 86400UL;
+                unsigned long hours2 = (uptimeSec2 % 86400UL) / 3600UL;
+                unsigned long mins2  = (uptimeSec2 % 3600UL) / 60UL;
+                String hb = String("\xE2\x8F\xB1 "); // ⏱
+                hb += String((int)days2); hb += "d ";
+                hb += String((int)hours2); hb += "h ";
+                hb += String((int)mins2); hb += "m";
+                hb += String(" | CSQ "); hb += String(cachedCsq);
+                if (cachedOperatorName.length() > 0) { hb += " "; hb += cachedOperatorName; }
+                hb += String(" | WiFi "); hb += String(WiFi.RSSI()); hb += "dBm";
+                hb += String(" | fwd "); hb += String(smsHandler.smsForwarded());
+                hb += String(" | q "); hb += String(smsSender.queueSize());
+                hb += String("/"); hb += String(SmsSender::kQueueSize);
+                if (!realBot.sendMessage(hb))
                     Serial.println("Heartbeat: sendMessage failed (connectivity issue)");
             }
         }
