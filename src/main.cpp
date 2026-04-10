@@ -3041,6 +3041,12 @@ void loop()
                         {
                             activeTransport = ActiveTransport::kWiFi;
                             Serial.println("Transport switched to WiFi.");
+                            // RFC-0243: sweep SIM after cellular→WiFi switch —
+                            // any SMS that failed to forward on the cellular
+                            // path are still on the SIM.
+                            esp_task_wdt_reset();
+                            smsHandler.sweepExistingSms();
+                            esp_task_wdt_reset();
                         }
                     }
                     else
@@ -3071,6 +3077,17 @@ void loop()
                     {
                         activeTransport = ActiveTransport::kWiFi;
                         Serial.println("WiFi transport established (deferred).");
+                        // RFC-0243: sweep SIM now that transport is available —
+                        // any SMS that arrived before transport was ready
+                        // would have been deferred (s_needBootSweep or failures).
+                        // The RFC-0238 onPollSuccessFn handles the boot-sweep flag,
+                        // but a direct sweep here ensures fast recovery on the
+                        // first successful transport establishment.
+                        // Note: if s_needBootSweep is set, the onPollSuccessFn will
+                        // also sweep — that's harmless (CMGL finds nothing if empty).
+                        esp_task_wdt_reset();
+                        smsHandler.sweepExistingSms();
+                        esp_task_wdt_reset();
                     }
                 }
             }
