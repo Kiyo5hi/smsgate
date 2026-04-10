@@ -1052,6 +1052,19 @@ void setup()
                 smsHandler.setBlockingEnabled(v != 0);
         }
 
+        // RFC-0185: Restore call notify flag and poll interval from NVS.
+        {
+            uint8_t v = 1;
+            if (realPersist.loadBlob("call_notify", &v, sizeof(v)) == sizeof(v))
+                callHandler.setCallNotifyEnabled(v != 0);
+        }
+        {
+            uint32_t v = 0;
+            if (realPersist.loadBlob("poll_ms", &v, sizeof(v)) == sizeof(v)
+                && v >= 1000 && v <= 30000)
+                telegramPoller->setPollIntervalMs(v);
+        }
+
         // RFC-0150: Load auto-reply text from NVS.
         {
             char buf[161] = {};
@@ -1204,6 +1217,9 @@ void setup()
             s_pendingRestart = true;
         });
         telegramPoller->setClearNvsFn([]() { realPersist.clearAll(); }); // RFC-0184
+        telegramPoller->setOnPollIntervalChangedFn([](uint32_t ms) { // RFC-0185
+            realPersist.saveBlob("poll_ms", &ms, sizeof(ms));
+        });
         telegramPoller->setLabelGetFn([]() -> String {              // RFC-0118
             return s_deviceLabel;
         });
@@ -1431,8 +1447,10 @@ void setup()
             uint8_t v = enable ? 1 : 0;
             realPersist.saveBlob("blk_enabled", &v, sizeof(v));
         });
-        telegramPoller->setCallNotifyFn([&callHandler](bool enable) { // RFC-0164
+        telegramPoller->setCallNotifyFn([&callHandler](bool enable) { // RFC-0164/0185
             callHandler.setCallNotifyEnabled(enable);
+            uint8_t v = enable ? 1 : 0;
+            realPersist.saveBlob("call_notify", &v, sizeof(v));
         });
         telegramPoller->setCallDedupFn([&callHandler](uint32_t ms) { // RFC-0165
             callHandler.setDedupeWindowMs(ms);

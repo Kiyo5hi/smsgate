@@ -377,13 +377,22 @@ public:
     // RFC-0147: Change Telegram poll interval directly. The fn called by
     // /setpollinterval also calls setPollIntervalMs() on this poller.
     // Range: 1000–300000ms. Takes effect on the next tick.
+    // RFC-0185: fires onPollIntervalChangedFn_ (if set) after mutation.
     void setPollIntervalMs(uint32_t ms)
     {
         if (ms < 1000) ms = 1000;
         if (ms > 300000) ms = 300000;
         pollIntervalMs_ = ms;
+        if (onPollIntervalChangedFn_) onPollIntervalChangedFn_(ms);
     }
     uint32_t pollIntervalMs() const { return pollIntervalMs_; }
+
+    // RFC-0185: optional callback fired whenever setPollIntervalMs mutates the
+    // interval (from /setpollinterval). Use in main.cpp to persist to NVS.
+    void setOnPollIntervalChangedFn(std::function<void(uint32_t)> fn)
+    {
+        onPollIntervalChangedFn_ = std::move(fn);
+    }
 
     // RFC-0144: Optional dedup window setter. When set, /setdedup <seconds>
     // changes the dedup window (0 = disable, max 3600).
@@ -497,6 +506,7 @@ private:
     std::function<String()> smsHandlerInfoFn_;                       // RFC-0174
     std::function<bool(int)> smsForwardFn_;        // RFC-0146
     uint32_t pollIntervalMs_ = kPollIntervalMs;    // RFC-0147
+    std::function<void(uint32_t)> onPollIntervalChangedFn_; // RFC-0185
     std::function<void(uint32_t)> dedupWindowFn_;  // RFC-0144
     std::function<void()> clearDedupFn_;           // RFC-0145
     std::function<void(uint32_t)> concatTtlFn_;    // RFC-0142
