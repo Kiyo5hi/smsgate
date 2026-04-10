@@ -260,6 +260,11 @@ public:
     // "(setinterval not configured)".
     void setIntervalFn(std::function<void(uint32_t)> fn) { intervalFn_ = std::move(fn); }
 
+    // RFC-0177: Optional immediate heartbeat trigger. When set, /hbnow calls
+    // this fn to force the next loop() iteration to send a heartbeat.
+    // The fn should return false if the heartbeat is currently disabled.
+    void setHeartbeatNowFn(std::function<bool()> fn) { heartbeatNowFn_ = std::move(fn); }
+
     // RFC-0131: /note and /setnote — persistent device note stored in NVS.
     void setNoteGetFn(std::function<String()> fn) { noteGetFn_ = std::move(fn); }
     void setNoteSetFn(std::function<void(const String &)> fn) { noteSetFn_ = std::move(fn); }
@@ -454,6 +459,7 @@ private:
     AnnounceFn announceFn_;               // RFC-0129
     std::function<String()> digestFn_;    // RFC-0130
     std::function<void(uint32_t)> intervalFn_; // RFC-0137
+    std::function<bool()> heartbeatNowFn_;    // RFC-0177
     std::function<String()> noteGetFn_;   // RFC-0131
     std::function<void(const String &)> noteSetFn_; // RFC-0131
     std::function<void(int)> maxFailFn_;  // RFC-0138

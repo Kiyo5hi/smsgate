@@ -167,6 +167,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/announce <msg> \xe2\x80\x94 Broadcast message to all authorized users\n";
             help += "/digest \xe2\x80\x94 Show on-demand stats digest\n";
             help += "/setinterval <s> \xe2\x80\x94 Set heartbeat interval (0=disable, max 86400)\n";
+            help += "/hbnow \xe2\x80\x94 Trigger an immediate heartbeat (force-send now)\n";
             help += "/note \xe2\x80\x94 Show device note\n";
             help += "/setnote <text> \xe2\x80\x94 Save device note (max 120 chars)\n";
             help += "/me \xe2\x80\x94 Show your Telegram fromId and chatId\n";
@@ -2023,6 +2024,24 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId,
                     String("\xe2\x9c\x85 Heartbeat interval set to ") // ✅
                     + String((int)val) + String(" seconds."));
+            return;
+        }
+
+        // RFC-0177: /hbnow — trigger immediate heartbeat.
+        if (lower == "/hbnow")
+        {
+            if (!heartbeatNowFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(hbnow not configured)"));
+                return;
+            }
+            bool ok = heartbeatNowFn_();
+            if (ok)
+                bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 Heartbeat triggered.")); // ✅
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9a\xa0\xef\xb8\x8f Heartbeat is disabled \xe2\x80\x94 " // ⚠️ —
+                           "enable with /setinterval first."));
             return;
         }
 

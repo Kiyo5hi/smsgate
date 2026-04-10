@@ -241,9 +241,8 @@ static std::function<String()> statusFn;
 
 // RFC-0017: Heartbeat timer. Initialised to 0 so the first heartbeat fires
 // one full interval after boot (the boot banner already covers "just started").
-#if HEARTBEAT_INTERVAL_SEC != 0
+// Unconditionally declared so /hbnow (RFC-0177) can reset it from a lambda.
 static uint32_t lastHeartbeatMs = 0;
-#endif
 // RFC-0137: Runtime-overridable heartbeat interval. Loaded from NVS "hb_interval"
 // at boot; set via /setinterval. 0 = disabled. Defaults to HEARTBEAT_INTERVAL_SEC.
 static uint32_t s_heartbeatIntervalSec = HEARTBEAT_INTERVAL_SEC;
@@ -1341,6 +1340,12 @@ void setup()
         telegramPoller->setIntervalFn([](uint32_t secs) {           // RFC-0137
             s_heartbeatIntervalSec = secs;
             realPersist.saveBlob("hb_interval", &secs, sizeof(secs));
+        });
+        telegramPoller->setHeartbeatNowFn([]() -> bool { // RFC-0177
+            if (s_heartbeatIntervalSec == 0) return false;
+            // Back-date the timer so the next loop() tick fires the heartbeat.
+            lastHeartbeatMs = (uint32_t)millis() - s_heartbeatIntervalSec * 1000UL - 1;
+            return true;
         });
         telegramPoller->setSweepFn([&smsHandler]() -> int { // RFC-0148
             return smsHandler.sweepExistingSms();

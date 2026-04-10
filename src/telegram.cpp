@@ -400,6 +400,11 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "hbnow";
+        c["description"] = "Trigger immediate heartbeat send";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "setmaxfail";
         c["description"] = "Set failure reboot threshold: /setmaxfail <N> (0=never)";
     }

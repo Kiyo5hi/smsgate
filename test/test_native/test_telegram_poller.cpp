@@ -3988,6 +3988,60 @@ void test_TelegramPoller_setinterval_too_large_sends_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0177: /hbnow calls heartbeatNowFn and replies success when enabled.
+void test_TelegramPoller_hbnow_calls_fn_and_replies_success()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool called = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setHeartbeatNowFn([&called]() -> bool { called = true; return true; });
+
+    bot.queueUpdateBatch({makeUpdate(1098, kAllowedFromId, 0, "/hbnow", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(called);
+    bool sawOk = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("triggered") >= 0) { sawOk = true; break; }
+    TEST_ASSERT_TRUE(sawOk);
+}
+
+// RFC-0177: /hbnow replies disabled message when fn returns false.
+void test_TelegramPoller_hbnow_replies_disabled_when_fn_returns_false()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setHeartbeatNowFn([]() -> bool { return false; }); // disabled
+
+    bot.queueUpdateBatch({makeUpdate(1099, kAllowedFromId, 0, "/hbnow", kAllowedFromId)});
+    poller.tick();
+
+    bool sawDisabled = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("disabled") >= 0) { sawDisabled = true; break; }
+    TEST_ASSERT_TRUE(sawDisabled);
+}
+
 // RFC-0134: /clearaliases with populated store → removes all and confirms count.
 void test_TelegramPoller_clearaliases_removes_all()
 {
@@ -6220,6 +6274,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setinterval_calls_fn);
     RUN_TEST(test_TelegramPoller_setinterval_zero_disables);
     RUN_TEST(test_TelegramPoller_setinterval_too_large_sends_error);
+    // RFC-0177: /hbnow command
+    RUN_TEST(test_TelegramPoller_hbnow_calls_fn_and_replies_success);
+    RUN_TEST(test_TelegramPoller_hbnow_replies_disabled_when_fn_returns_false);
     // RFC-0152: /resetwatermark
     RUN_TEST(test_TelegramPoller_resetwatermark_resets_to_zero);
     // RFC-0153: /setforward command
