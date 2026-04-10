@@ -324,6 +324,47 @@ void test_CallHandler_ignores_unrelated_urcs()
 
 // ---------- Unity plumbing ----------
 
+// RFC-0100: onCallFn fires with caller number on commit.
+void test_CallHandler_onCallFn_fires_with_number()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    ClockFixture clk;
+    CallHandler handler(modem, bot, [&]() { return clk.nowMs; });
+
+    String capturedNumber;
+    handler.setOnCallFn([&](const String &num) { capturedNumber = num; });
+
+    handler.onUrcLine(String("RING"));
+    handler.onUrcLine(String("+CLIP: \"13800138000\",129,\"\",,\"\",0"));
+
+    TEST_ASSERT_TRUE(capturedNumber.indexOf(String("138")) >= 0);
+}
+
+// RFC-0100: onCallFn fires with empty string for unknown caller.
+void test_CallHandler_onCallFn_empty_for_unknown()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    ClockFixture clk;
+    CallHandler handler(modem, bot, [&]() { return clk.nowMs; });
+
+    bool called = false;
+    String capturedNumber = "SENTINEL";
+    handler.setOnCallFn([&](const String &num) {
+        called = true;
+        capturedNumber = num;
+    });
+
+    // RING only, no +CLIP — should commit after deadline with empty number.
+    handler.onUrcLine(String("RING"));
+    clk.nowMs += CallHandler::kUnknownNumberDeadlineMs + 1;
+    handler.tick();
+
+    TEST_ASSERT_TRUE(called);
+    TEST_ASSERT_EQUAL(0, (int)capturedNumber.length()); // empty for unknown
+}
+
 void run_call_handler_tests()
 {
     RUN_TEST(test_parseClipLine_standard);
@@ -345,4 +386,7 @@ void run_call_handler_tests()
     RUN_TEST(test_CallHandler_RINGING_is_not_a_RING);
     RUN_TEST(test_CallHandler_bot_send_failure_still_hangs_up);
     RUN_TEST(test_CallHandler_ignores_unrelated_urcs);
+    // RFC-0100: onCallFn callback
+    RUN_TEST(test_CallHandler_onCallFn_fires_with_number);
+    RUN_TEST(test_CallHandler_onCallFn_empty_for_unknown);
 }

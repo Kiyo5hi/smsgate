@@ -1023,6 +1023,14 @@ void setup()
             return s;
         });
         smsSender.setDebugLog(&smsDebugLog); // RFC-0035: log outbound failures
+#ifdef CALL_AUTO_REPLY_TEXT
+        // RFC-0100: Auto-reply SMS when a call is auto-rejected.
+        callHandler.setOnCallFn([](const String &callerNumber) {
+            if (callerNumber.length() == 0) return; // can't SMS unknown number
+            smsSender.enqueue(callerNumber, String(CALL_AUTO_REPLY_TEXT),
+                nullptr, nullptr);
+        });
+#endif
         telegramPoller->setAliasStore(&smsAliasStore); // RFC-0088
         telegramPoller->setMuteFn([](uint32_t minutes) { // RFC-0098
             s_alertsMutedUntilMs = (uint32_t)millis() + minutes * 60000UL;

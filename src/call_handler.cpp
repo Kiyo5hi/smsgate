@@ -138,6 +138,10 @@ void CallHandler::commitRinging()
         modem_.waitResponseOk(1000UL);
     }
 
+    // RFC-0100: fire optional callback with the caller number.
+    if (onCallFn_)
+        onCallFn_(number_);
+
     // Enter cooldown regardless of hangup success — we've done all we
     // can, and the dedupe window keeps us from double-notifying on
     // continued RINGs if the hangup didn't take.

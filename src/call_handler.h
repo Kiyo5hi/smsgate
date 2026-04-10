@@ -66,6 +66,15 @@ public:
     // RFC-0043: Lifetime call counter (RAM only, reset on reboot).
     int callsReceived() const { return callsReceived_; }
 
+    // RFC-0100: Optional callback fired when a call event is committed.
+    // Receives the caller's phone number string (empty string if unknown).
+    // Production wires this to enqueue an auto-reply SMS when
+    // CALL_AUTO_REPLY_TEXT is defined. Tests pass a capture lambda.
+    void setOnCallFn(std::function<void(const String &number)> fn)
+    {
+        onCallFn_ = std::move(fn);
+    }
+
     // Test-only accessors.
     enum class State
     {
@@ -95,4 +104,5 @@ private:
     // Cooldown bookkeeping — when the current suppression window ends.
     uint32_t cooldownUntilMs_ = 0;
     int callsReceived_ = 0;  // RFC-0043
+    std::function<void(const String &)> onCallFn_; // RFC-0100
 };
