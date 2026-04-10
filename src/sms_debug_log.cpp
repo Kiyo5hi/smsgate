@@ -221,6 +221,25 @@ String SmsDebugLog::dump() const
         }
         out += "\n";
     }
+
+    // RFC-0258: Telegram rejects messages longer than 4096 characters.
+    // Worst-case dump() output is ~5024 chars (20 entries × ~250 chars each).
+    // Truncate at the last entry boundary (\n) before the limit and append
+    // a notice so the user knows output was cut.
+    static constexpr unsigned int kTgMaxLen = 4096;
+    if (out.length() > kTgMaxLen)
+    {
+        const char *kFooter = "\n...(truncated, use /debugbrief for summary)";
+        unsigned int footerLen = (unsigned int)strlen(kFooter);
+        unsigned int cutAt = kTgMaxLen - footerLen;
+        while (cutAt > 0 && out[cutAt] != '\n')
+            --cutAt;
+        if (cutAt == 0)
+            cutAt = kTgMaxLen - footerLen;  // no newline found; hard cut
+        out = out.substring(0, cutAt);
+        out += kFooter;
+    }
+
     return out;
 }
 

@@ -47,7 +47,9 @@ public:
     void setSink(IPersist &p) { persist_ = &p; }
 
     // Format all entries oldest-first as a Telegram-friendly string.
-    // Fits in a single 4096-char message for 20 entries.
+    // Output is capped at 4096 chars (Telegram's message limit); if the
+    // verbose log would exceed that, it is truncated at an entry boundary
+    // and a notice directs the user to /debugbrief. (RFC-0258)
     String dump() const;
 
     // RFC-0058: Return the last `n` entries newest-first in a compact
