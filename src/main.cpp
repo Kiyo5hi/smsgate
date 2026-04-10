@@ -2642,6 +2642,14 @@ void loop()
         deliveryReportMap.evictExpired((uint32_t)millis());
 #endif
 
+        // RFC-0236 + RFC-0234: Any modem response means the modem is alive.
+        // The AT exchanges consume bytes from SerialAT via TinyGSM's internal
+        // waitResponse(), so the URC drain loop never sees them and
+        // s_lastSerialActivityMs is not updated. Update it here to prevent
+        // the RFC-0234 silence heuristic from falsely declaring the modem hung.
+        if (s236raw.length() > 0)
+            s_lastSerialActivityMs = millis();
+
         // RFC-0236: Scan all captured AT response buffers for piggybacked
         // +CMTI / RING / +CLIP URCs. TinyGSM's waitResponse() reads every
         // byte arriving on SerialAT into the capture string — URCs that race
