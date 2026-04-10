@@ -1066,6 +1066,20 @@ void setup()
         telegramPoller->setUssdFn([](const String &code) -> String { // RFC-0103
             return realModem.ussdQuery(code, 10000UL);
         });
+        telegramPoller->setSimInfoFn([]() -> String {               // RFC-0105
+            const char *csqLabel;
+            if (cachedCsq == 99)      csqLabel = "none";
+            else if (cachedCsq <= 9)  csqLabel = "marginal";
+            else if (cachedCsq <= 14) csqLabel = "ok";
+            else if (cachedCsq <= 19) csqLabel = "good";
+            else                      csqLabel = "excellent";
+            String s = String("\xF0\x9F\x93\xB6 SIM info\n"); // 📶
+            if (cachedIccid.length() > 0)        { s += "  ICCID: ";    s += cachedIccid;        s += "\n"; }
+            if (cachedImei.length() > 0)          { s += "  IMEI: ";     s += cachedImei;          s += "\n"; }
+            if (cachedOperatorName.length() > 0)  { s += "  Operator: "; s += cachedOperatorName; s += "\n"; }
+            s += "  CSQ: "; s += String(cachedCsq); s += " ("; s += csqLabel; s += ")";
+            return s;
+        });
         telegramPoller->begin();
         Serial.print("TG->SMS poller online; reply-target slots in use: ");
         Serial.println((unsigned long)replyTargets.occupiedSlots());

@@ -107,6 +107,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/unmute \xe2\x80\x94 Cancel alert snooze\n";
             help += "/heap \xe2\x80\x94 Show free/min/max-block heap\n";
             help += "/csq \xe2\x80\x94 Quick signal strength snapshot\n";
+            help += "/sim \xe2\x80\x94 SIM identity (ICCID, IMEI, operator)\n";
             help += "/ussd <code> \xe2\x80\x94 Send USSD code (e.g. *100#) and get response\n";
             help += "/version \xe2\x80\x94 Show firmware build timestamp\n";
             help += "/restart \xe2\x80\x94 Soft reboot\n";
@@ -322,6 +323,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, csqFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(signal info not configured)"));
+            return;
+        }
+
+        // RFC-0105: /sim — compact SIM identity snapshot (ICCID, IMEI, operator, CSQ).
+        if (lower == "/sim")
+        {
+            if (simInfoFn_)
+                bot_.sendMessageTo(u.chatId, simInfoFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(SIM info not configured)"));
             return;
         }
 

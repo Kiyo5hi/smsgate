@@ -1583,6 +1583,73 @@ void test_TelegramPoller_sendall_delivery_summary_partial_failure()
     TEST_ASSERT_TRUE(sawSummary);
 }
 
+// ---------- RFC-0105: /sim command ----------
+
+void test_TelegramPoller_sim_command_calls_sim_info_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    poller.setSimInfoFn([]() -> String {
+        return String("SIM info\n  ICCID: 89860123456789\n  Operator: TestNet\n  CSQ: 14 (ok)");
+    });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(820, kAllowedFromId, 0, "/sim", kAllowedFromId)});
+    poller.tick();
+
+    bool sawSim = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("ICCID")) >= 0 && m.text.indexOf(String("TestNet")) >= 0)
+        {
+            sawSim = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawSim);
+    TEST_ASSERT_EQUAL(820, poller.lastUpdateId());
+}
+
+void test_TelegramPoller_sim_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    // No setSimInfoFn call.
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(821, kAllowedFromId, 0, "/sim", kAllowedFromId)});
+    poller.tick();
+
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("not configured")) >= 0)
+        {
+            sawNotConfigured = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
 // ---------- RFC-0092: /csq ----------
 
 void test_TelegramPoller_csq_command_calls_csq_fn()
@@ -2120,6 +2187,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_send_multipart_shows_part_count);
     // RFC-0089: /clearqueue command
     RUN_TEST(test_TelegramPoller_clearqueue_discards_entries);
+    // RFC-0105: /sim command
+    RUN_TEST(test_TelegramPoller_sim_command_calls_sim_info_fn);
+    RUN_TEST(test_TelegramPoller_sim_not_configured_replies);
     // RFC-0092: /csq command
     RUN_TEST(test_TelegramPoller_csq_command_calls_csq_fn);
     // RFC-0098: /mute and /unmute commands

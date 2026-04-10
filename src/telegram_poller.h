@@ -176,6 +176,10 @@ public:
     // failure. Production wires this to a lambda calling realModem.ussdQuery().
     void setUssdFn(std::function<String(const String &)> fn) { ussdFn_ = std::move(fn); }
 
+    // RFC-0105: Optional SIM info callback. When set, /sim calls simInfoFn_()
+    // and replies with a compact ICCID / IMEI / operator / CSQ snapshot.
+    void setSimInfoFn(std::function<String()> fn) { simInfoFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -212,6 +216,7 @@ private:
     std::function<void(uint32_t)> muteFn_;  // RFC-0098
     std::function<void()> unmuteFn_;        // RFC-0098
     std::function<String(const String &)> ussdFn_;  // RFC-0103
+    std::function<String()> simInfoFn_;              // RFC-0105
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;
