@@ -11,6 +11,7 @@
 #include "reply_target_map.h"
 #include "sms_alias_store.h"
 #include "sms_sender.h"
+#include "sms_template_store.h"
 
 class SmsDebugLog;
 
@@ -165,6 +166,10 @@ public:
     // and /aliases commands are enabled, and @name expansion works in /send
     // and /test.
     void setAliasStore(SmsAliasStore *store) { aliasStore_ = store; }
+
+    // RFC-0227: Optional SMS template store. When set, /tsave, /tlist, /trm,
+    // /tclear, /tsend, and /tschedule commands are enabled.
+    void setTemplateStore(SmsTemplateStore *store) { templateStore_ = store; }
 
     // RFC-0092: Optional compact signal-health callback. When set, /csq
     // calls this function and returns the result. Production wires this to
@@ -553,6 +558,7 @@ private:
     std::function<String()> heapFn_;          // RFC-0072
     String versionStr_ = "(unknown build)";   // RFC-0074
     SmsAliasStore *aliasStore_ = nullptr;     // RFC-0088
+    SmsTemplateStore *templateStore_ = nullptr; // RFC-0227
     std::function<String()> csqFn_;          // RFC-0092
     std::function<void(uint32_t)> muteFn_;  // RFC-0098
     std::function<void()> unmuteFn_;        // RFC-0098

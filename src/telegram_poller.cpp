@@ -351,6 +351,14 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 help += "/importaliases \xe2\x80\x94 Batch import aliases (name=phone lines)\n";
                 help += "/clearaliases \xe2\x80\x94 Remove all aliases\n";
             }
+            if (templateStore_) {
+                help += "/tsave <name> <body> \xe2\x80\x94 Save SMS template\n";
+                help += "/tlist \xe2\x80\x94 List all templates\n";
+                help += "/trm <name> \xe2\x80\x94 Remove template\n";
+                help += "/tclear \xe2\x80\x94 Remove all templates\n";
+                help += "/tsend <name> <phone|@alias> \xe2\x80\x94 Send template as SMS\n";
+                help += "/tschedule <name> <min> <phone|@alias> \xe2\x80\x94 Schedule template SMS\n";
+            }
             help += "/shortcuts \xe2\x80\x94 Quick command reference\n";
             help += "\nReply to a forwarded SMS to send a response.";
             bot_.sendMessageTo(u.chatId, help);
@@ -1404,6 +1412,155 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 }
                 bot_.sendMessageTo(u.chatId, reply);
             }
+            return;
+        }
+
+        // RFC-0227: SMS template commands.
+        if (lower.startsWith("/tsave ") && templateStore_)
+        {
+            String rest = u.text.substring(7);
+            rest.trim();
+            int sp = rest.indexOf(' ');
+            if (sp < 1)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /tsave <name> <body>"));
+                return;
+            }
+            String tname = rest.substring(0, sp);
+            String tbody = rest.substring(sp + 1);
+            tbody.trim();
+            if (!templateStore_->set(tname, tbody))
+            {
+                String err = String("Failed to save template \xe2\x80\x9c") + tname + String("\xe2\x80\x9d");
+                err += String(". Check: name \xe2\x89\xa4 20 chars [a-zA-Z0-9_-], body 1\xe2\x80\x93160 chars, store not full.");
+                bot_.sendMessageTo(u.chatId, err);
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 Template saved: ") + tname);
+            }
+            return;
+        }
+
+        if ((lower == "/tlist") && templateStore_)
+        {
+            String reply = String("Templates (") + String(templateStore_->count()) + String("):\n");
+            reply += templateStore_->list();
+            bot_.sendMessageTo(u.chatId, reply);
+            return;
+        }
+
+        if (lower.startsWith("/trm ") && templateStore_)
+        {
+            String tname = u.text.substring(5);
+            tname.trim();
+            if (!templateStore_->remove(tname))
+                bot_.sendMessageTo(u.chatId, String("Template not found: ") + tname);
+            else
+                bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 Template removed: ") + tname);
+            return;
+        }
+
+        if (lower == "/tclear" && templateStore_)
+        {
+            templateStore_->clear();
+            bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 All templates cleared."));
+            return;
+        }
+
+        if (lower.startsWith("/tsend ") && templateStore_)
+        {
+            String rest = u.text.substring(7);
+            rest.trim();
+            int sp = rest.indexOf(' ');
+            if (sp < 1)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /tsend <name> <phone|@alias>"));
+                return;
+            }
+            String tname = rest.substring(0, sp);
+            String rawPhone = rest.substring(sp + 1);
+            rawPhone.trim();
+            String tbody = templateStore_->get(tname);
+            if (tbody.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Template not found: ") + tname);
+                return;
+            }
+            String errStr;
+            String phone = resolvePhone(rawPhone, aliasStore_, errStr);
+            if (phone.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, errStr.length() > 0 ? errStr : String("Invalid phone number."));
+                return;
+            }
+            if (!smsSender_.send(phone, tbody))
+                bot_.sendMessageTo(u.chatId, String("Failed to send SMS: ") + smsSender_.lastError());
+            else
+                bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 SMS sent to ") + phone);
+            return;
+        }
+
+        if (lower.startsWith("/tschedule ") && templateStore_)
+        {
+            String rest = u.text.substring(11);
+            rest.trim();
+            // Format: <name> <min> <phone|@alias>
+            int sp1 = rest.indexOf(' ');
+            if (sp1 < 1)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /tschedule <name> <min> <phone|@alias>"));
+                return;
+            }
+            String tname = rest.substring(0, sp1);
+            String rest2 = rest.substring(sp1 + 1);
+            rest2.trim();
+            int sp2 = rest2.indexOf(' ');
+            if (sp2 < 1)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /tschedule <name> <min> <phone|@alias>"));
+                return;
+            }
+            int delayMin = rest2.substring(0, sp2).toInt();
+            String rawPhone = rest2.substring(sp2 + 1);
+            rawPhone.trim();
+            if (delayMin <= 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Delay must be a positive integer (minutes)."));
+                return;
+            }
+            String tbody = templateStore_->get(tname);
+            if (tbody.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Template not found: ") + tname);
+                return;
+            }
+            String errStr;
+            String phone = resolvePhone(rawPhone, aliasStore_, errStr);
+            if (phone.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, errStr.length() > 0 ? errStr : String("Invalid phone number."));
+                return;
+            }
+            int slot = -1;
+            for (int i = 0; i < (int)kScheduledQueueSize; i++)
+                if (scheduledQueue_[i].sendAtMs == 0) { slot = i; break; }
+            if (slot < 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Scheduled queue full (5 slots). Use /schedqueue to see pending."));
+                return;
+            }
+            uint32_t nowMs  = clock_ ? clock_() : 0;
+            uint32_t sendAt = nowMs + (uint32_t)delayMin * 60000U;
+            scheduledQueue_[slot].sendAtMs = sendAt;
+            scheduledQueue_[slot].phone    = phone;
+            scheduledQueue_[slot].body     = tbody;
+            if (persistSchedFn_) persistSchedFn_();
+            String reply = String("\xe2\x9c\x85 Scheduled \xe2\x80\x9c") + tname
+                         + String("\xe2\x80\x9d to ") + phone
+                         + String(" in ") + String(delayMin) + String("m");
+            bot_.sendMessageTo(u.chatId, reply);
             return;
         }
 

@@ -8588,6 +8588,305 @@ void test_TelegramPoller_setSchedQueue_round_trip()
     TEST_ASSERT_EQUAL_STRING("Round-trip body", q3[0].body.c_str());
 }
 
+// ─── RFC-0227: SMS template command tests ────────────────────────────────────
+
+// /tsave then /tlist shows template.
+void test_TelegramPoller_tsave_and_tlist()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsTemplateStore tstore(persist);
+    tstore.load();
+    poller.setTemplateStore(&tstore);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Save a template.
+    bot.queueUpdateBatch({makeUpdate(31001, kAllowedFromId, 0,
+        "/tsave omw On my way!", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(31001, poller.lastUpdateId());
+    bool sawSaved = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("omw") >= 0) { sawSaved = true; break; }
+    TEST_ASSERT_TRUE(sawSaved);
+
+    // List templates.
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(31002, kAllowedFromId, 0,
+        "/tlist", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(31002, poller.lastUpdateId());
+    bool sawList = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("omw") >= 0 && m.indexOf("On my way") >= 0) { sawList = true; break; }
+    TEST_ASSERT_TRUE(sawList);
+}
+
+// /tsave with same name overwrites existing template.
+void test_TelegramPoller_tsave_overwrite()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsTemplateStore tstore(persist);
+    tstore.load();
+    poller.setTemplateStore(&tstore);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(31010, kAllowedFromId, 0,
+        "/tsave hello Hello world", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(31011, kAllowedFromId, 0,
+        "/tsave hello Hi there", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(31011, poller.lastUpdateId());
+
+    TEST_ASSERT_EQUAL_STRING("Hi there", tstore.get(String("hello")).c_str());
+    TEST_ASSERT_EQUAL(1, tstore.count()); // still only one entry
+}
+
+// /trm removes a template.
+void test_TelegramPoller_trm_removes_template()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsTemplateStore tstore(persist);
+    tstore.load();
+    tstore.set(String("bye"), String("Goodbye!"));
+    poller.setTemplateStore(&tstore);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(31020, kAllowedFromId, 0,
+        "/trm bye", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(31020, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(0, tstore.count());
+}
+
+// /tclear removes all templates.
+void test_TelegramPoller_tclear_removes_all()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsTemplateStore tstore(persist);
+    tstore.load();
+    tstore.set(String("a"), String("Alpha"));
+    tstore.set(String("b"), String("Beta"));
+    poller.setTemplateStore(&tstore);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(31030, kAllowedFromId, 0,
+        "/tclear", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(31030, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(0, tstore.count());
+}
+
+// /tsend expands template and sends SMS.
+void test_TelegramPoller_tsend_sends_sms()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsTemplateStore tstore(persist);
+    tstore.load();
+    tstore.set(String("omw"), String("On my way!"));
+    poller.setTemplateStore(&tstore);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(31040, kAllowedFromId, 0,
+        "/tsend omw +4479555", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(31040, poller.lastUpdateId());
+
+    // Modem should have received a PDU send (pduSendCalls is non-empty).
+    // Also check bot confirmation.
+    bool sawConfirm = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("4479555") >= 0 || m.indexOf("sent") >= 0) { sawConfirm = true; break; }
+    TEST_ASSERT_TRUE(sawConfirm);
+}
+
+// /tsend with unknown template replies error.
+void test_TelegramPoller_tsend_unknown_template_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsTemplateStore tstore(persist);
+    tstore.load();
+    poller.setTemplateStore(&tstore);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(31050, kAllowedFromId, 0,
+        "/tsend noexist +4479555", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(31050, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("not found") >= 0 || m.indexOf("noexist") >= 0) { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+}
+
+// /tschedule expands template and creates a scheduled slot.
+void test_TelegramPoller_tschedule_creates_slot()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsTemplateStore tstore(persist);
+    tstore.load();
+    tstore.set(String("mtg"), String("Meeting confirmed"));
+    poller.setTemplateStore(&tstore);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(31060, kAllowedFromId, 0,
+        "/tschedule mtg 30 +4479600", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(31060, poller.lastUpdateId());
+
+    const auto &q = poller.getSchedQueue();
+    bool slotFound = false;
+    for (const auto &slot : q)
+    {
+        if (slot.sendAtMs != 0 && slot.phone == String("+4479600"))
+        {
+            TEST_ASSERT_EQUAL_STRING("Meeting confirmed", slot.body.c_str());
+            slotFound = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(slotFound);
+}
+
+// /tschedule with unknown template replies error and creates no slot.
+void test_TelegramPoller_tschedule_unknown_template_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsTemplateStore tstore(persist);
+    tstore.load();
+    poller.setTemplateStore(&tstore);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(31070, kAllowedFromId, 0,
+        "/tschedule ghost 30 +4479600", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(31070, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("not found") >= 0 || m.indexOf("ghost") >= 0) { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+
+    // No slot created.
+    const auto &q = poller.getSchedQueue();
+    for (const auto &slot : q)
+        TEST_ASSERT_EQUAL(0U, slot.sendAtMs);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -8962,4 +9261,13 @@ void run_telegram_poller_tests()
     // RFC-0200: persist callback + getSchedQueue/setSchedQueue
     RUN_TEST(test_TelegramPoller_persistSchedFn_called_on_tick_fire);
     RUN_TEST(test_TelegramPoller_setSchedQueue_round_trip);
+    // RFC-0227: SMS template commands
+    RUN_TEST(test_TelegramPoller_tsave_and_tlist);
+    RUN_TEST(test_TelegramPoller_tsave_overwrite);
+    RUN_TEST(test_TelegramPoller_trm_removes_template);
+    RUN_TEST(test_TelegramPoller_tclear_removes_all);
+    RUN_TEST(test_TelegramPoller_tsend_sends_sms);
+    RUN_TEST(test_TelegramPoller_tsend_unknown_template_error);
+    RUN_TEST(test_TelegramPoller_tschedule_creates_slot);
+    RUN_TEST(test_TelegramPoller_tschedule_unknown_template_error);
 }

@@ -107,7 +107,8 @@ static RealModem realModem(modem, SerialAT);
 static RealBotClient realBot;
 static SmsDebugLog smsDebugLog;
 static RealPersist realPersist;
-static SmsAliasStore smsAliasStore(realPersist); // RFC-0088
+static SmsAliasStore    smsAliasStore(realPersist);    // RFC-0088
+static SmsTemplateStore smsTemplateStore(realPersist); // RFC-0227
 static ReplyTargetMap replyTargets(realPersist);
 static SmsSender smsSender(realModem);
 #ifdef ENABLE_DELIVERY_REPORTS
@@ -1183,7 +1184,8 @@ void setup()
         }
 
         replyTargets.load();
-        smsAliasStore.load(); // RFC-0088
+        smsAliasStore.load();    // RFC-0088
+        smsTemplateStore.load(); // RFC-0227
         smsHandler.setReplyTargetMap(&replyTargets);
         smsHandler.setDebugLog(&smsDebugLog);
         // RFC-0070: Forward SMS to all allow-list users; admin (index 0) already
@@ -1245,7 +1247,8 @@ void setup()
                     nullptr, nullptr);
 #endif
         });
-        telegramPoller->setAliasStore(&smsAliasStore); // RFC-0088
+        telegramPoller->setAliasStore(&smsAliasStore);       // RFC-0088
+        telegramPoller->setTemplateStore(&smsTemplateStore); // RFC-0227
         smsHandler.setAliasFn([](const String &phone) { // RFC-0176
             return smsAliasStore.lookupByPhone(phone);
         });
