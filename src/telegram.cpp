@@ -488,6 +488,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "logstats";
         c["description"] = "Aggregate outcome statistics from SMS debug log";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "logsoutcome";
+        c["description"] = "Filter SMS log by outcome keyword: /logsoutcome <fail|fwd|dup|...>";
+    }
     String payload;
     serializeJson(doc, payload);
 

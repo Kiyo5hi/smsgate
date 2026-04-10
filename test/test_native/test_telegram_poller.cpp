@@ -5065,6 +5065,117 @@ void test_TelegramPoller_logstats_no_log_replies_placeholder()
     TEST_ASSERT_TRUE(sawPlaceholder);
 }
 
+// RFC-0155: /logsoutcome <keyword> — filter log entries by outcome substring.
+void test_TelegramPoller_logsoutcome_returns_matching_entries()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    SmsDebugLog log;
+    {
+        SmsDebugLog::Entry e;
+        e.sender = "+1111";
+        e.outcome = "fwd OK";
+        log.push(e);
+    }
+    {
+        SmsDebugLog::Entry e;
+        e.sender = "+2222";
+        e.outcome = "fwd FAIL";
+        log.push(e);
+    }
+    {
+        SmsDebugLog::Entry e;
+        e.sender = "+3333";
+        e.outcome = "dup";
+        log.push(e);
+    }
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(1064, kAllowedFromId, 0, "/logsoutcome FAIL", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1064, poller.lastUpdateId());
+    bool sawFail = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("FAIL")) >= 0 && m.indexOf(String("+2222")) >= 0)
+            { sawFail = true; break; }
+    TEST_ASSERT_TRUE(sawFail);
+}
+
+// RFC-0155: /logsoutcome with no matching entries → placeholder.
+void test_TelegramPoller_logsoutcome_no_match_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    SmsDebugLog log;
+    {
+        SmsDebugLog::Entry e;
+        e.sender = "+1111";
+        e.outcome = "fwd OK";
+        log.push(e);
+    }
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(1065, kAllowedFromId, 0, "/logsoutcome dup", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1065, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("no entries")) >= 0) { sawPlaceholder = true; break; }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
+// RFC-0155: /logsoutcome with no arg → usage message.
+void test_TelegramPoller_logsoutcome_no_arg_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    SmsDebugLog log;
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(1066, kAllowedFromId, 0, "/logsoutcome", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1066, poller.lastUpdateId());
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Usage")) >= 0) { sawUsage = true; break; }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5276,6 +5387,10 @@ void run_telegram_poller_tests()
     // RFC-0154: /logstats command
     RUN_TEST(test_TelegramPoller_logstats_returns_summary);
     RUN_TEST(test_TelegramPoller_logstats_no_log_replies_placeholder);
+    // RFC-0155: /logsoutcome command
+    RUN_TEST(test_TelegramPoller_logsoutcome_returns_matching_entries);
+    RUN_TEST(test_TelegramPoller_logsoutcome_no_match_replies_placeholder);
+    RUN_TEST(test_TelegramPoller_logsoutcome_no_arg_sends_usage);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

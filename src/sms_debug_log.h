@@ -67,6 +67,12 @@ public:
     // buffered (== "buffered"), blocked (== "blocked"), dup (== "dup").
     String stats() const;
 
+    // RFC-0155: Like dumpBrief but only includes entries whose outcome
+    // field contains `keyword` as a substring. Returns up to `n` newest
+    // matching entries. Returns "(no entries matching <keyword>)" when nothing
+    // matches.
+    String dumpBriefByOutcome(size_t n, const String &keyword) const;
+
     size_t count() const { return count_; }
 
     // RFC-0040: Clear all entries from the ring and (if a sink is set)

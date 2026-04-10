@@ -111,6 +111,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/last [N] \xe2\x80\x94 Show last N forwarded SMS (default 5)\n";
             help += "/logs [N] \xe2\x80\x94 Show last N SMS log entries (default 10)\n";
             help += "/logstats \xe2\x80\x94 Aggregate outcome statistics from debug log\n";
+            help += "/logsoutcome <keyword> \xe2\x80\x94 Filter log entries by outcome (fail/fwd/dup/...)\n";
             help += "/history <filter> \xe2\x80\x94 Show log entries matching phone substring\n";
             help += "/concat \xe2\x80\x94 Show in-flight concat reassembly groups\n";
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
@@ -294,6 +295,25 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 return;
             }
             bot_.sendMessageTo(u.chatId, debugLog_->stats());
+            return;
+        }
+
+        // RFC-0155: /logsoutcome <keyword> — show log entries filtered by outcome.
+        if (lower.startsWith("/logsoutcome"))
+        {
+            if (!debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+                return;
+            }
+            String kw = extractArg(u.text, "/logsoutcome ");
+            if (kw.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /logsoutcome <keyword>\nExamples: /logsoutcome fail  /logsoutcome fwd  /logsoutcome dup"));
+                return;
+            }
+            bot_.sendMessageTo(u.chatId, debugLog_->dumpBriefByOutcome(10, kw));
             return;
         }
 
