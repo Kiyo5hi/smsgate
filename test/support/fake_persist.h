@@ -65,9 +65,19 @@ public:
             static_cast<const uint8_t *>(buf) + bufSize);
     }
 
+    // RFC-0184: Wipe all persisted data.
+    void clearAll() override
+    {
+        lastUpdateId_ = 0;
+        replyTargets_.clear();
+        blobs_.clear();
+        clearAllCalls_++;
+    }
+
     // Test introspection
     int saveLastUpdateIdCalls() const { return saveLastUpdateIdCalls_; }
     int saveReplyTargetsCalls() const { return saveReplyTargetsCalls_; }
+    int clearAllCalls()         const { return clearAllCalls_; }
 
 private:
     int32_t lastUpdateId_ = 0;
@@ -75,4 +85,5 @@ private:
     std::map<std::string, std::vector<uint8_t>> blobs_;
     int saveLastUpdateIdCalls_ = 0;
     int saveReplyTargetsCalls_ = 0;
+    int clearAllCalls_         = 0;
 };

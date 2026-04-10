@@ -6243,6 +6243,65 @@ void test_TelegramPoller_fwdtest_calls_fn_and_sends_preview()
     TEST_ASSERT_TRUE(sawPreview);
 }
 
+// RFC-0184: /factoryreset (no confirm) → warning message, no clearNvsFn call.
+void test_TelegramPoller_factoryreset_without_confirm_sends_warning()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bool clearCalled = false;
+    poller.setClearNvsFn([&clearCalled]() { clearCalled = true; });
+
+    bot.queueUpdateBatch({makeUpdate(1104, kAllowedFromId, 0, "/factoryreset", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1104, poller.lastUpdateId());
+    TEST_ASSERT_FALSE(clearCalled);
+    bool sawWarning = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("confirm") >= 0) { sawWarning = true; break; }
+    TEST_ASSERT_TRUE(sawWarning);
+}
+
+// RFC-0184: /factoryreset confirm → calls clearNvsFn then rebootFn.
+void test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bool clearCalled = false;
+    bool rebootCalled = false;
+    poller.setClearNvsFn([&clearCalled]() { clearCalled = true; });
+    poller.setRebootFn([&rebootCalled](int64_t) { rebootCalled = true; });
+
+    bot.queueUpdateBatch({makeUpdate(1105, kAllowedFromId, 0, "/factoryreset confirm", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1105, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(clearCalled);
+    TEST_ASSERT_TRUE(rebootCalled);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -6518,6 +6577,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_smshandlerinfo_calls_fn_and_replies);
     // RFC-0181: /fwdtest command
     RUN_TEST(test_TelegramPoller_fwdtest_calls_fn_and_sends_preview);
+    // RFC-0184: /factoryreset command
+    RUN_TEST(test_TelegramPoller_factoryreset_without_confirm_sends_warning);
+    RUN_TEST(test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

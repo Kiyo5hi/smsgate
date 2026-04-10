@@ -175,6 +175,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/setnote <text> \xe2\x80\x94 Save device note (max 120 chars)\n";
             help += "/me \xe2\x80\x94 Show your Telegram fromId and chatId\n";
             help += "/reboot \xe2\x80\x94 Soft reboot\n";
+            help += "/factoryreset \xe2\x80\x94 Erase all NVS settings and reboot (two-step confirm)\n";
             help += "/at <cmd> \xe2\x80\x94 Admin: raw AT command passthrough\n";
             if (smsBlockMutator_) {
                 help += "/blocklist \xe2\x80\x94 Show block list\n";
@@ -1450,6 +1451,24 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             {
                 bot_.sendMessageTo(u.chatId, String("(reboot not configured)"));
             }
+            return;
+        }
+
+        // RFC-0184: /factoryreset — two-step NVS wipe + reboot.
+        if (lower == "/factoryreset")
+        {
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9a\xa0\xef\xb8\x8f This will erase ALL persisted NVS settings and reboot.\n" // ⚠️
+                       "Aliases, block list, labels, timezone, and all runtime\n"
+                       "configuration will return to firmware defaults.\n\n"
+                       "Type /factoryreset confirm to proceed."));
+            return;
+        }
+        if (lower == "/factoryreset confirm")
+        {
+            bot_.sendMessageTo(u.chatId, String("\xf0\x9f\x97\x91 NVS cleared \xe2\x80\x94 rebooting now...")); // 🗑 —
+            if (clearNvsFn_) clearNvsFn_();
+            if (rebootFn_)   rebootFn_(u.fromId);
             return;
         }
 

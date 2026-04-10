@@ -68,6 +68,12 @@ public:
         prefs_.putBytes(key, buf, bufSize);
     }
 
+    // RFC-0184: Wipe all keys in the "tgsms" namespace.
+    void clearAll() override
+    {
+        prefs_.clear();
+    }
+
 private:
     Preferences prefs_;
 };

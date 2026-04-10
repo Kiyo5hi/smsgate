@@ -44,4 +44,9 @@ public:
     // loadBlob returns bytes actually read (0 if key absent).
     virtual size_t loadBlob(const char *key, void *buf, size_t bufSize) = 0;
     virtual void   saveBlob(const char *key, const void *buf, size_t bufSize) = 0;
+
+    // RFC-0184: Erase ALL persisted data in this namespace (factory reset).
+    // After this call the next loadBlob/loadLastUpdateId/etc. will return
+    // "not found" / zero results.
+    virtual void clearAll() = 0;
 };

@@ -212,6 +212,10 @@ public:
     // (e.g. set s_pendingRestart only if fromId is in the admin list).
     void setRebootFn(std::function<void(int64_t)> fn) { rebootFn_ = std::move(fn); }
 
+    // RFC-0184: /factoryreset — wipe NVS then reboot. clearNvsFn_ erases
+    // all persisted data; rebootFn_ (above) handles the actual reboot.
+    void setClearNvsFn(std::function<void()> fn) { clearNvsFn_ = std::move(fn); }
+
     // RFC-0120: Optional uptime callback. When set, /uptime calls this fn
     // and replies with the result (e.g. "⏱ 2d 3h 15m 42s").
     // When not set, replies "(uptime not configured)".
@@ -454,6 +458,7 @@ private:
     std::function<void(const String &)> labelSetFn_;        // RFC-0118
     std::function<String()> balanceCodeFn_; // RFC-0114
     std::function<void(int64_t)> rebootFn_; // RFC-0112
+    std::function<void()> clearNvsFn_;      // RFC-0184
     std::function<String()> uptimeFn_;     // RFC-0120
     std::function<String()> networkFn_;    // RFC-0121
     std::function<String()> bootInfoFn_;   // RFC-0123

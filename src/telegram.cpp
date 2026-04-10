@@ -610,6 +610,11 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "factoryreset";
+        c["description"] = "Erase all NVS settings and reboot (two-step confirm)";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "callstatus";
         c["description"] = "Show call handler config (notify, dedup, deadline, call count)";
     }

@@ -1203,6 +1203,7 @@ void setup()
             // can be added here if needed.
             s_pendingRestart = true;
         });
+        telegramPoller->setClearNvsFn([]() { realPersist.clearAll(); }); // RFC-0184
         telegramPoller->setLabelGetFn([]() -> String {              // RFC-0118
             return s_deviceLabel;
         });
