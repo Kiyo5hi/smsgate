@@ -765,6 +765,12 @@ void setup()
     if (!realPersist.begin())
     {
         Serial.println("RealPersist::begin failed; bidirectional TG->SMS disabled.");
+        // RFC-0025: Alert via Telegram so remote operators know NVS is
+        // unavailable. Best-effort — if transport isn't ready this is a no-op.
+        realBot.sendMessage(String(
+            "\xE2\x9A\xA0\xEF\xB8\x8F NVS init failed\n"  // U+26A0 ⚠️
+            "Persistent state (reply targets, block list, SMS log) is unavailable "
+            "for this session. Consider erasing NVS: pio run -t erase"));
     }
     else
     {
