@@ -3152,5 +3152,26 @@ void loop()
         }
     }
 
+    // RFC-0246: Recovery sweep.  When consecutiveFailures_ drops from >0 to 0
+    // it means Telegram just became reachable again after a failure window.
+    // SMS that accumulated on the SIM during the outage are not automatically
+    // forwarded — only the one +CMTI that happened to succeed is processed.
+    // Sweep immediately so the backlog is drained without waiting for the
+    // 30-min periodic sweep (RFC-0235).
+    {
+        static int s_prevConsecFailures = 0;
+        int cur = smsHandler.consecutiveFailures();
+        if (s_prevConsecFailures > 0 && cur == 0 &&
+            activeTransport != ActiveTransport::kNone)
+        {
+            Serial.println("[RFC-0246] Telegram recovered — sweeping SIM for pending SMS");
+            esp_task_wdt_reset();
+            smsHandler.sweepExistingSms();
+            esp_task_wdt_reset();
+        }
+        // Update AFTER the sweep so the transition is not re-triggered.
+        s_prevConsecFailures = smsHandler.consecutiveFailures();
+    }
+
     delay(50);
 }
