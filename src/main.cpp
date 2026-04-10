@@ -946,6 +946,7 @@ void setup()
         telegramPoller->setNtpSyncFn([]() { syncTime(); }); // RFC-0055
         telegramPoller->setConcatSummaryFn([]() { return smsHandler.concatGroupsSummary(); }); // RFC-0069
         telegramPoller->setWifiReconnectFn([]() { s_pendingWifiReconnect = true; });            // RFC-0071
+        telegramPoller->setVersionStr(String("Built: ") + __DATE__ + " " + __TIME__);            // RFC-0074
         telegramPoller->setHeapFn([]() -> String {                                              // RFC-0072
             String s;
             s += "Free: ";      s += String(ESP.getFreeHeap());    s += " B\n";

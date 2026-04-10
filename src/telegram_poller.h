@@ -150,6 +150,10 @@ public:
     // that formats ESP.getFreeHeap() / getMinFreeHeap() / getMaxAllocHeap().
     void setHeapFn(std::function<String()> fn) { heapFn_ = std::move(fn); }
 
+    // RFC-0074: Firmware build timestamp string. Set once in main.cpp from
+    // __DATE__ + __TIME__. Returned verbatim by the /version command.
+    void setVersionStr(const String &v) { versionStr_ = v; }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -180,6 +184,7 @@ private:
     std::function<String()> concatSummaryFn_; // RFC-0069
     std::function<void()> wifiReconnectFn_;   // RFC-0071
     std::function<String()> heapFn_;          // RFC-0072
+    String versionStr_ = "(unknown build)";   // RFC-0074
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;
