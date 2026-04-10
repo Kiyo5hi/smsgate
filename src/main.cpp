@@ -839,14 +839,21 @@ void setup()
 
             if (cmd == "block")
             {
-                if (isBlocked(number.c_str(), sBlockList, sBlockListCount))
+                // RFC-0084: Normalize number before storing (preserve trailing '*').
+                String normedNumber;
+                if (number.endsWith("*")) {
+                    normedNumber = sms_codec::normalizePhoneNumber(number.substring(0, number.length() - 1)) + "*";
+                } else {
+                    normedNumber = sms_codec::normalizePhoneNumber(number);
+                }
+                if (isBlocked(normedNumber.c_str(), sBlockList, sBlockListCount))
                 {
-                    reason = number + " is already in the compile-time block list.";
+                    reason = normedNumber + " is already in the compile-time block list.";
                     return false;
                 }
-                if (isBlocked(number.c_str(), sRuntimeBlockList, sRuntimeBlockListCount))
+                if (isBlocked(normedNumber.c_str(), sRuntimeBlockList, sRuntimeBlockListCount))
                 {
-                    reason = number + " is already in the runtime block list.";
+                    reason = normedNumber + " is already in the runtime block list.";
                     return false;
                 }
                 if (sRuntimeBlockListCount >= kSmsBlockListMaxEntries)
@@ -856,14 +863,14 @@ void setup()
                              " entries). Use /unblock to remove one first.";
                     return false;
                 }
-                if ((int)number.length() > kSmsBlockListMaxNumberLen)
+                if ((int)normedNumber.length() > kSmsBlockListMaxNumberLen)
                 {
                     reason = String("Number too long (max ") +
                              String(kSmsBlockListMaxNumberLen) + " characters).";
                     return false;
                 }
                 memcpy(sRuntimeBlockList[sRuntimeBlockListCount],
-                       number.c_str(), number.length() + 1);
+                       normedNumber.c_str(), normedNumber.length() + 1);
                 sRuntimeBlockListCount++;
                 smsHandler.setRuntimeBlockList(sRuntimeBlockList, sRuntimeBlockListCount);
                 struct { int32_t count; char numbers[20][21]; } blob{};
@@ -872,21 +879,28 @@ void setup()
                        (size_t)sRuntimeBlockListCount * (kSmsBlockListMaxNumberLen + 1));
                 realPersist.saveBlob("smsblist", &blob, sizeof(blob));
                 Serial.printf("SMS block list: added %s (%d runtime entries)\n",
-                              number.c_str(), sRuntimeBlockListCount);
+                              normedNumber.c_str(), sRuntimeBlockListCount);
                 return true;
             }
 
             if (cmd == "unblock")
             {
+                // RFC-0084: Normalize before lookup (preserve trailing '*').
+                String normedUnblock;
+                if (number.endsWith("*")) {
+                    normedUnblock = sms_codec::normalizePhoneNumber(number.substring(0, number.length() - 1)) + "*";
+                } else {
+                    normedUnblock = sms_codec::normalizePhoneNumber(number);
+                }
                 int found = -1;
                 for (int i = 0; i < sRuntimeBlockListCount; i++)
-                    if (strcmp(sRuntimeBlockList[i], number.c_str()) == 0) { found = i; break; }
+                    if (strcmp(sRuntimeBlockList[i], normedUnblock.c_str()) == 0) { found = i; break; }
                 if (found < 0)
                 {
-                    if (isBlocked(number.c_str(), sBlockList, sBlockListCount))
-                        reason = number + " is in the compile-time list and cannot be removed at runtime.";
+                    if (isBlocked(normedUnblock.c_str(), sBlockList, sBlockListCount))
+                        reason = normedUnblock + " is in the compile-time list and cannot be removed at runtime.";
                     else
-                        reason = number + " is not in the runtime block list.";
+                        reason = normedUnblock + " is not in the runtime block list.";
                     return false;
                 }
                 for (int i = found; i < sRuntimeBlockListCount - 1; i++)
@@ -902,7 +916,7 @@ void setup()
                        (size_t)sRuntimeBlockListCount * (kSmsBlockListMaxNumberLen + 1));
                 realPersist.saveBlob("smsblist", &blob, sizeof(blob));
                 Serial.printf("SMS block list: removed %s (%d runtime entries)\n",
-                              number.c_str(), sRuntimeBlockListCount);
+                              normedUnblock.c_str(), sRuntimeBlockListCount);
                 return true;
             }
 
