@@ -191,6 +191,8 @@ static uint32_t s_lifetimeFwdCount = 0;
 // RFC-0064: SIM slot full warning — set when usage crosses ≥80%; cleared when
 // usage drops back below the threshold so the alert can re-fire if needed.
 static bool s_simFullWarnSent = false;
+// RFC-0066: Low heap warning. Hysteresis: alert at <15 KB, clear at >25 KB.
+static bool s_lowHeapWarnSent = false;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -1142,6 +1144,18 @@ void loop()
                 s_simFullWarnSent = true;
             } else if (!nearFull) {
                 s_simFullWarnSent = false;
+            }
+        }
+        // RFC-0066: Low heap warning. Hysteresis: alert at <15 KB, clear at >25 KB.
+        {
+            uint32_t freeHeap = ESP.getFreeHeap();
+            if (freeHeap < 15u * 1024u && !s_lowHeapWarnSent) {
+                String heapMsg = String("\xE2\x9A\xA0\xEF\xB8\x8F Low heap: "); // ⚠️
+                heapMsg += String((int)freeHeap); heapMsg += " B free. Device may become unstable.";
+                realBot.sendMessage(heapMsg);
+                s_lowHeapWarnSent = true;
+            } else if (freeHeap > 25u * 1024u) {
+                s_lowHeapWarnSent = false;
             }
         }
 #ifdef ENABLE_DELIVERY_REPORTS
