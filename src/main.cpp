@@ -658,6 +658,11 @@ void setup()
         msg += "\n\xF0\x9F\x93\xA8 SMS\n"; // 📨
         msg += "  Forwarded: "; msg += String(smsHandler.smsForwarded()); msg += " (session), ";
         msg += String((int)s_lifetimeFwdCount); msg += " (lifetime)\n";
+        // RFC-0062: blocked and dedup counters.
+        if (smsHandler.smsBlocked() > 0)
+            { msg += "  Blocked: "; msg += String(smsHandler.smsBlocked()); msg += "\n"; }
+        if (smsHandler.smsDeduplicated() > 0)
+            { msg += "  Deduped: "; msg += String(smsHandler.smsDeduplicated()); msg += "\n"; }
         // RFC-0041: Last SMS received timestamp.
         if (s_lastSmsTimestamp > 0) {
             time_t lt = s_lastSmsTimestamp + TIMEZONE_OFFSET_SEC;

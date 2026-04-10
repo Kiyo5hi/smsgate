@@ -134,8 +134,13 @@ public:
     //                        (includes transient failures; NOT a count of
     //                        permanently lost messages — a single message
     //                        that exhausts retries counts once per attempt).
+    // smsBlocked_: SMS silently dropped by the block list (RFC-0018/0021).
+    // smsDeduplicated_: SMS suppressed as duplicates within the dedup window
+    //                   (RFC-0061).
     int smsForwarded() const { return smsForwarded_; }
     int smsFailed() const { return telegramSendFailures_; }
+    int smsBlocked() const { return smsBlocked_; }
+    int smsDeduplicated() const { return smsDeduplicated_; }
 
 private:
     // Per-fragment record. We keep the raw decoded content so we can
@@ -227,6 +232,8 @@ private:
     int consecutiveFailures_ = 0;
     int smsForwarded_ = 0;
     int telegramSendFailures_ = 0;
+    int smsBlocked_ = 0;      // RFC-0062
+    int smsDeduplicated_ = 0; // RFC-0062
 
     // Holds the in-flight concatenated groups. Vector is fine at this
     // scale (cap = 8).

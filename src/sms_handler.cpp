@@ -292,6 +292,7 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
     if (checkDup(group->sender, assembled))
     {
         Serial.println("Duplicate concat SMS suppressed, deleting SIM slots.");
+        smsDeduplicated_++; // RFC-0062
         for (const auto &f : sorted)
             if (f.simIndex > 0) deleteSlots.push_back(f.simIndex);
         totalBufferedBytes_ -= group->byteCount;
@@ -474,6 +475,7 @@ void SmsHandler::handleSmsIndex(int idx)
         Serial.print("SMS from blocked sender ");
         Serial.print(pdu.sender);
         Serial.println(", deleting silently.");
+        smsBlocked_++; // RFC-0062
         modem_.sendAT("+CMGD=" + String(idx));
         modem_.waitResponseOk(1000UL);
         // Log the block event so /debug shows it.
@@ -518,6 +520,7 @@ void SmsHandler::handleSmsIndex(int idx)
         if (checkDup(pdu.sender, pdu.content))
         {
             Serial.println("Duplicate SMS suppressed, deleting SIM slot.");
+            smsDeduplicated_++; // RFC-0062
             modem_.sendAT("+CMGD=" + String(idx));
             modem_.waitResponseOk(1000UL);
             if (debugLog_) { logEntry.outcome = "dup"; debugLog_->push(logEntry); }
