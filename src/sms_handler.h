@@ -149,6 +149,15 @@ public:
     // Returns the count of SIM indices dispatched to handleSmsIndex.
     int sweepExistingSms();
 
+    // RFC-0219: Optional per-sender filter fn. When set, called with the
+    // normalized sender phone before forwarding. Returns true → silently
+    // drop (delete from SIM, no Telegram forward, no error). Used by
+    // TelegramPoller's /snooze command.
+    void setSenderFilterFn(std::function<bool(const String &)> fn)
+    {
+        senderFilterFn_ = std::move(fn);
+    }
+
     // RFC-0153: Toggle SMS forwarding. When disabled, handleSmsIndex returns
     // early without forwarding or deleting — messages stay in SIM slots.
     void setForwardingEnabled(bool enabled) { forwardingEnabled_ = enabled; }
@@ -339,6 +348,7 @@ private:
     SmsDebugLog *debugLog_ = nullptr;
     std::function<void()> onForwarded_;
     std::function<void(const String &)> onSenderFn_; // RFC-0150
+    std::function<bool(const String &)> senderFilterFn_; // RFC-0219
     std::function<String(const String &)> aliasFn_;  // RFC-0176
     const int64_t *extraRecipients_ = nullptr; // RFC-0070
     int extraRecipientCount_ = 0;             // RFC-0070

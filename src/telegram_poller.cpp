@@ -224,6 +224,9 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/schedclone <N> <min> \xe2\x80\x94 Duplicate a scheduled slot with a new delay\n"; // RFC-0215
             help += "/schedpause \xe2\x80\x94 Pause all scheduled SMS delivery (volatile)\n"; // RFC-0218
             help += "/schedresume \xe2\x80\x94 Resume scheduled SMS delivery\n"; // RFC-0218
+            help += "/snooze <phone> <min> \xe2\x80\x94 Suppress forwarding from a number for N minutes\n"; // RFC-0219
+            help += "/unsnooze <phone> \xe2\x80\x94 Cancel a snooze\n"; // RFC-0219
+            help += "/snoozelist \xe2\x80\x94 Show active snoozes with remaining time\n"; // RFC-0219
             help += "/pending \xe2\x80\x94 Terse snapshot of all pending work (queue/sched/concat)\n"; // RFC-0209
             help += "/setquiethours <start>-<end> \xe2\x80\x94 Defer sched SMS during UTC window (e.g. 22-08)\n"; // RFC-0211
             help += "/clearquiethours \xe2\x80\x94 Disable quiet hours\n"; // RFC-0211
@@ -3203,6 +3206,114 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0219: /snooze <phone> <min> — suppress forwarding from a number.
+        if (lower == "/snooze" || lower.startsWith("/snooze "))
+        {
+            String arg = extractArg(u.text, "/snooze ");
+            arg.trim();
+            int sp = arg.indexOf(' ');
+            if (sp <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /snooze <phone> <minutes>\n"
+                           "Example: /snooze +13800138000 60"));
+                return;
+            }
+            String rawPhone = arg.substring(0, sp);
+            String phone = sms_codec::normalizePhoneNumber(rawPhone);
+            long mins = arg.substring(sp + 1).toInt();
+            if (phone.length() == 0)
+            {
+                sendErrorReply(u.chatId, String("Invalid phone number."));
+                return;
+            }
+            if (mins < 1 || mins > 480)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Minutes must be 1\xe2\x80\x93480.")); // ❌ –
+                return;
+            }
+            // Check cap (allow update of existing entry without counting against cap).
+            bool existing = false;
+            for (const auto &kv : snoozeList_)
+                if (kv.first == phone) { existing = true; break; }
+            if (!existing && (int)snoozeList_.size() >= kMaxSnoozes)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Snooze limit reached (20)."));  // ❌
+                return;
+            }
+            uint32_t nowMs = clock_ ? clock_() : 0;
+            uint32_t expiry = nowMs + (uint32_t)mins * 60000U;
+            bool updated = false;
+            for (auto &kv : snoozeList_)
+                if (kv.first == phone) { kv.second = expiry; updated = true; break; }
+            if (!updated)
+                snoozeList_.push_back({phone, expiry});
+            bot_.sendMessageTo(u.chatId,
+                String("\xf0\x9f\x94\x87 ") + phone // 🔇
+                + String(" snoozed for ") + String((int)mins) + String(" min."));
+            return;
+        }
+
+        // RFC-0219: /unsnooze <phone> — remove a snooze.
+        if (lower == "/unsnooze" || lower.startsWith("/unsnooze "))
+        {
+            String arg = extractArg(u.text, "/unsnooze ");
+            arg.trim();
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /unsnooze <phone>"));
+                return;
+            }
+            String phone = sms_codec::normalizePhoneNumber(arg);
+            bool found = false;
+            for (auto it = snoozeList_.begin(); it != snoozeList_.end(); ++it)
+            {
+                if (it->first == phone) { snoozeList_.erase(it); found = true; break; }
+            }
+            if (!found)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c ") + phone + String(" not in snooze list.")); // ❌
+                return;
+            }
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 ") + phone + String(" unsnoozed.")); // ✅
+            return;
+        }
+
+        // RFC-0219: /snoozelist — show active snoozes.
+        if (lower == "/snoozelist")
+        {
+            uint32_t nowMs = clock_ ? clock_() : 0;
+            // Reap expired entries first.
+            for (auto it = snoozeList_.begin(); it != snoozeList_.end(); )
+            {
+                if (nowMs >= it->second)
+                    it = snoozeList_.erase(it);
+                else
+                    ++it;
+            }
+            if (snoozeList_.empty())
+            {
+                bot_.sendMessageTo(u.chatId, String("(no active snoozes)"));
+                return;
+            }
+            String out = String("\xf0\x9f\x94\x87 Active snoozes:\n"); // 🔇
+            for (const auto &kv : snoozeList_)
+            {
+                uint32_t remSec = (kv.second - nowMs) / 1000U;
+                if (remSec < 60)
+                    out += kv.first + String(": ") + String((int)remSec) + String("s\n");
+                else
+                    out += kv.first + String(": ") + String((int)(remSec / 60)) + String("m\n");
+            }
+            bot_.sendMessageTo(u.chatId, out);
+            return;
+        }
+
         // RFC-0196: /scheddelay <N> <extra_min> — extend a scheduled SMS deadline.
         if (lower == "/scheddelay" || lower.startsWith("/scheddelay "))
         {
@@ -3666,6 +3777,18 @@ void TelegramPoller::tick()
                     bot_.sendMessage(alert);
                 }
             }
+        }
+    }
+
+    // RFC-0219: Lazily reap expired snooze entries in tick().
+    if (!snoozeList_.empty())
+    {
+        for (auto it = snoozeList_.begin(); it != snoozeList_.end(); )
+        {
+            if (now >= it->second)
+                it = snoozeList_.erase(it);
+            else
+                ++it;
         }
     }
 

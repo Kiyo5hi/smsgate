@@ -575,6 +575,18 @@ void SmsHandler::handleSmsIndex(int idx)
         return;
     }
 
+    // RFC-0219: Per-sender snooze filter. If the fn returns true,
+    // silently delete and skip forwarding.
+    if (senderFilterFn_ && senderFilterFn_(pdu.sender))
+    {
+        Serial.print("SMS from snoozed sender ");
+        Serial.print(pdu.sender);
+        Serial.println(", deleting silently.");
+        modem_.sendAT("+CMGD=" + String(idx));
+        modem_.waitResponseOk(1000UL);
+        return;
+    }
+
     // Capture diagnostic entry before any branching so we get a log
     // record regardless of the outcome.
     SmsDebugLog::Entry logEntry;

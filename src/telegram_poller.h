@@ -4,6 +4,7 @@
 #include <array>
 #include <functional>
 #include <stdint.h>
+#include <vector>
 
 #include "ibot_client.h"
 #include "ipersist.h"
@@ -399,6 +400,23 @@ public:
     // Production: returns "Queue: N/8 | Sched: N/5 | Concat: N" or "All clear".
     void setPendingFn(std::function<String()> fn) { pendingFn_ = std::move(fn); }
 
+    // RFC-0219: Returns true if the given phone is currently snoozed.
+    // Clears expired entries lazily. Production main.cpp wires this into
+    // SmsHandler::setSenderFilterFn to suppress forwarding.
+    bool isSnoozed(const String &phone)
+    {
+        uint32_t now = clock_ ? clock_() : 0;
+        for (auto it = snoozeList_.begin(); it != snoozeList_.end(); ++it)
+        {
+            if (it->first == phone)
+            {
+                if (now >= it->second) { snoozeList_.erase(it); return false; }
+                return true;
+            }
+        }
+        return false;
+    }
+
     // RFC-0211: Quiet hours — suppress scheduled SMS delivery during a UTC
     // window [start, end). start and end are UTC hours 0-23. Overnight ranges
     // (e.g. start=22 end=8) are handled via wraparound. Pass -1/-1 to disable.
@@ -615,4 +633,7 @@ private:
     uint32_t lastQueueStuckAlertMs_ = 0;  // RFC-0217
     bool     queueWasNonEmpty_      = false; // RFC-0217
     bool     schedPaused_           = false; // RFC-0218: manual global pause
+    // RFC-0219: per-phone snooze list. Each entry: (phone, expiry millis).
+    static constexpr int kMaxSnoozes = 20;
+    std::vector<std::pair<String, uint32_t>> snoozeList_;
 };

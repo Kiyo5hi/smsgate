@@ -1249,6 +1249,10 @@ void setup()
         smsHandler.setAliasFn([](const String &phone) { // RFC-0176
             return smsAliasStore.lookupByPhone(phone);
         });
+        // RFC-0219: Wire snooze filter — suppress forwarding snoozed numbers.
+        smsHandler.setSenderFilterFn([&](const String &phone) -> bool {
+            return telegramPoller->isSnoozed(phone);
+        });
         telegramPoller->setMuteFn([](uint32_t minutes) { // RFC-0098
             s_alertsMutedUntilMs = (uint32_t)millis() + minutes * 60000UL;
         });

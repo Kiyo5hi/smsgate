@@ -7637,6 +7637,68 @@ void test_TelegramPoller_schedpause_suppresses_fire()
     TEST_ASSERT_EQUAL(0, (int)poller.getSchedQueue()[0].sendAtMs);
 }
 
+// RFC-0219: /snooze marks a phone as snoozed; isSnoozed returns true.
+void test_TelegramPoller_snooze_marks_phone()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 5000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(21001, kAllowedFromId, 0,
+        "/snooze +9000 30", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(21001, poller.lastUpdateId());
+
+    // isSnoozed should return true for +9000 (normalized same).
+    TEST_ASSERT_TRUE(poller.isSnoozed(String("+9000")));
+    TEST_ASSERT_FALSE(poller.isSnoozed(String("+9001"))); // different number
+}
+
+// RFC-0219: snooze expires after the configured window.
+void test_TelegramPoller_snooze_expires()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 5000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Snooze for 1 minute.
+    bot.queueUpdateBatch({makeUpdate(21002, kAllowedFromId, 0,
+        "/snooze +9002 1", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(21002, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(poller.isSnoozed(String("+9002")));
+
+    // Advance clock past 1 minute.
+    clk.nowMs += 61000;
+    TEST_ASSERT_FALSE(poller.isSnoozed(String("+9002"))); // expired
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -8318,6 +8380,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_stuck_alert_cooldown_suppresses_repeat);
     // RFC-0218: /schedpause / /schedresume
     RUN_TEST(test_TelegramPoller_schedpause_suppresses_fire);
+    // RFC-0219: /snooze command
+    RUN_TEST(test_TelegramPoller_snooze_marks_phone);
+    RUN_TEST(test_TelegramPoller_snooze_expires);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);
