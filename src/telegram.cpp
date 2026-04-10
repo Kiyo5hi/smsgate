@@ -756,17 +756,24 @@ int32_t RealBotClient::doSendMessage(const String &text, int64_t chatId)
 
     bool httpOk = statusLine.indexOf(" 200") != -1;
 
-    // Drain headers until blank line
+    // Drain headers until blank line. RFC-0231: 5-second deadline.
     int contentLength = -1;
-    while (transport_->connected() || transport_->available())
     {
-        String line = transport_->readStringUntil('\n');
-        if (line == "\r" || line.length() == 0)
-            break;
-        line.toLowerCase();
-        if (line.startsWith("content-length:"))
+        unsigned long headerDeadline = millis() + 5000;
+        while (transport_->connected() || transport_->available())
         {
-            contentLength = line.substring(15).toInt();
+            if (millis() > headerDeadline)
+            {
+                Serial.println("doSendMessage: header read timeout, forcing stop");
+                transport_->stop();
+                return 0;
+            }
+            String line = transport_->readStringUntil('\n');
+            if (line == "\r" || line.length() == 0)
+                break;
+            line.toLowerCase();
+            if (line.startsWith("content-length:"))
+                contentLength = line.substring(15).toInt();
         }
     }
 
@@ -920,7 +927,8 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
     {
         if (millis() > readDeadline)
         {
-            Serial.println("getUpdates: header read timeout");
+            Serial.println("getUpdates: header read timeout, forcing stop");
+            transport_->stop();
             return false;
         }
         String line = transport_->readStringUntil('\n');
