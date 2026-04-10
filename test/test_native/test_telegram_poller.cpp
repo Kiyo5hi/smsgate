@@ -3699,6 +3699,107 @@ void test_TelegramPoller_setnote_calls_setter_and_confirms()
     TEST_ASSERT_TRUE(sawConfirm);
 }
 
+// RFC-0132: /exportaliases with aliases → replies with name=number lines.
+void test_TelegramPoller_exportaliases_replies_with_csv()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsAliasStore store(persist);
+    store.set(String("alice"), String("+447911123456"));
+    store.set(String("bob"),   String("+447911654321"));
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setAliasStore(&store);
+
+    bot.queueUpdateBatch({makeUpdate(970, kAllowedFromId, 0, "/exportaliases", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(970, poller.lastUpdateId());
+    bool sawAlice = false;
+    bool sawBob   = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("alice=+447911123456")) >= 0) sawAlice = true;
+        if (m.indexOf(String("bob=+447911654321")) >= 0)   sawBob   = true;
+    }
+    TEST_ASSERT_TRUE(sawAlice);
+    TEST_ASSERT_TRUE(sawBob);
+}
+
+// RFC-0132: /exportaliases with empty store → "(no aliases)".
+void test_TelegramPoller_exportaliases_empty_store_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsAliasStore store(persist);
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setAliasStore(&store);
+
+    bot.queueUpdateBatch({makeUpdate(971, kAllowedFromId, 0, "/exportaliases", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(971, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("no aliases")) >= 0) { sawPlaceholder = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
+// RFC-0133: /shortcuts replies with a quick reference containing key commands.
+void test_TelegramPoller_shortcuts_replies_with_quick_ref()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(972, kAllowedFromId, 0, "/shortcuts", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(972, poller.lastUpdateId());
+    bool sawPing  = false;
+    bool sawSend  = false;
+    bool sawHelp  = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("/ping")) >= 0) sawPing = true;
+        if (m.indexOf(String("/send")) >= 0) sawSend = true;
+        if (m.indexOf(String("/help")) >= 0) sawHelp = true;
+    }
+    TEST_ASSERT_TRUE(sawPing);
+    TEST_ASSERT_TRUE(sawSend);
+    TEST_ASSERT_TRUE(sawHelp);
+}
+
 // RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
 void test_TelegramPoller_send_duplicate_gets_already_queued_error()
 {
@@ -3895,6 +3996,11 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_note_replies_with_note);
     RUN_TEST(test_TelegramPoller_note_empty_replies_placeholder);
     RUN_TEST(test_TelegramPoller_setnote_calls_setter_and_confirms);
+    // RFC-0132: /exportaliases command
+    RUN_TEST(test_TelegramPoller_exportaliases_replies_with_csv);
+    RUN_TEST(test_TelegramPoller_exportaliases_empty_store_replies_placeholder);
+    // RFC-0133: /shortcuts command
+    RUN_TEST(test_TelegramPoller_shortcuts_replies_with_quick_ref);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

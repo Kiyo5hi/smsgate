@@ -156,7 +156,9 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 help += "/aliases \xe2\x80\x94 List phone aliases\n";
                 help += "/addalias <name> <num> \xe2\x80\x94 Add/replace alias\n";
                 help += "/rmalias <name> \xe2\x80\x94 Remove alias\n";
+                help += "/exportaliases \xe2\x80\x94 Export aliases as name=number lines\n";
             }
+            help += "/shortcuts \xe2\x80\x94 Quick command reference\n";
             help += "\nReply to a forwarded SMS to send a response.";
             bot_.sendMessageTo(u.chatId, help);
             return;
@@ -767,6 +769,46 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             }
             bot_.sendMessageTo(u.chatId,
                 String("\xE2\x9C\x85 Alias @") + arg + String(" removed.")); // ✅
+            return;
+        }
+
+        // RFC-0132: /exportaliases — export all aliases as "name=number" lines.
+        if (lower == "/exportaliases")
+        {
+            if (!aliasStore_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(alias store not configured)"));
+                return;
+            }
+            if (aliasStore_->count() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("(no aliases)"));
+                return;
+            }
+            String out;
+            aliasStore_->forEach([&out](const String &name, const String &phone) {
+                out += name; out += String("="); out += phone; out += String("\n");
+            });
+            bot_.sendMessageTo(u.chatId, out);
+            return;
+        }
+
+        // RFC-0133: /shortcuts — condensed quick reference of common commands.
+        if (lower == "/shortcuts")
+        {
+            String s;
+            s += "Quick reference:\n";
+            s += "/ping \xe2\x80\x94 Liveness\n";
+            s += "/status \xe2\x80\x94 Full health dump\n";
+            s += "/uptime \xe2\x80\x94 Uptime\n";
+            s += "/network \xe2\x80\x94 Cell + CSQ\n";
+            s += "/count \xe2\x80\x94 SMS/call counters\n";
+            s += "/send <num> <msg> \xe2\x80\x94 Send SMS\n";
+            s += "/queue \xe2\x80\x94 Pending outbound\n";
+            s += "/last \xe2\x80\x94 Recent received SMS\n";
+            s += "/reboot \xe2\x80\x94 Soft reboot\n";
+            s += "/help \xe2\x80\x94 All commands\n";
+            bot_.sendMessageTo(u.chatId, s);
             return;
         }
 

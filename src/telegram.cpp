@@ -373,6 +373,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "setnote";
         c["description"] = "Save device note: /setnote <text> (max 120 chars)";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "exportaliases";
+        c["description"] = "Export all phone aliases as name=number lines";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "shortcuts";
+        c["description"] = "Quick reference of common commands";
+    }
 
     String payload;
     serializeJson(doc, payload);
