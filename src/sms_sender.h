@@ -98,6 +98,10 @@ public:
     };
     std::vector<QueueSnapshot> getQueueSnapshot() const;
 
+    // RFC-0087: Reset all retry timers to zero so the next drainQueue call
+    // immediately attempts all pending entries regardless of backoff state.
+    void resetRetryTimers();
+
     // RFC-0046: Cancel the Nth occupied queue entry (1-indexed, matching
     // /queue display order). Returns true if found and removed, false if
     // N is out of range. onFinalFailure is NOT called — cancellation is

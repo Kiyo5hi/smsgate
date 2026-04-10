@@ -97,6 +97,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/send <num> <msg> \xe2\x80\x94 Send outbound SMS\n";
             help += "/test <num> \xe2\x80\x94 Send a test SMS to verify outbound path\n";
             help += "/queue \xe2\x80\x94 Show pending outbound queue\n";
+            help += "/flushqueue \xe2\x80\x94 Immediately retry all pending outbound SMS\n";
             help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/heap \xe2\x80\x94 Show free/min/max-block heap\n";
@@ -501,6 +502,20 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 }
             }
             bot_.sendMessageTo(u.chatId, msg);
+            return;
+        }
+
+        // RFC-0087: /flushqueue — reset retry timers so entries drain immediately.
+        if (lower == "/flushqueue")
+        {
+            int n = smsSender_.queueSize();
+            smsSender_.resetRetryTimers();
+            if (n > 0)
+                bot_.sendMessageTo(u.chatId,
+                    String("\xF0\x9F\x94\x84 Retry timers reset. ") + String(n) // 🔄
+                    + String(" entr") + (n == 1 ? "y" : "ies") + String(" will drain on next tick."));
+            else
+                bot_.sendMessageTo(u.chatId, String("Queue is empty."));
             return;
         }
 

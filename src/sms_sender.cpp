@@ -217,6 +217,13 @@ void SmsSender::drainQueue(uint32_t nowMs)
     }
 }
 
+void SmsSender::resetRetryTimers()
+{
+    for (auto &e : queue_)
+        if (e.occupied)
+            e.nextRetryMs = 0;
+}
+
 int SmsSender::queueSize() const
 {
     int count = 0;
