@@ -1,6 +1,10 @@
 #include "delivery_report_handler.h"
 #include "sms_codec.h"
 
+#ifdef ESP_PLATFORM
+#include <esp_task_wdt.h>
+#endif
+
 void DeliveryReportHandler::onStatusReport(const String &pduHex)
 {
     sms_codec::StatusReport report;
@@ -47,6 +51,10 @@ void DeliveryReportHandler::onStatusReport(const String &pduHex)
             + String(": ") + report.statusText;
     }
 
+#ifdef ESP_PLATFORM
+    esp_task_wdt_reset(); // bot_.sendMessage() can block ~23 s; kick WDT so
+                          // multiple back-to-back delivery reports don't time out
+#endif
     if (!bot_.sendMessage(msg))
     {
         Serial.println("DeliveryReportHandler: failed to send Telegram notification");
