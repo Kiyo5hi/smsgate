@@ -3176,17 +3176,25 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             uint32_t expNowMs = clock_ ? clock_() : 0;
             long expWallNow = wallTimeFn_ ? wallTimeFn_() : 0;
             int count = 0;
+            int omitted = 0;
             String out;
+            // RFC-0259: Telegram messages are capped at 4096 chars. A slot body
+            // can be up to ~1530 chars (10-part concat), so 5 slots could reach
+            // ~7800 chars. Stop adding lines once we'd exceed ~3900 chars (leaves
+            // room for the header). Omitted slots are reported in a footer;
+            // use /schedinfo <N> to inspect them individually.
+            static constexpr unsigned int kExportMaxLen = 3900;
             for (int i = 0; i < (int)kScheduledQueueSize; i++)
             {
                 const ScheduledSms &sl = scheduledQueue_[i];
                 if (sl.sendAtMs == 0) continue;
                 count++;
+                String line;
                 if (sl.repeatIntervalMs > 0)
                 {
                     // Repeating slot: export as /recurring.
                     uint32_t rMin = sl.repeatIntervalMs / 60000U;
-                    out += String("/recurring ") + String(rMin) + String(" ")
+                    line = String("/recurring ") + String(rMin) + String(" ")
                          + sl.phone + String(" ") + sl.body + String("\n");
                 }
                 else if (expWallNow > 1000000000L)
@@ -3201,7 +3209,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     snprintf(dateBuf, sizeof(dateBuf), "%04d-%02d-%02d %02d:%02d",
                              tmFire->tm_year + 1900, tmFire->tm_mon + 1, tmFire->tm_mday,
                              tmFire->tm_hour, tmFire->tm_min);
-                    out += String("/scheduleat ") + String(dateBuf) + String(" ")
+                    line = String("/scheduleat ") + String(dateBuf) + String(" ")
                          + sl.phone + String(" ") + sl.body + String("\n");
                 }
                 else
@@ -3210,16 +3218,27 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     long deltaMs = (long)sl.sendAtMs - (long)expNowMs;
                     long remMin = deltaMs > 0 ? (deltaMs + 59999L) / 60000L : 1L;
                     if (remMin < 1) remMin = 1;
-                    out += String("/schedulesend ") + String((int)remMin) + String(" ")
+                    line = String("/schedulesend ") + String((int)remMin) + String(" ")
                          + sl.phone + String(" ") + sl.body + String("\n");
                 }
+                if (out.length() + line.length() > kExportMaxLen)
+                {
+                    omitted++;
+                    continue; // RFC-0259: body too long to fit; report in footer
+                }
+                out += line;
             }
             if (count == 0)
                 bot_.sendMessageTo(u.chatId, String("(no scheduled SMS)"));
             else
-                bot_.sendMessageTo(u.chatId,
-                    String("\xf0\x9f\x93\x8b Scheduled queue export (") // 📋
-                    + String(count) + String(" slot(s)):\n") + out);
+            {
+                String msg = String("\xf0\x9f\x93\x8b Scheduled queue export (") // 📋
+                           + String(count) + String(" slot(s)):\n") + out;
+                if (omitted > 0)
+                    msg += String("(") + String(omitted)
+                        + String(" slot(s) omitted — use /schedinfo <N> for long-body slots)");
+                bot_.sendMessageTo(u.chatId, msg);
+            }
             return;
         }
 
