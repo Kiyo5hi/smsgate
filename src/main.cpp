@@ -207,6 +207,8 @@ static bool s_lowHeapWarnSent = false;
 static bool s_lowCsqWarnSent = false;
 // RFC-0082: Network registration loss alert.
 static bool s_regLostAlertSent = false;
+// RFC-0113: WiFi low-RSSI alert (< -80 dBm).
+static bool s_lowWifiRssiAlertSent = false;
 // RFC-0075: Daily stats digest. Initialised to 0 so the first digest sends
 // 24 h after boot (set on first 30-second tick, fire 24 h later).
 static uint32_t s_lastDailyDigestMs = 0;
@@ -1353,6 +1355,28 @@ void loop()
                     realBot.sendMessage(
                         String("\xE2\x9C\x85 Network registration restored (") + regTxt + ")"); // ✅
                 s_regLostAlertSent = false;
+            }
+        }
+        // RFC-0113: WiFi low-RSSI alert. Hysteresis: alert at < -80 dBm, clear at >= -70 dBm.
+        {
+            if (WiFi.status() == WL_CONNECTED)
+            {
+                int rssi = WiFi.RSSI();
+                if (rssi < -80 && !s_lowWifiRssiAlertSent && !alertsMuted())
+                {
+                    String msg = String("\xE2\x9A\xA0\xEF\xB8\x8F Weak WiFi: "); // ⚠️
+                    msg += String(rssi); msg += " dBm — Telegram delivery may be unreliable.";
+                    realBot.sendMessage(msg);
+                    s_lowWifiRssiAlertSent = true;
+                }
+                else if (rssi >= -70)
+                {
+                    s_lowWifiRssiAlertSent = false;
+                }
+            }
+            else
+            {
+                s_lowWifiRssiAlertSent = false; // reset so alert re-fires on reconnect
             }
         }
         // RFC-0031: Record CSQ sample in rolling history.
