@@ -428,6 +428,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "setconcatttl";
         c["description"] = "Set concat fragment TTL: /setconcatttl <seconds>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setdedup";
+        c["description"] = "Set SMS dedup window: /setdedup <seconds> (0=off)";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "cleardedup";
+        c["description"] = "Clear SMS dedup ring buffer";
+    }
     String payload;
     serializeJson(doc, payload);
 

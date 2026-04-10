@@ -134,6 +134,18 @@ public:
     // Returns the count of SIM indices dispatched to handleSmsIndex.
     int sweepExistingSms();
 
+    // RFC-0144: Set the dedup window. 0 = disable dedup entirely.
+    void setDedupWindowMs(unsigned long ms) { dedupWindowMs_ = ms; }
+    unsigned long dedupWindowMs() const { return dedupWindowMs_; }
+
+    // RFC-0145: Clear the dedup ring buffer so recently-seen SMS can
+    // be forwarded again immediately.
+    void clearDedupBuffer()
+    {
+        for (auto &e : dedupRing_) { e.hash = 0; e.tsMs = 0; }
+        dedupHead_ = 0;
+    }
+
     // RFC-0142: Set the concat fragment TTL. Range: 60s–604800s (7 days).
     // After change, the next TTL sweep uses the new value automatically.
     void setConcatTtlMs(unsigned long ms)
@@ -277,7 +289,8 @@ private:
     int blockListCount_ = 0;
     const char (*runtimeList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;
     int runtimeListCount_ = 0;
-    unsigned long concatTtlMs_ = CONCAT_TTL_MS; // RFC-0142
+    unsigned long concatTtlMs_   = CONCAT_TTL_MS;    // RFC-0142
+    unsigned long dedupWindowMs_ = kDedupWindowMs;   // RFC-0144
     int maxConsecutiveFailures_ = MAX_CONSECUTIVE_FAILURES; // RFC-0138
     int consecutiveFailures_ = 0;
     int smsForwarded_ = 0;

@@ -1316,6 +1316,12 @@ void setup()
             s_heartbeatIntervalSec = secs;
             realPersist.saveBlob("hb_interval", &secs, sizeof(secs));
         });
+        telegramPoller->setDedupWindowFn([&smsHandler](uint32_t secs) { // RFC-0144
+            smsHandler.setDedupWindowMs((unsigned long)secs * 1000UL);
+        });
+        telegramPoller->setClearDedupFn([&smsHandler]() { // RFC-0145
+            smsHandler.clearDedupBuffer();
+        });
         telegramPoller->setConcatTtlFn([&smsHandler](uint32_t secs) { // RFC-0142
             smsHandler.setConcatTtlMs((unsigned long)secs * 1000UL);
         });

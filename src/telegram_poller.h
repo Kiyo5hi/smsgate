@@ -272,6 +272,14 @@ public:
     // the count of deleted slots (-1 if unknown). /flushsim yes invokes it.
     void setFlushSimFn(std::function<int()> fn) { flushSimFn_ = std::move(fn); }
 
+    // RFC-0144: Optional dedup window setter. When set, /setdedup <seconds>
+    // changes the dedup window (0 = disable, max 3600).
+    void setDedupWindowFn(std::function<void(uint32_t)> fn) { dedupWindowFn_ = std::move(fn); }
+
+    // RFC-0145: Optional dedup clear fn. When set, /cleardedup calls this
+    // fn and replies "✅ Dedup buffer cleared."
+    void setClearDedupFn(std::function<void()> fn) { clearDedupFn_ = std::move(fn); }
+
     // RFC-0142: Optional concat TTL setter. When set, /setconcatttl <seconds>
     // updates the fragment TTL (range 60–604800 seconds).
     void setConcatTtlFn(std::function<void(uint32_t)> fn) { concatTtlFn_ = std::move(fn); }
@@ -351,7 +359,9 @@ private:
     std::function<void(const String &)> noteSetFn_; // RFC-0131
     std::function<void(int)> maxFailFn_;  // RFC-0138
     std::function<int()> flushSimFn_;     // RFC-0139
-    std::function<void(uint32_t)> concatTtlFn_; // RFC-0142
+    std::function<void(uint32_t)> dedupWindowFn_;  // RFC-0144
+    std::function<void()> clearDedupFn_;           // RFC-0145
+    std::function<void(uint32_t)> concatTtlFn_;    // RFC-0142
     std::function<String()> modemInfoFn_;       // RFC-0143
     std::function<String()> simListFn_;   // RFC-0140
     std::function<String(int)> simReadFn_; // RFC-0141

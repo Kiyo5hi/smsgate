@@ -1283,6 +1283,51 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0144: /setdedup <seconds> — change SMS dedup window at runtime.
+        if (lower == "/setdedup" || lower.startsWith("/setdedup "))
+        {
+            if (!dedupWindowFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setdedup not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/setdedup ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setdedup <seconds>\n0 = disable dedup, max 3600 (1h)"));
+                return;
+            }
+            long val = arg.toInt();
+            if (val < 0 || val > 3600)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid dedup window (0\xe2\x80\x93 3600 seconds).")); // ❌
+                return;
+            }
+            dedupWindowFn_((uint32_t)val);
+            if (val == 0)
+                bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 Dedup disabled.")); // ✅
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 Dedup window set to ") // ✅
+                    + String((int)val) + String(" seconds."));
+            return;
+        }
+
+        // RFC-0145: /cleardedup — clear the SMS dedup ring buffer.
+        if (lower == "/cleardedup")
+        {
+            if (!clearDedupFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(cleardedup not configured)"));
+                return;
+            }
+            clearDedupFn_();
+            bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 Dedup buffer cleared.")); // ✅
+            return;
+        }
+
         // RFC-0142: /setconcatttl <seconds> — change concat fragment TTL at runtime.
         if (lower == "/setconcatttl" || lower.startsWith("/setconcatttl "))
         {

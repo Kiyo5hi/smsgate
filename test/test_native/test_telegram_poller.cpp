@@ -4106,6 +4106,94 @@ void test_TelegramPoller_send_duplicate_gets_already_queued_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0144: /setdedup <seconds> calls fn.
+void test_TelegramPoller_setdedup_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    uint32_t captured = 999;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setDedupWindowFn([&captured](uint32_t secs) { captured = secs; });
+
+    bot.queueUpdateBatch({makeUpdate(1020, kAllowedFromId, 0, "/setdedup 60", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1020, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(60u, captured);
+    bool sawOk = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("60")) >= 0) { sawOk = true; break; }
+    TEST_ASSERT_TRUE(sawOk);
+}
+
+// RFC-0144: /setdedup 0 disables dedup.
+void test_TelegramPoller_setdedup_zero_disables()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    uint32_t captured = 999;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setDedupWindowFn([&captured](uint32_t secs) { captured = secs; });
+
+    bot.queueUpdateBatch({makeUpdate(1021, kAllowedFromId, 0, "/setdedup 0", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1021, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(0u, captured);
+    bool sawDisabled = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("disabled")) >= 0) { sawDisabled = true; break; }
+    TEST_ASSERT_TRUE(sawDisabled);
+}
+
+// RFC-0145: /cleardedup calls fn.
+void test_TelegramPoller_cleardedup_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setClearDedupFn([&fnCalled]() { fnCalled = true; });
+
+    bot.queueUpdateBatch({makeUpdate(1022, kAllowedFromId, 0, "/cleardedup", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1022, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(fnCalled);
+    bool sawOk = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("cleared")) >= 0 || m.indexOf(String("Cleared")) >= 0)
+            { sawOk = true; break; }
+    TEST_ASSERT_TRUE(sawOk);
+}
+
 // RFC-0142: /setconcatttl <seconds> calls fn.
 void test_TelegramPoller_setconcatttl_calls_fn()
 {
@@ -4679,6 +4767,11 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setinterval_calls_fn);
     RUN_TEST(test_TelegramPoller_setinterval_zero_disables);
     RUN_TEST(test_TelegramPoller_setinterval_too_large_sends_error);
+    // RFC-0144: /setdedup command
+    RUN_TEST(test_TelegramPoller_setdedup_calls_fn);
+    RUN_TEST(test_TelegramPoller_setdedup_zero_disables);
+    // RFC-0145: /cleardedup command
+    RUN_TEST(test_TelegramPoller_cleardedup_calls_fn);
     // RFC-0142: /setconcatttl command
     RUN_TEST(test_TelegramPoller_setconcatttl_calls_fn);
     RUN_TEST(test_TelegramPoller_setconcatttl_too_small_sends_error);

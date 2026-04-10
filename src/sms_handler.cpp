@@ -425,7 +425,7 @@ bool SmsHandler::checkDup(const String &sender, const String &body) const
         if (dedupRing_[i].hash == h)
         {
             unsigned long age = now - dedupRing_[i].tsMs;
-            if (age < kDedupWindowMs)
+            if (dedupWindowMs_ > 0 && age < dedupWindowMs_)
                 return true; // duplicate within window
         }
     }
