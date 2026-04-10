@@ -218,6 +218,55 @@ void test_timestampToRFC3339_exactly_17_chars()
 
 // ---------- Unity plumbing ----------
 
+// RFC-0037: countSmsParts — basic cases.
+void test_countSmsParts_empty_is_zero()
+{
+    TEST_ASSERT_EQUAL(0, sms_codec::countSmsParts(String("")));
+}
+
+void test_countSmsParts_short_ascii_is_one_part()
+{
+    TEST_ASSERT_EQUAL(1, sms_codec::countSmsParts(String("Hello")));
+}
+
+void test_countSmsParts_160_gsm7_is_one_part()
+{
+    String s;
+    for (int i = 0; i < 160; i++) s += 'A';
+    TEST_ASSERT_EQUAL(1, sms_codec::countSmsParts(s));
+}
+
+void test_countSmsParts_161_gsm7_is_two_parts()
+{
+    String s;
+    for (int i = 0; i < 161; i++) s += 'A';
+    TEST_ASSERT_EQUAL(2, sms_codec::countSmsParts(s));
+}
+
+void test_countSmsParts_unicode_70_is_one_part()
+{
+    // 70 Chinese characters = 70 UCS-2 code units = 1 part
+    String s;
+    for (int i = 0; i < 70; i++) {
+        s += (char)(unsigned char)0xE4;
+        s += (char)(unsigned char)0xBD;
+        s += (char)(unsigned char)0xA0; // 你
+    }
+    TEST_ASSERT_EQUAL(1, sms_codec::countSmsParts(s));
+}
+
+void test_countSmsParts_unicode_71_is_two_parts()
+{
+    // 71 Chinese characters = 71 UCS-2 code units = 2 parts
+    String s;
+    for (int i = 0; i < 71; i++) {
+        s += (char)(unsigned char)0xE4;
+        s += (char)(unsigned char)0xBD;
+        s += (char)(unsigned char)0xA0;
+    }
+    TEST_ASSERT_EQUAL(2, sms_codec::countSmsParts(s));
+}
+
 void run_sms_codec_tests()
 {
     RUN_TEST(test_decodeUCS2_plain_ascii_passthrough);
@@ -245,4 +294,11 @@ void run_sms_codec_tests()
     RUN_TEST(test_timestampToRFC3339_happy_path);
     RUN_TEST(test_timestampToRFC3339_too_short);
     RUN_TEST(test_timestampToRFC3339_exactly_17_chars);
+    // RFC-0037: countSmsParts
+    RUN_TEST(test_countSmsParts_empty_is_zero);
+    RUN_TEST(test_countSmsParts_short_ascii_is_one_part);
+    RUN_TEST(test_countSmsParts_160_gsm7_is_one_part);
+    RUN_TEST(test_countSmsParts_161_gsm7_is_two_parts);
+    RUN_TEST(test_countSmsParts_unicode_70_is_one_part);
+    RUN_TEST(test_countSmsParts_unicode_71_is_two_parts);
 }

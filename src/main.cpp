@@ -175,6 +175,9 @@ static String cachedOperatorName;
 static int csqHistory[6] = {0, 0, 0, 0, 0, 0};
 static int csqHistoryIdx = 0;
 static bool csqHistoryFull = false;
+// RFC-0036: SIM slot usage from AT+CPMS?, refreshed every 30s.
+static int cachedSimUsed  = -1; // -1 = not yet queried
+static int cachedSimTotal = 0;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -626,6 +629,10 @@ void setup()
         msg += "  Concat in-flight: "; msg += String((int)smsHandler.concatKeyCount()); msg += "\n";
         // RFC-0034: show outbound retry queue depth.
         msg += "  Outbound queue: "; msg += String(smsSender.queueSize()); msg += "/"; msg += String(SmsSender::kQueueSize); msg += "\n";
+        // RFC-0036: SIM slot usage (reflects SMS still on SIM — fragments + sweep backlog).
+        if (cachedSimUsed >= 0) {
+            msg += "  SIM: "; msg += String(cachedSimUsed); msg += "/"; msg += String(cachedSimTotal); msg += " slots\n";
+        }
 
         msg += "\n\xF0\x9F\x92\xAC Telegram\n"; // 💬
         msg += "  Reply slots: ";
@@ -859,6 +866,23 @@ void setup()
                              ? copsResp.substring(q1 + 1, q2)
                              : String();
     }
+    // RFC-0036: Prime SIM slot usage at boot.
+    {
+        String cpmsResp;
+        modem.sendAT("+CPMS?");
+        modem.waitResponse(2000UL, cpmsResp);
+        int smPos = cpmsResp.indexOf('"');
+        if (smPos >= 0) {
+            int c1 = cpmsResp.indexOf(',', smPos);
+            int c2 = (c1 >= 0) ? cpmsResp.indexOf(',', c1 + 1) : -1;
+            if (c1 >= 0 && c2 > c1) {
+                cachedSimUsed  = cpmsResp.substring(c1 + 1, c2).toInt();
+                int c3 = cpmsResp.indexOf(',', c2 + 1);
+                if (c3 < 0) c3 = cpmsResp.length();
+                cachedSimTotal = cpmsResp.substring(c2 + 1, c3).toInt();
+            }
+        }
+    }
     {
         String bootMsg = String("\xF0\x9F\x9A\x80 Bridge online\n"); // U+1F680 rocket
         if (statusFn)
@@ -991,6 +1015,25 @@ void loop()
             cachedOperatorName = (q1 >= 0 && q2 > q1)
                                  ? copsResp.substring(q1 + 1, q2)
                                  : String();
+        }
+        // RFC-0036: Cache SIM slot usage via AT+CPMS?
+        // Response: +CPMS: "SM",used,total,...
+        {
+            String cpmsResp;
+            modem.sendAT("+CPMS?");
+            modem.waitResponse(2000UL, cpmsResp);
+            // Find first "SM" or "ME" entry; take the numbers after it.
+            int smPos = cpmsResp.indexOf('"');
+            if (smPos >= 0) {
+                int c1 = cpmsResp.indexOf(',', smPos);
+                int c2 = (c1 >= 0) ? cpmsResp.indexOf(',', c1 + 1) : -1;
+                if (c1 >= 0 && c2 > c1) {
+                    cachedSimUsed  = cpmsResp.substring(c1 + 1, c2).toInt();
+                    int c3 = cpmsResp.indexOf(',', c2 + 1);
+                    if (c3 < 0) c3 = cpmsResp.length();
+                    cachedSimTotal = cpmsResp.substring(c2 + 1, c3).toInt();
+                }
+            }
         }
 #ifdef ENABLE_DELIVERY_REPORTS
         // Evict delivery report map entries older than 1 hour (RFC-0011).

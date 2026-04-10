@@ -164,6 +164,11 @@ std::vector<SmsSubmitPdu> buildSmsSubmitPduMulti(const String &phone,
 // char) and UCS-2 (70 char) and give a precise length error.
 bool isGsm7Compatible(const String &s);
 
+// Return the number of SMS parts `body` will require (RFC-0037).
+// Returns 0 if the body is empty or exceeds maxParts (default 10).
+// Uses buildSmsSubmitPduMulti internally so encoding selection is exact.
+int countSmsParts(const String &body, int maxParts = 10);
+
 // ---------- SMS-STATUS-REPORT PDU parser (RFC-0011) ----------
 
 // Parsed SMS-STATUS-REPORT PDU (3GPP TS 23.040 section 9.2.2.3).

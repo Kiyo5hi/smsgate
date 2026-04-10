@@ -1390,4 +1390,12 @@ bool parseStatusReportPdu(const String &hexPdu, StatusReport &out)
     return true;
 }
 
+// RFC-0037: part count without building full PDUs.
+// Reuses buildSmsSubmitPduMulti for exact encoding selection.
+int countSmsParts(const String &body, int maxParts)
+{
+    auto pdus = buildSmsSubmitPduMulti(String("+1"), body, maxParts);
+    return (int)pdus.size();
+}
+
 } // namespace sms_codec

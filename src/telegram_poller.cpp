@@ -1,5 +1,6 @@
 #include "telegram_poller.h"
 #include "sms_debug_log.h"
+#include "sms_codec.h"
 
 #include <vector>
 
@@ -224,12 +225,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             // RFC-0029: Include a body preview so the user can catch typos.
             String preview = body.substring(0, 30);
             if (body.length() > 30) preview += "\xE2\x80\xA6"; // U+2026 ellipsis
+            // RFC-0037: Append part count when message will be split.
+            int parts = sms_codec::countSmsParts(body);
+            String confirmText = String("\xE2\x9C\x85 Queued to ") + phone + String(": ") + preview;
+            if (parts > 1)
+                confirmText += String(" (") + String(parts) + String(" parts)");
             // RFC-0030: Use sendMessageReturningId so we can store the
             // confirmation message_id in the reply-target map. This lets the
             // user reply to the "✅ Queued to..." confirmation to send another
             // SMS to the same number without typing /send again.
-            int32_t confirmId = bot_.sendMessageReturningId(
-                String("\xE2\x9C\x85 Queued to ") + phone + String(": ") + preview);
+            int32_t confirmId = bot_.sendMessageReturningId(confirmText);
             if (confirmId > 0)
                 replyTargets_.put(confirmId, phone);
             Serial.print("TelegramPoller: /send queued to ");

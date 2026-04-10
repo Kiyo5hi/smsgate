@@ -1245,6 +1245,36 @@ void test_TelegramPoller_queue_command_shows_pending()
     TEST_ASSERT_TRUE(sawPhone);
 }
 
+// /send with a 161-char ASCII body should mention "2 parts" in the confirmation.
+void test_TelegramPoller_send_multipart_shows_part_count()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // Build a 161-char ASCII body (2 GSM-7 parts).
+    String longBody = "/send +1234567890 ";
+    for (int i = 0; i < 161; i++) longBody += 'A';
+
+    bot.queueUpdateBatch({makeUpdate(800, kAllowedFromId, 0, longBody.c_str(), kAllowedFromId)});
+    poller.tick();
+
+    bool sawParts = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("parts")) >= 0 || m.indexOf(String("2 part")) >= 0)
+            { sawParts = true; break; }
+    TEST_ASSERT_TRUE(sawParts);
+}
+
 // ---------- RFC-0032: delivery confirmation on successful SMS send ----------
 
 // Reply to a forwarded SMS: after drainQueue succeeds, "📨 Sent to" is delivered.
@@ -1373,4 +1403,6 @@ void run_telegram_poller_tests()
     // RFC-0033: /queue command
     RUN_TEST(test_TelegramPoller_queue_command_empty);
     RUN_TEST(test_TelegramPoller_queue_command_shows_pending);
+    // RFC-0037: part count in /send confirmation
+    RUN_TEST(test_TelegramPoller_send_multipart_shows_part_count);
 }
