@@ -112,6 +112,11 @@ public:
     // immediately attempts all pending entries regardless of backoff state.
     void resetRetryTimers();
 
+    // RFC-0216: Reset the retry timer for the Nth occupied entry (1-indexed,
+    // matching /queue display order). Returns true if found. Other entries
+    // are unaffected.
+    bool resetRetryTimer(int n);
+
     // RFC-0046: Cancel the Nth occupied queue entry (1-indexed, matching
     // /queue display order). Returns true if found and removed, false if
     // N is out of range. onFinalFailure is NOT called — cancellation is

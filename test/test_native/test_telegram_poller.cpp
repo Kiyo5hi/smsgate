@@ -7492,6 +7492,47 @@ void test_TelegramPoller_schedclone_copies_slot()
     TEST_ASSERT_TRUE(sawClone);
 }
 
+// RFC-0216: /retry resets the timer for a single queue entry.
+void test_TelegramPoller_retry_resets_single_entry()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // Enqueue 2 entries.
+    sender.enqueue(String("+1001"), String("body one"));
+    sender.enqueue(String("+1002"), String("body two"));
+
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Reset entry 1's timer only.
+    bot.queueUpdateBatch({makeUpdate(19001, kAllowedFromId, 0,
+        "/retry 1", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(19001, poller.lastUpdateId());
+
+    // Both entries still in queue.
+    TEST_ASSERT_EQUAL(2, sender.queueSize());
+
+    // Confirm reply includes "Entry 1".
+    bool sawRetry = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Entry 1") >= 0 || m.indexOf("retry") >= 0)
+        { sawRetry = true; break; }
+    TEST_ASSERT_TRUE(sawRetry);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -8166,6 +8207,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_queueinfo_out_of_range);
     // RFC-0215: /schedclone command
     RUN_TEST(test_TelegramPoller_schedclone_copies_slot);
+    // RFC-0216: /retry command
+    RUN_TEST(test_TelegramPoller_retry_resets_single_entry);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);

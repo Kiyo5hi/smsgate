@@ -206,6 +206,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/queue \xe2\x80\x94 Show pending outbound queue\n";
             help += "/queueinfo <N> \xe2\x80\x94 Full details of outbound queue entry N\n"; // RFC-0214
             help += "/flushqueue \xe2\x80\x94 Immediately retry all pending outbound SMS\n";
+            help += "/retry <N> \xe2\x80\x94 Force immediate retry of queue entry N\n"; // RFC-0216
             help += "/clearqueue \xe2\x80\x94 Discard all pending outbound SMS\n";
             help += "/resetstats \xe2\x80\x94 Reset session counters (SMS fwd/fail, calls)\n";
             help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
@@ -1747,6 +1748,31 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     + String(" entr") + (n == 1 ? "y" : "ies") + String(" will drain on next tick."));
             else
                 bot_.sendMessageTo(u.chatId, String("Queue is empty."));
+            return;
+        }
+
+        // RFC-0216: /retry <N> — reset retry timer for the Nth queue entry only.
+        if (lower == "/retry" || lower.startsWith("/retry "))
+        {
+            String arg = extractArg(lower, "/retry ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /retry <N>  (see /queue for numbers)"));
+                return;
+            }
+            int n = (int)arg.toInt();
+            if (!smsSender_.resetRetryTimer(n))
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c No entry ") + String(n) // ❌
+                    + String(" in queue (")
+                    + String(smsSender_.queueSize()) + String(" total)."));
+                return;
+            }
+            bot_.sendMessageTo(u.chatId,
+                String("\xF0\x9F\x94\x84 Entry ") + String(n) // 🔄
+                + String(" will retry on next tick."));
             return;
         }
 

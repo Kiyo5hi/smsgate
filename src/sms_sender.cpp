@@ -242,6 +242,21 @@ void SmsSender::resetRetryTimers()
             e.nextRetryMs = 0;
 }
 
+bool SmsSender::resetRetryTimer(int n)
+{
+    int count = 0;
+    for (auto &e : queue_)
+    {
+        if (!e.occupied) continue;
+        if (++count == n)
+        {
+            e.nextRetryMs = 0;
+            return true;
+        }
+    }
+    return false;
+}
+
 int SmsSender::queueSize() const
 {
     int count = 0;
