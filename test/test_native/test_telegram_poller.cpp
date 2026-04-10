@@ -5831,6 +5831,32 @@ void test_TelegramPoller_settings_calls_fn_and_replies()
     TEST_ASSERT_TRUE(msgs.back().indexOf("forwarding=ON") >= 0);
 }
 
+// RFC-0168: /nvsinfo command
+void test_TelegramPoller_nvsinfo_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setNvsInfoFn([]() -> String { return "NVS: used=12 free=500 total=512"; });
+
+    bot.queueUpdateBatch({makeUpdate(1090, kAllowedFromId, 0, "/nvsinfo", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1090, poller.lastUpdateId());
+    auto msgs = bot.sentMessages();
+    TEST_ASSERT_TRUE(msgs.size() > 0);
+    TEST_ASSERT_TRUE(msgs.back().indexOf("used=12") >= 0);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -6081,6 +6107,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setunknowndeadline_out_of_range_replies_error);
     // RFC-0167: /settings command
     RUN_TEST(test_TelegramPoller_settings_calls_fn_and_replies);
+    // RFC-0168: /nvsinfo command
+    RUN_TEST(test_TelegramPoller_nvsinfo_calls_fn_and_replies);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

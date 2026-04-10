@@ -31,6 +31,7 @@
 
 #include <esp_system.h>
 #include <esp_task_wdt.h>
+#include <nvs.h>
 
 #ifdef TINY_GSM_MODEM_SIM7080
 #error "This modem has no SMS function"
@@ -1422,6 +1423,25 @@ void setup()
             s += (s_heartbeatIntervalSec == 0 ? "s (disabled)" : "s"); s += "\n";
             s += "  Poll interval: ";
             s += String(telegramPoller->pollIntervalMs() / 1000); s += "s";
+            return s;
+        });
+        telegramPoller->setNvsInfoFn([]() -> String { // RFC-0168
+            nvs_stats_t stats;
+            esp_err_t err = nvs_get_stats(NULL, &stats);
+            if (err != ESP_OK)
+            {
+                return String("NVS stats unavailable (err=") + String(err) + String(")");
+            }
+            String s;
+            s += "\xF0\x9F\x97\x84 NVS storage:\n"; // 🗄
+            s += "  Used entries:  "; s += String(stats.used_entries); s += "\n";
+            s += "  Free entries:  "; s += String(stats.free_entries); s += "\n";
+            s += "  Total entries: "; s += String(stats.total_entries); s += "\n";
+            if (stats.total_entries > 0)
+            {
+                int pct = (int)((stats.used_entries * 100u) / stats.total_entries);
+                s += "  Usage: "; s += String(pct); s += "%";
+            }
             return s;
         });
         telegramPoller->setBlockCheckFn([&smsHandler](const String &phone) -> String { // RFC-0163

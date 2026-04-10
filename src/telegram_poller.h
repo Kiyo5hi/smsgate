@@ -336,6 +336,10 @@ public:
     // fn to get a formatted multi-line string of all runtime-configurable params.
     void setSettingsFn(std::function<String()> fn) { settingsFn_ = std::move(fn); }
 
+    // RFC-0168: Optional NVS info fn. When set, /nvsinfo calls this fn to get
+    // a formatted string of NVS used/free/total entry counts.
+    void setNvsInfoFn(std::function<String()> fn) { nvsInfoFn_ = std::move(fn); }
+
     // RFC-0146: Optional SMS forward fn. When set, /forwardsim <idx> calls
     // this fn with the SIM index and replies success/failure.
     void setSmsForwardFn(std::function<bool(int)> fn) { smsForwardFn_ = std::move(fn); }
@@ -453,6 +457,7 @@ private:
     std::function<void(uint32_t)> callDedupFn_;              // RFC-0165
     std::function<void(uint32_t)> callUnknownDeadlineFn_;    // RFC-0166
     std::function<String()> settingsFn_;                     // RFC-0167
+    std::function<String()> nvsInfoFn_;                      // RFC-0168
     std::function<bool(int)> smsForwardFn_;        // RFC-0146
     uint32_t pollIntervalMs_ = kPollIntervalMs;    // RFC-0147
     std::function<void(uint32_t)> dedupWindowFn_;  // RFC-0144

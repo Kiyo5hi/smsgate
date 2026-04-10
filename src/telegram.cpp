@@ -553,6 +553,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "settings";
         c["description"] = "Show all runtime-configurable parameters";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "nvsinfo";
+        c["description"] = "NVS flash storage usage (used/free/total entries)";
+    }
     String payload;
     serializeJson(doc, payload);
 
