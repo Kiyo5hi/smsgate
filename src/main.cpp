@@ -1066,6 +1066,17 @@ void setup()
         telegramPoller->setUssdFn([](const String &code) -> String { // RFC-0103
             return realModem.ussdQuery(code, 10000UL);
         });
+        telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
+            // Admin-only: first user in TELEGRAM_CHAT_IDS.
+            if (allowedIdCount == 0 || fromId != allowedIds[0])
+                return String("\xE2\x9D\x8C Admin access required."); // ❌
+            String out;
+            realModem.sendAT(cmd);
+            realModem.waitResponse(5000UL, out);
+            out.trim();
+            if (out.length() == 0) out = String("(no response)");
+            return out;
+        });
         telegramPoller->setSimInfoFn([]() -> String {               // RFC-0105
             const char *csqLabel;
             if (cachedCsq == 99)      csqLabel = "none";

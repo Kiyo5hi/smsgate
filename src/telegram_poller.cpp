@@ -111,6 +111,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/ussd <code> \xe2\x80\x94 Send USSD code (e.g. *100#) and get response\n";
             help += "/version \xe2\x80\x94 Show firmware build timestamp\n";
             help += "/restart \xe2\x80\x94 Soft reboot\n";
+            help += "/at <cmd> \xe2\x80\x94 Admin: raw AT command passthrough\n";
             if (smsBlockMutator_) {
                 help += "/blocklist \xe2\x80\x94 Show block list\n";
                 help += "/block <num|prefix*> \xe2\x80\x94 Block sender\n";
@@ -333,6 +334,55 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, simInfoFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(SIM info not configured)"));
+            return;
+        }
+
+        // RFC-0107: /at <cmd> — admin-only raw AT passthrough.
+        if (lower == "/at" || lower.startsWith("/at "))
+        {
+            if (!atCmdFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(AT passthrough not configured)"));
+                return;
+            }
+            // Extract command from ORIGINAL text (preserve case for AT strings).
+            String atArg = u.text.length() > 3 ? u.text.substring(3) : String();
+            atArg.trim();
+            if (atArg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /at <cmd>\nExample: /at +CSQ\nNote: do not include the leading AT"));
+                return;
+            }
+            // Strip a leading "AT" or "at" if the user included it (normalize).
+            if (atArg.length() >= 2)
+            {
+                char c0 = atArg[0]; if (c0 >= 'a' && c0 <= 'z') c0 = (char)(c0 - 32);
+                char c1 = atArg[1]; if (c1 >= 'a' && c1 <= 'z') c1 = (char)(c1 - 32);
+                if (c0 == 'A' && c1 == 'T') atArg = atArg.substring(2);
+                atArg.trim();
+            }
+            // Blacklist destructive / state-changing commands.
+            String atUpper;
+            for (unsigned int ci = 0; ci < atArg.length() && ci < 10; ci++)
+            {
+                char ch = atArg[ci];
+                if (ch >= 'a' && ch <= 'z') ch = (char)(ch - 32);
+                atUpper += ch;
+            }
+            if (atUpper.startsWith("+CMGD") || atUpper.startsWith("+CMGS") ||
+                atUpper.startsWith("+CPBW") || atUpper.startsWith("Z") ||
+                atUpper.startsWith("&F")    || atUpper.startsWith("+CFUN=0") ||
+                atUpper.startsWith("+CPIN="))
+            {
+                sendErrorReply(u.chatId,
+                    String("Command blocked for safety. Use serial monitor for destructive AT commands."));
+                return;
+            }
+            String resp = atCmdFn_(u.fromId, atArg);
+            // Truncate long responses.
+            if (resp.length() > 500) resp = resp.substring(0, 500) + "\xE2\x80\xA6"; // …
+            bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x93\x9F AT") + atArg + String("\r\n") + resp); // 📟
             return;
         }
 

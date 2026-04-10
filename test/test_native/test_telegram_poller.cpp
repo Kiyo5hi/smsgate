@@ -1583,6 +1583,138 @@ void test_TelegramPoller_sendall_delivery_summary_partial_failure()
     TEST_ASSERT_TRUE(sawSummary);
 }
 
+// ---------- RFC-0107: /at command ----------
+
+void test_TelegramPoller_at_calls_at_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    String capturedCmd;
+    poller.setAtCmdFn([&](int64_t /*fromId*/, const String &cmd) -> String {
+        capturedCmd = cmd;
+        return String("+CSQ: 18,0\r\nOK");
+    });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(830, kAllowedFromId, 0, "/at +CSQ", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL_STRING("+CSQ", capturedCmd.c_str());
+    bool sawResp = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("+CSQ: 18")) >= 0)
+        {
+            sawResp = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawResp);
+    TEST_ASSERT_EQUAL(830, poller.lastUpdateId());
+}
+
+void test_TelegramPoller_at_strips_leading_AT_prefix()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    String capturedCmd;
+    poller.setAtCmdFn([&](int64_t /*fromId*/, const String &cmd) -> String {
+        capturedCmd = cmd;
+        return String("OK");
+    });
+    poller.begin();
+
+    // User typed "AT+CSQ" — the handler should strip "AT" before passing to the fn.
+    bot.queueUpdateBatch({makeUpdate(831, kAllowedFromId, 0, "/at AT+CSQ", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL_STRING("+CSQ", capturedCmd.c_str());
+}
+
+void test_TelegramPoller_at_blacklists_cmgd()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    bool atCalled = false;
+    poller.setAtCmdFn([&](int64_t /*fromId*/, const String & /*cmd*/) -> String {
+        atCalled = true;
+        return String("OK");
+    });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(832, kAllowedFromId, 0, "/at +CMGD=1", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_FALSE(atCalled); // blacklisted — fn should NOT be called
+    bool sawBlocked = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("blocked")) >= 0 || m.text.indexOf(String("safety")) >= 0)
+        {
+            sawBlocked = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawBlocked);
+}
+
+void test_TelegramPoller_at_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(833, kAllowedFromId, 0, "/at +CSQ", kAllowedFromId)});
+    poller.tick();
+
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("not configured")) >= 0)
+        {
+            sawNotConfigured = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
 // ---------- RFC-0105: /sim command ----------
 
 void test_TelegramPoller_sim_command_calls_sim_info_fn()
@@ -2187,6 +2319,11 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_send_multipart_shows_part_count);
     // RFC-0089: /clearqueue command
     RUN_TEST(test_TelegramPoller_clearqueue_discards_entries);
+    // RFC-0107: /at command
+    RUN_TEST(test_TelegramPoller_at_calls_at_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_at_strips_leading_AT_prefix);
+    RUN_TEST(test_TelegramPoller_at_blacklists_cmgd);
+    RUN_TEST(test_TelegramPoller_at_not_configured_replies);
     // RFC-0105: /sim command
     RUN_TEST(test_TelegramPoller_sim_command_calls_sim_info_fn);
     RUN_TEST(test_TelegramPoller_sim_not_configured_replies);

@@ -180,6 +180,12 @@ public:
     // and replies with a compact ICCID / IMEI / operator / CSQ snapshot.
     void setSimInfoFn(std::function<String()> fn) { simInfoFn_ = std::move(fn); }
 
+    // RFC-0107: Optional AT passthrough. Signature: (fromId, cmd) -> response.
+    // The lambda is responsible for the admin check (fromId must be the first
+    // user in TELEGRAM_CHAT_IDS) and for rejecting dangerous commands.
+    // Returns a non-empty string (the AT response or an error message).
+    void setAtCmdFn(std::function<String(int64_t, const String &)> fn) { atCmdFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -217,6 +223,7 @@ private:
     std::function<void()> unmuteFn_;        // RFC-0098
     std::function<String(const String &)> ussdFn_;  // RFC-0103
     std::function<String()> simInfoFn_;              // RFC-0105
+    std::function<String(int64_t, const String &)> atCmdFn_; // RFC-0107
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;
