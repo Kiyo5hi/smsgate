@@ -2331,12 +2331,15 @@ void loop()
 #ifdef ENABLE_DELIVERY_REPORTS
     static bool waitingCdsPdu = false;
 #endif
+    // RFC-0234: track last modem serial activity for health check heuristic.
+    static unsigned long s_lastSerialActivityMs = 0;
     while (SerialAT.available())
     {
         String line = SerialAT.readStringUntil('\n');
         line.trim();
         if (line.length() == 0)
             continue;
+        s_lastSerialActivityMs = millis();
 
 #ifdef ENABLE_DELIVERY_REPORTS
         // Second line of a +CDS URC: this is the PDU hex.
@@ -2694,13 +2697,18 @@ void loop()
         }
     }
 
-    // RFC-0229: Periodic modem AT health check.
-    // If the A76XX silently hangs, +CMTI URCs stop arriving and SMS is
-    // silently lost. testAT() sends "AT" and waits up to 3 s for "OK".
-    // Three consecutive failures → Telegram alert + reboot.
+    // RFC-0229/0234: Periodic modem AT health check.
+    // Only fire if there has been no serial activity for at least
+    // kModemSilenceThresholdMs (2 min). Normal modems emit periodic URCs
+    // (registration updates, CSQ etc.) so extended silence is suspicious.
+    // After 2 consecutive silent+failed checks (~4 min silence) → reboot.
     static unsigned long lastModemCheck   = 0;
     static int           modemFailStreak  = 0;
-    if (millis() - lastModemCheck > 300000UL) // every 5 minutes
+    static const unsigned long kModemCheckIntervalMs      = 120000UL; // 2 min
+    static const unsigned long kModemSilenceThresholdMs   = 120000UL; // 2 min silence needed
+    bool modemSilent = (s_lastSerialActivityMs > 0) &&
+                       (millis() - s_lastSerialActivityMs > kModemSilenceThresholdMs);
+    if (modemSilent && millis() - lastModemCheck > kModemCheckIntervalMs)
     {
         lastModemCheck = millis();
         esp_task_wdt_reset();
@@ -2710,9 +2718,9 @@ void loop()
             Serial.print("Modem health check failed (streak=");
             Serial.print(modemFailStreak);
             Serial.println(")");
-            if (modemFailStreak >= 3)
+            if (modemFailStreak >= 2)
             {
-                realBot.sendMessage(String("\xe2\x9a\xa0\xef\xb8\x8f Modem unresponsive (3 checks) — rebooting.")); // ⚠️
+                realBot.sendMessage(String("\xe2\x9a\xa0\xef\xb8\x8f Modem unresponsive (2 checks) — rebooting.")); // ⚠️
                 delay(1000);
                 ESP.restart();
             }
@@ -2722,6 +2730,10 @@ void loop()
             modemFailStreak = 0;
         }
         esp_task_wdt_reset();
+    }
+    else if (!modemSilent)
+    {
+        modemFailStreak = 0; // reset streak if modem is actively sending
     }
 
     // Periodically verify the active transport is still viable.
