@@ -108,6 +108,11 @@ public:
     // intentional, not a retry-exhaustion failure.
     bool cancelQueueEntry(int n);
 
+    // RFC-0089: Remove ALL occupied queue entries. onFinalFailure is NOT
+    // called for any entry — this is an intentional bulk discard.
+    // Returns the number of entries cleared.
+    int clearQueue();
+
     // Attach a DeliveryReportMap so single-part sends store the MR for
     // correlation with +CDS URCs (RFC-0011). Pass nullptr to disable.
     // Lifetime: map must outlive SmsSender. Default: nullptr (disabled).

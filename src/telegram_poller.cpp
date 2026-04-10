@@ -98,6 +98,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/test <num> \xe2\x80\x94 Send a test SMS to verify outbound path\n";
             help += "/queue \xe2\x80\x94 Show pending outbound queue\n";
             help += "/flushqueue \xe2\x80\x94 Immediately retry all pending outbound SMS\n";
+            help += "/clearqueue \xe2\x80\x94 Discard all pending outbound SMS\n";
             help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/heap \xe2\x80\x94 Show free/min/max-block heap\n";
@@ -621,6 +622,19 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     + String(" entr") + (n == 1 ? "y" : "ies") + String(" will drain on next tick."));
             else
                 bot_.sendMessageTo(u.chatId, String("Queue is empty."));
+            return;
+        }
+
+        // RFC-0089: /clearqueue — discard all pending outbound SMS entries.
+        if (lower == "/clearqueue")
+        {
+            int n = smsSender_.clearQueue();
+            if (n > 0)
+                bot_.sendMessageTo(u.chatId,
+                    String("\xF0\x9F\x97\x91 Cleared ") + String(n) // 🗑
+                    + String(" queued entr") + (n == 1 ? "y." : "ies."));
+            else
+                bot_.sendMessageTo(u.chatId, String("Queue is already empty."));
             return;
         }
 

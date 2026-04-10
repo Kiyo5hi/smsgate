@@ -264,3 +264,17 @@ bool SmsSender::cancelQueueEntry(int n)
     }
     return false;
 }
+
+int SmsSender::clearQueue()
+{
+    int cleared = 0;
+    for (auto &e : queue_)
+    {
+        if (e.occupied)
+        {
+            e.occupied = false;
+            cleared++;
+        }
+    }
+    return cleared;
+}

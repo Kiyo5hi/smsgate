@@ -1358,6 +1358,46 @@ void test_TelegramPoller_send_delivery_notification()
     TEST_ASSERT_TRUE(sawSent);
 }
 
+// ---------- RFC-0089: /clearqueue ----------
+
+void test_TelegramPoller_clearqueue_discards_entries()
+{
+    FakeModem modem;
+    modem.setPduSendDefault(-1); // always fail so entries stay
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    poller.begin();
+
+    // Enqueue two entries directly.
+    sender.enqueue(String("+1"), String("first"),  nullptr, nullptr);
+    sender.enqueue(String("+2"), String("second"), nullptr, nullptr);
+    TEST_ASSERT_EQUAL(2, sender.queueSize());
+
+    bot.queueUpdateBatch({makeUpdate(700, kAllowedFromId, 0, "/clearqueue", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+    bool sawCleared = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("Cleared")) >= 0 && m.text.indexOf(String("2")) >= 0)
+        {
+            sawCleared = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawCleared);
+    TEST_ASSERT_EQUAL(700, poller.lastUpdateId());
+}
+
 // ---------- RFC-0088: /addalias, /rmalias, /aliases, @name expansion ----------
 
 void test_TelegramPoller_addalias_adds_and_replies()
@@ -1610,6 +1650,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_queue_command_shows_pending);
     // RFC-0037: part count in /send confirmation
     RUN_TEST(test_TelegramPoller_send_multipart_shows_part_count);
+    // RFC-0089: /clearqueue command
+    RUN_TEST(test_TelegramPoller_clearqueue_discards_entries);
     // RFC-0088: phone aliases
     RUN_TEST(test_TelegramPoller_addalias_adds_and_replies);
     RUN_TEST(test_TelegramPoller_rmalias_removes_and_replies);

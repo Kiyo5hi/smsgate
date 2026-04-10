@@ -565,6 +565,29 @@ void test_SmsSender_success_logs_to_debug_log()
     TEST_ASSERT_TRUE(log.dump().indexOf(String("out:sent")) >= 0);
 }
 
+// RFC-0089: clearQueue removes all entries without firing callbacks.
+void test_SmsSender_clearQueue_removes_all()
+{
+    FakeModem modem;
+    modem.setPduSendDefault(-1); // always fail (so entries stay in queue)
+    SmsSender sender(modem);
+
+    sender.enqueue(String("+1"), String("first"),  nullptr, nullptr);
+    sender.enqueue(String("+2"), String("second"), nullptr, nullptr);
+    TEST_ASSERT_EQUAL(2, sender.queueSize());
+
+    int cleared = sender.clearQueue();
+    TEST_ASSERT_EQUAL(2, cleared);
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+}
+
+void test_SmsSender_clearQueue_empty_returns_zero()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    TEST_ASSERT_EQUAL(0, sender.clearQueue());
+}
+
 void run_sms_sender_tests()
 {
     RUN_TEST(test_SmsSender_ascii_builds_gsm7_pdu);
@@ -596,4 +619,7 @@ void run_sms_sender_tests()
     RUN_TEST(test_SmsSender_resetRetryTimers_unblocks_entry);
     // RFC-0086: outbound success log
     RUN_TEST(test_SmsSender_success_logs_to_debug_log);
+    // RFC-0089: clearQueue
+    RUN_TEST(test_SmsSender_clearQueue_removes_all);
+    RUN_TEST(test_SmsSender_clearQueue_empty_returns_zero);
 }
