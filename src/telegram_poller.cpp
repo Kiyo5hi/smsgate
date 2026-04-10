@@ -4426,7 +4426,12 @@ void TelegramPoller::tick()
     bool inQuiet = isInQuietHours(quietStart_, quietEnd_, wallTimeFn_) || schedPaused_;
     for (auto &slot : scheduledQueue_)
     {
-        if (slot.sendAtMs != 0 && now >= slot.sendAtMs && !inQuiet)
+        // RFC-0266: use wraparound-safe subtraction instead of >=.
+        // now >= sendAtMs is wrong when sendAtMs overflows uint32_t (e.g.
+        // a 7-day recurring slot scheduled near the ~49.7-day millis() rollover).
+        // (uint32_t)(now - sendAtMs) < 0x80000000UL is correct for any
+        // interval ≤ 24.8 days (half the uint32_t range).
+        if (slot.sendAtMs != 0 && (uint32_t)(now - slot.sendAtMs) < 0x80000000UL && !inQuiet)
         {
             // Try to enqueue. SmsSender::enqueue returns false only if the
             // retry queue is full — leave the slot and try again next tick.
