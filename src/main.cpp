@@ -875,6 +875,7 @@ void setup()
             realPersist.saveBlob("lastsmsts", &ts, sizeof(ts));
         });
         telegramPoller->setDebugLog(&smsDebugLog);
+        telegramPoller->setNtpSyncFn([]() { syncTime(); }); // RFC-0055
         smsSender.setDebugLog(&smsDebugLog); // RFC-0035: log outbound failures
         telegramPoller->begin();
         Serial.print("TG->SMS poller online; reply-target slots in use: ");

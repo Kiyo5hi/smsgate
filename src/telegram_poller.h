@@ -129,6 +129,11 @@ public:
     // generic help message.
     void setDebugLog(SmsDebugLog *log) { debugLog_ = log; }
 
+    // RFC-0055: Optional NTP sync callback. When set, /ntp calls this
+    // function (blocks until sync completes) and reports success/failure.
+    // Production wires this to syncTime() in main.cpp.
+    void setNtpSyncFn(std::function<void()> fn) { ntpSyncFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -155,6 +160,7 @@ private:
     SmsBlockMutatorFn smsBlockMutator_;
 
     SmsDebugLog *debugLog_ = nullptr;
+    std::function<void()> ntpSyncFn_;
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

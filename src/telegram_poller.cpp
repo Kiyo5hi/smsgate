@@ -3,6 +3,7 @@
 #include "sms_codec.h"
 
 #include <vector>
+#include <time.h>
 
 // File-static helper: strips the given prefix from `lower` and returns
 // the trimmed remainder. Returns an empty String if lower does not start
@@ -85,6 +86,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         {
             String help;
             help += "/ping \xe2\x80\x94 Liveness check\n";
+            help += "/ntp \xe2\x80\x94 Force NTP time resync\n";
             help += "/status \xe2\x80\x94 Device health & stats\n";
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
             help += "/cleardebug \xe2\x80\x94 Clear SMS diagnostic log\n";
@@ -99,6 +101,35 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             }
             help += "\nReply to a forwarded SMS to send a response.";
             bot_.sendMessageTo(u.chatId, help);
+            return;
+        }
+
+        // RFC-0055: /ntp — force an NTP resync.
+        if (lower == "/ntp")
+        {
+            if (ntpSyncFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("Syncing NTP..."));
+                ntpSyncFn_();
+                time_t now = time(nullptr);
+                if (now > 8 * 3600 * 2)
+                {
+                    // Format the new time as YYYY-MM-DD HH:MM UTC.
+                    char buf[32];
+                    struct tm *t2 = gmtime(&now);
+                    strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M UTC", t2);
+                    bot_.sendMessageTo(u.chatId,
+                        String("\xE2\x9C\x85 NTP synced: ") + String(buf)); // ✅
+                }
+                else
+                {
+                    sendErrorReply(u.chatId, String("NTP sync failed (clock still invalid)."));
+                }
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("(NTP sync not configured)"));
+            }
             return;
         }
 
@@ -364,7 +395,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         Serial.println("TelegramPoller: no reply_to_message_id, dropping");
         {
             String help = "Reply to a forwarded SMS to send a response. ";
-            help += "Commands: /help, /ping, /debug, /cleardebug, /status, /restart, /send <num> <msg>, /queue, /cancel <N>";
+            help += "Commands: /help, /ping, /ntp, /debug, /cleardebug, /status, /restart, /send <num> <msg>, /queue, /cancel <N>";
             if (smsBlockMutator_)
                 help += ", /blocklist, /block <num>, /unblock <num>";
             sendErrorReply(u.chatId, help);
