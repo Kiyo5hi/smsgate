@@ -4111,6 +4111,77 @@ void test_TelegramPoller_clearaliases_empty_store_replies_placeholder()
     TEST_ASSERT_TRUE(sawPlaceholder);
 }
 
+// RFC-0186: /importaliases with valid name=phone lines → all imported.
+void test_TelegramPoller_importaliases_valid_lines_imported()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsAliasStore store(persist);
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setAliasStore(&store);
+
+    // Multi-line message: command + two aliases
+    bot.queueUpdateBatch({makeUpdate(1106, kAllowedFromId, 0,
+        "/importaliases\nAlice=+13800138000\nBob=+14155551234", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1106, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(2, store.count());
+
+    TEST_ASSERT_EQUAL_STRING("+13800138000", store.lookup("Alice").c_str());
+    TEST_ASSERT_EQUAL_STRING("+14155551234", store.lookup("Bob").c_str());
+
+    bool sawImported = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Imported") >= 0 && m.indexOf("2") >= 0) { sawImported = true; break; }
+    TEST_ASSERT_TRUE(sawImported);
+}
+
+// RFC-0186: /importaliases with some invalid lines → imported + skipped count.
+void test_TelegramPoller_importaliases_skips_invalid_lines()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsAliasStore store(persist);
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setAliasStore(&store);
+
+    // One valid, one invalid (no '='), one valid
+    bot.queueUpdateBatch({makeUpdate(1107, kAllowedFromId, 0,
+        "/importaliases\nAlice=+13800138000\nbadline\nCharlie=+15005550006",
+        kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1107, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(2, store.count());
+
+    // Reply should mention "skipped 1"
+    bool sawSkipped = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("skipped") >= 0 && m.indexOf("1") >= 0) { sawSkipped = true; break; }
+    TEST_ASSERT_TRUE(sawSkipped);
+}
+
 // RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
 void test_TelegramPoller_send_duplicate_gets_already_queued_error()
 {
@@ -6457,6 +6528,9 @@ void run_telegram_poller_tests()
     // RFC-0134: /clearaliases command
     RUN_TEST(test_TelegramPoller_clearaliases_removes_all);
     RUN_TEST(test_TelegramPoller_clearaliases_empty_store_replies_placeholder);
+    // RFC-0186: /importaliases command
+    RUN_TEST(test_TelegramPoller_importaliases_valid_lines_imported);
+    RUN_TEST(test_TelegramPoller_importaliases_skips_invalid_lines);
     // RFC-0136: /cancelnum command
     RUN_TEST(test_TelegramPoller_cancelnum_removes_matching_entries);
     RUN_TEST(test_TelegramPoller_cancelnum_no_match_replies_placeholder);

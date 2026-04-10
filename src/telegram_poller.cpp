@@ -187,6 +187,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 help += "/addalias <name> <num> \xe2\x80\x94 Add/replace alias\n";
                 help += "/rmalias <name> \xe2\x80\x94 Remove alias\n";
                 help += "/exportaliases \xe2\x80\x94 Export aliases as name=number lines\n";
+                help += "/importaliases \xe2\x80\x94 Batch import aliases (name=phone lines)\n";
                 help += "/clearaliases \xe2\x80\x94 Remove all aliases\n";
             }
             help += "/shortcuts \xe2\x80\x94 Quick command reference\n";
@@ -1098,6 +1099,79 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Cleared ") // ✅
                 + String(n) + String(n == 1 ? " alias." : " aliases."));
+            return;
+        }
+
+        // RFC-0186: /importaliases — batch import of name=phone lines.
+        if (lower.startsWith("/importaliases"))
+        {
+            if (!aliasStore_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(alias store not configured)"));
+                return;
+            }
+            // Extract everything after "/importaliases" from the original text,
+            // then split by newlines. Each line is expected to be "name=phone".
+            String body = u.text.length() > 14 ? u.text.substring(14) : String();
+            body.trim();
+            if (body.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /importaliases\nAlice=+13800138000\nBob=+14155551234"));
+                return;
+            }
+            int imported = 0, skipped = 0;
+            // Walk through lines (split by \n).
+            int start = 0;
+            while (start <= (int)body.length())
+            {
+                int nl = body.indexOf('\n', start);
+                String line = (nl < 0) ? body.substring(start)
+                                       : body.substring(start, nl);
+                start = (nl < 0) ? (int)body.length() + 1 : nl + 1;
+                line.trim();
+                if (line.length() == 0) continue;
+                int eq = line.indexOf('=');
+                if (eq <= 0)
+                {
+                    skipped++;
+                    continue;
+                }
+                String aName  = line.substring(0, eq);
+                String aPhone = sms_codec::normalizePhoneNumber(line.substring(eq + 1));
+                aName.trim();
+                if (!SmsAliasStore::isValidName(aName) || aPhone.length() == 0)
+                {
+                    skipped++;
+                    continue;
+                }
+                if (aliasStore_->set(aName, aPhone))
+                    imported++;
+                else
+                    skipped++;
+            }
+            if (imported == 0)
+            {
+                sendErrorReply(u.chatId,
+                    String("\xe2\x9d\x8c No valid aliases found. Format: name=phone (one per line)")); // ❌
+            }
+            else
+            {
+                String reply = String("\xe2\x9c\x85 Imported "); // ✅
+                reply += String(imported);
+                reply += String(imported == 1 ? " alias" : " aliases");
+                if (skipped > 0)
+                {
+                    reply += String(", skipped ");
+                    reply += String(skipped);
+                    reply += String(skipped == 1 ? " invalid line." : " invalid lines.");
+                }
+                else
+                {
+                    reply += String(".");
+                }
+                bot_.sendMessageTo(u.chatId, reply);
+            }
             return;
         }
 
