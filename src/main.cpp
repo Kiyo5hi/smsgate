@@ -2397,6 +2397,11 @@ void loop()
                 int idx = line.substring(comma + 1).toInt();
                 if (idx > 0)
                 {
+                    // RFC-0241: kick WDT — handleSmsIndex can take ~10 s
+                    // per SMS (Telegram roundtrip). If multiple +CMTI URCs
+                    // pile up in the buffer the loop would exceed 120 s
+                    // without a reset (e.g. burst on module wake-up).
+                    esp_task_wdt_reset();
                     smsHandler.handleSmsIndex(idx);
                 }
             }
@@ -2990,6 +2995,7 @@ void loop()
                     // already but handleSmsIndex never succeeded.
                     esp_task_wdt_reset();
                     smsHandler.sweepExistingSms();
+                    esp_task_wdt_reset(); // RFC-0241: sweep may process many SMS
                 }
                 wifiDownLastCheck = false;
             }
