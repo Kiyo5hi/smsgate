@@ -781,8 +781,10 @@ int32_t RealBotClient::doSendMessage(const String &text, int64_t chatId)
     // bytes (or until the connection closes) — otherwise leftover bytes
     // sit in the TLS buffer and the next keep-alive request will read them
     // back as the new HTTP status line, corrupting parsing.
+    // RFC-0233: reduce deadline from 8 s to 4 s; force-stop on timeout so
+    // stale bytes don't corrupt the next request.
     String body;
-    unsigned long deadline = millis() + 8000;
+    unsigned long deadline = millis() + 4000;
     size_t target = contentLength > 0 ? (size_t)contentLength : 8192;
     while (body.length() < target && millis() < deadline)
     {
@@ -798,6 +800,14 @@ int32_t RealBotClient::doSendMessage(const String &text, int64_t chatId)
         {
             delay(2);
         }
+    }
+    if (millis() >= deadline && body.length() < target)
+    {
+        // Partial body — connection is stale or server is wedged.
+        // Force-stop so the next call reconnects cleanly.
+        Serial.println("doSendMessage: body drain timeout, forcing stop");
+        transport_->stop();
+        // body may still contain "ok":true if the header arrived; fall through.
     }
 
     bool apiOk = body.indexOf("\"ok\":true") != -1;
@@ -942,6 +952,8 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
     }
 
     // Drain the body — same Content-Length-or-bust rule as sendMessage.
+    // RFC-0233: force-stop on deadline expiry so stale bytes don't
+    // corrupt the next request.
     String body;
     size_t target = contentLength > 0 ? (size_t)contentLength : 16384;
     while (body.length() < target && millis() < readDeadline)
@@ -958,6 +970,11 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
         {
             delay(2);
         }
+    }
+    if (millis() >= readDeadline && body.length() < target)
+    {
+        Serial.println("getUpdates: body drain timeout, forcing stop");
+        transport_->stop();
     }
 
     if (!httpOk)
