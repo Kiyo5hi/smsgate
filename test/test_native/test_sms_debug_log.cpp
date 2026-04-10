@@ -369,6 +369,44 @@ void test_dumpBriefRange_zero_timestamp_excluded()
 }
 
 // ---------------------------------------------------------------------------
+// RFC-0258: dump() truncates output at 4096 chars
+// ---------------------------------------------------------------------------
+void test_dump_truncates_at_4096_chars()
+{
+    // Fill all 20 slots with entries that have long pduPrefix strings (120 hex
+    // chars each → 123 chars including "..."). This forces the worst-case per-
+    // entry size and ensures the full 20-entry dump exceeds 4096 chars.
+    SmsDebugLog log;
+    for (int i = 0; i < 20; i++)
+    {
+        SmsDebugLog::Entry e;
+        char sender[16];
+        snprintf(sender, sizeof(sender), "+%d", i + 1);
+        e.sender        = String(sender);
+        e.unixTimestamp = 1700000000u + (unsigned)i;
+        e.bodyChars     = 9999;
+        e.isConcat      = true;
+        e.concatRef     = 65535;
+        e.concatPart    = 8;
+        e.concatTotal   = 8;
+        e.outcome       = String("fwd OK");
+        // 120-char pduPrefix triggers the "..." suffix and maximises per-entry length.
+        e.pduPrefix     = String("AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566778899"
+                                 "AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00112233445566");
+        log.push(e);
+    }
+
+    String out = log.dump();
+
+    // RFC-0258: output must fit within Telegram's 4096-char limit.
+    TEST_ASSERT_TRUE_MESSAGE(out.length() <= 4096,
+        "dump() output exceeds 4096 chars (Telegram message limit)");
+    // The truncation notice must be present when output was cut.
+    TEST_ASSERT_TRUE_MESSAGE(out.indexOf("truncated") >= 0,
+        "dump() did not append truncation notice");
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 void run_sms_debug_log_tests()
@@ -397,4 +435,6 @@ void run_sms_debug_log_tests()
     RUN_TEST(test_dumpBriefRange_returns_entries_in_window);
     RUN_TEST(test_dumpBriefRange_no_match_returns_placeholder);
     RUN_TEST(test_dumpBriefRange_zero_timestamp_excluded);
+    // RFC-0258: dump() truncation at 4096 chars
+    RUN_TEST(test_dump_truncates_at_4096_chars);
 }
