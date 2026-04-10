@@ -1077,6 +1077,11 @@ void setup()
             callHandler.resetStats();
             smsSender.resetStats();
         });
+        telegramPoller->setRebootFn([](int64_t /*fromId*/) {        // RFC-0112
+            // All users in allow list may reboot; admin-only gating
+            // can be added here if needed.
+            s_pendingRestart = true;
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])

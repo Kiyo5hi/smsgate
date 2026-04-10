@@ -2336,6 +2336,73 @@ void test_TelegramPoller_addalias_invalid_name_sends_error()
     TEST_ASSERT_EQUAL(601, poller.lastUpdateId());
 }
 
+// RFC-0112: /reboot calls rebootFn and replies "Rebooting...".
+void test_TelegramPoller_reboot_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bool rebootCalled = false;
+    int64_t rebootFromId = 0;
+    poller.setRebootFn([&](int64_t fromId) {
+        rebootCalled = true;
+        rebootFromId = fromId;
+    });
+
+    bot.queueUpdateBatch({makeUpdate(800, kAllowedFromId, 0, "/reboot", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(rebootCalled);
+    TEST_ASSERT_EQUAL((int64_t)kAllowedFromId, (int64_t)rebootFromId);
+    TEST_ASSERT_EQUAL(800, poller.lastUpdateId());
+
+    bool sawRebooting = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Rebooting")) >= 0) { sawRebooting = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawRebooting);
+}
+
+// RFC-0112: /reboot with no fn set → "not configured" reply.
+void test_TelegramPoller_reboot_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // rebootFn_ not set
+
+    bot.queueUpdateBatch({makeUpdate(801, kAllowedFromId, 0, "/reboot", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(801, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
 // RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
 void test_TelegramPoller_send_duplicate_gets_already_queued_error()
 {
@@ -2472,6 +2539,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_SmsAliasStore_isValidName_rejects_invalid_chars);
     RUN_TEST(test_SmsAliasStore_set_rejects_invalid_name);
     RUN_TEST(test_TelegramPoller_addalias_invalid_name_sends_error);
+    // RFC-0112: /reboot command
+    RUN_TEST(test_TelegramPoller_reboot_calls_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_reboot_not_configured_replies);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

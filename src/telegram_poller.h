@@ -190,6 +190,12 @@ public:
     // this to zero all session counters in SmsHandler, CallHandler, SmsSender.
     void setResetStatsFn(std::function<void()> fn) { resetStatsFn_ = std::move(fn); }
 
+    // RFC-0112: Optional soft-reboot callback. When set, /reboot sends a
+    // "Rebooting..." confirmation reply then calls this fn.  The fn receives
+    // the caller's fromId so the production lambda can gate on admin status
+    // (e.g. set s_pendingRestart only if fromId is in the admin list).
+    void setRebootFn(std::function<void(int64_t)> fn) { rebootFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -228,7 +234,8 @@ private:
     std::function<String(const String &)> ussdFn_;  // RFC-0103
     std::function<String()> simInfoFn_;              // RFC-0105
     std::function<String(int64_t, const String &)> atCmdFn_; // RFC-0107
-    std::function<void()> resetStatsFn_;                      // RFC-0110
+    std::function<void()> resetStatsFn_;  // RFC-0110
+    std::function<void(int64_t)> rebootFn_; // RFC-0112
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

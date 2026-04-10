@@ -111,7 +111,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/sim \xe2\x80\x94 SIM identity (ICCID, IMEI, operator)\n";
             help += "/ussd <code> \xe2\x80\x94 Send USSD code (e.g. *100#) and get response\n";
             help += "/version \xe2\x80\x94 Show firmware build timestamp\n";
-            help += "/restart \xe2\x80\x94 Soft reboot\n";
+            help += "/reboot \xe2\x80\x94 Soft reboot\n";
             help += "/at <cmd> \xe2\x80\x94 Admin: raw AT command passthrough\n";
             if (smsBlockMutator_) {
                 help += "/blocklist \xe2\x80\x94 Show block list\n";
@@ -922,6 +922,21 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             else
             {
                 bot_.sendMessageTo(u.chatId, String("(resetstats not configured)"));
+            }
+            return;
+        }
+
+        // RFC-0112: /reboot — soft reboot via injected callback.
+        if (lower == "/reboot")
+        {
+            if (rebootFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("Rebooting..."));
+                rebootFn_(u.fromId);
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("(reboot not configured)"));
             }
             return;
         }
