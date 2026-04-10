@@ -732,6 +732,22 @@ int32_t RealBotClient::doSendMessage(const String &text, int64_t chatId)
     transport_->print("\r\n\r\n");
     transport_->print(payload);
 
+    // RFC-0230: Fast stale-connection detection.
+    // Wait up to 3 s for the server to send the first response byte.
+    // If nothing arrives, the keep-alive connection has silently died —
+    // stop it immediately so keepTransportAlive reconnects on the next call
+    // rather than waiting 15 s for readStringUntil to time out.
+    {
+        unsigned long t0 = millis();
+        while (!transport_->available() && millis() - t0 < 3000) { delay(2); }
+        if (!transport_->available())
+        {
+            Serial.println("doSendMessage: stale connection, forcing stop");
+            transport_->stop();
+            return 0;
+        }
+    }
+
     // Parse status line: "HTTP/1.1 200 OK"
     String statusLine = transport_->readStringUntil('\n');
     statusLine.trim();
@@ -874,6 +890,24 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
     // response. Telegram parks the request on its side until either
     // an update arrives or the timeout fires.
     unsigned long readDeadline = millis() + (unsigned long)(timeoutSec * 1000) + 8000;
+
+    // RFC-0230: Fast stale-connection detection.
+    // For short polling (timeoutSec=0), the server responds immediately.
+    // Wait at most 3 s (>> normal response time of < 200 ms) before declaring
+    // the connection stale and forcing a reconnect.
+    {
+        unsigned long t0 = millis();
+        unsigned long stallBudget = (timeoutSec > 0)
+            ? (unsigned long)(timeoutSec * 1000) + 3000
+            : 3000;
+        while (!transport_->available() && millis() - t0 < stallBudget) { delay(2); }
+        if (!transport_->available())
+        {
+            Serial.println("pollUpdates: stale connection, forcing stop");
+            transport_->stop();
+            return false;
+        }
+    }
 
     String statusLine = transport_->readStringUntil('\n');
     statusLine.trim();
