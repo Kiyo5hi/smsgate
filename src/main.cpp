@@ -1185,6 +1185,11 @@ void loop()
                     notif += String((unsigned long)(downSec % 60)); notif += "s)";
                     realBot.sendMessage(notif);
                     Serial.println(notif);
+                    // RFC-0047: sweep SIM for any SMS that arrived while
+                    // Telegram was unreachable — they'll be on the SIM
+                    // already but handleSmsIndex never succeeded.
+                    esp_task_wdt_reset();
+                    smsHandler.sweepExistingSms();
                 }
                 wifiDownLastCheck = false;
             }
