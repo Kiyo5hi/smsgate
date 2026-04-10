@@ -131,7 +131,12 @@ bool SmsHandler::forwardSingle(const sms_codec::SmsPdu &pdu, int /*simIndex*/)
         replyTargets_->put(mid, pdu.sender);
     }
     // RFC-0070 + RFC-0080: Fan out to extra recipients with reply-routing.
+    // RFC-0255: kick WDT per recipient — each sendMessageToReturningId can
+    // block ~23 s; with N recipients the total can exceed the 120 s WDT.
     for (int i = 0; i < extraRecipientCount_; i++) {
+#ifdef ESP_PLATFORM
+        esp_task_wdt_reset();
+#endif
         int32_t xmid = bot_.sendMessageToReturningId(extraRecipients_[i], formatted);
         if (xmid > 0 && replyTargets_ != nullptr)
             replyTargets_->put(xmid, pdu.sender);
@@ -350,7 +355,11 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
         replyTargets_->put(mid, group->sender);
     }
     // RFC-0070 + RFC-0080: Fan out to extra recipients with reply-routing.
+    // RFC-0255: kick WDT per recipient — same concern as forwardSingle().
     for (int i = 0; i < extraRecipientCount_; i++) {
+#ifdef ESP_PLATFORM
+        esp_task_wdt_reset();
+#endif
         int32_t xmid = bot_.sendMessageToReturningId(extraRecipients_[i], formatted);
         if (xmid > 0 && replyTargets_ != nullptr)
             replyTargets_->put(xmid, group->sender);
@@ -383,6 +392,9 @@ void SmsHandler::noteTelegramFailure()
     // be unreachable, which is exactly what's causing these failures).
     if (maxConsecutiveFailures_ > 0 && consecutiveFailures_ == maxConsecutiveFailures_ - 1)
     {
+#ifdef ESP_PLATFORM
+        esp_task_wdt_reset(); // RFC-0255: pre-reboot warning send can block ~23 s
+#endif
         bot_.sendMessage(
             String("\xE2\x9A\xA0\xEF\xB8\x8F ") + // ⚠️
             String(consecutiveFailures_) + "/" + String(maxConsecutiveFailures_) +
