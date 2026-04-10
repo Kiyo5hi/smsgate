@@ -5753,6 +5753,58 @@ void test_TelegramPoller_setcalldedup_out_of_range_replies_error()
     TEST_ASSERT_TRUE(msgs.back().indexOf("Error") >= 0);
 }
 
+// RFC-0166: /setunknowndeadline command
+void test_TelegramPoller_setunknowndeadline_calls_fn_with_ms()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    uint32_t captured = 0;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setCallUnknownDeadlineFn([&captured](uint32_t ms) { captured = ms; });
+
+    bot.queueUpdateBatch({makeUpdate(1087, kAllowedFromId, 0, "/setunknowndeadline 3000", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1087, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(3000, captured);
+}
+
+void test_TelegramPoller_setunknowndeadline_out_of_range_replies_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    uint32_t captured = 0;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setCallUnknownDeadlineFn([&captured](uint32_t ms) { captured = ms; });
+
+    bot.queueUpdateBatch({makeUpdate(1088, kAllowedFromId, 0, "/setunknowndeadline 100", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1088, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(0, captured); // fn not called
+    auto msgs = bot.sentMessages();
+    TEST_ASSERT_TRUE(msgs.size() > 0);
+    TEST_ASSERT_TRUE(msgs.back().indexOf("Error") >= 0);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5998,6 +6050,9 @@ void run_telegram_poller_tests()
     // RFC-0165: /setcalldedup command
     RUN_TEST(test_TelegramPoller_setcalldedup_calls_fn_with_ms);
     RUN_TEST(test_TelegramPoller_setcalldedup_out_of_range_replies_error);
+    // RFC-0166: /setunknowndeadline command
+    RUN_TEST(test_TelegramPoller_setunknowndeadline_calls_fn_with_ms);
+    RUN_TEST(test_TelegramPoller_setunknowndeadline_out_of_range_replies_error);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

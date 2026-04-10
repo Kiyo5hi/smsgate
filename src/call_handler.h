@@ -90,6 +90,11 @@ public:
     void setDedupeWindowMs(uint32_t ms) { dedupeWindowMs_ = ms; }
     uint32_t dedupeWindowMs() const { return dedupeWindowMs_; }
 
+    // RFC-0166: Runtime-configurable RING-without-+CLIP commit deadline.
+    // Default: kUnknownNumberDeadlineMs (1500ms). Range enforced by caller.
+    void setUnknownDeadlineMs(uint32_t ms) { unknownDeadlineMs_ = ms; }
+    uint32_t unknownDeadlineMs() const { return unknownDeadlineMs_; }
+
     // Test-only accessors.
     enum class State
     {
@@ -120,6 +125,7 @@ private:
     uint32_t cooldownUntilMs_ = 0;
     int callsReceived_ = 0;  // RFC-0043
     bool callNotifyEnabled_ = true;  // RFC-0164
-    uint32_t dedupeWindowMs_ = kDedupeWindowMs; // RFC-0165: runtime-settable
+    uint32_t dedupeWindowMs_ = kDedupeWindowMs;           // RFC-0165: runtime-settable
+    uint32_t unknownDeadlineMs_ = kUnknownNumberDeadlineMs; // RFC-0166: runtime-settable
     std::function<void(const String &, int32_t)> onCallFn_; // RFC-0100/0108
 };

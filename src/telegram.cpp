@@ -543,6 +543,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "setcalldedup";
         c["description"] = "Set call dedup window in seconds (1-60): /setcalldedup <N>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setunknowndeadline";
+        c["description"] = "Set RING-without-CLIP deadline in ms (500-10000): /setunknowndeadline <ms>";
+    }
     String payload;
     serializeJson(doc, payload);
 

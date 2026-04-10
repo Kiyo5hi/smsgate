@@ -93,7 +93,7 @@ void CallHandler::tick()
         // If we've been waiting past the deadline, commit what we have
         // — either the number we already captured from +CLIP, or
         // "Unknown" if only RING arrived.
-        if (now - ringingStartedMs_ >= kUnknownNumberDeadlineMs)
+        if (now - ringingStartedMs_ >= unknownDeadlineMs_) // RFC-0166: runtime-settable
         {
             commitRinging();
         }

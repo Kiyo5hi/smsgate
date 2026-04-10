@@ -151,6 +151,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/setblockmode on|off \xe2\x80\x94 Enable/suspend SMS block list enforcement\n";
             help += "/blockcheck <phone> \xe2\x80\x94 Test if a number would be blocked\n";
             help += "/setcallnotify on|off \xe2\x80\x94 Enable/mute call Telegram notifications\n";
+            help += "/setcalldedup <s> \xe2\x80\x94 Call dedup cooldown window in seconds (1\xe2\x80\x9360)\n";
+            help += "/setunknowndeadline <ms> \xe2\x80\x94 RING-without-CLIP deadline in ms (500\xe2\x80\x9310000)\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
             help += "/announce <msg> \xe2\x80\x94 Broadcast message to all authorized users\n";
             help += "/digest \xe2\x80\x94 Show on-demand stats digest\n";
@@ -1484,6 +1486,35 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Call dedup window set to ") // ✅
                 + String(secs) + String("s."));
+            return;
+        }
+
+        // RFC-0166: /setunknowndeadline <ms> — RING-without-+CLIP commit deadline.
+        if (lower == "/setunknowndeadline" || lower.startsWith("/setunknowndeadline "))
+        {
+            if (!callUnknownDeadlineFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setunknowndeadline not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/setunknowndeadline ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setunknowndeadline <ms>\nRange: 500\xe2\x80\x931" "0000 (default 1500)"));
+                return;
+            }
+            int ms = (int)arg.toInt();
+            if (ms < 500 || ms > 10000)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Error: ms must be 500\xe2\x80\x931" "0000"));
+                return;
+            }
+            callUnknownDeadlineFn_((uint32_t)ms);
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Unknown-number deadline set to ") // ✅
+                + String(ms) + String("ms."));
             return;
         }
 
