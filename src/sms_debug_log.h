@@ -50,6 +50,12 @@ public:
     // Fits in a single 4096-char message for 20 entries.
     String dump() const;
 
+    // RFC-0058: Return the last `n` entries newest-first in a compact
+    // one-line-per-entry format: "2026-04-10 14:32 | +8613… | fwd 160c"
+    // Omits PDU prefix and concat details. Fits in a single message for
+    // up to 10 entries. n is clamped to min(count_, kMaxEntries).
+    String dumpBrief(size_t n = 5) const;
+
     size_t count() const { return count_; }
 
     // RFC-0040: Clear all entries from the ring and (if a sink is set)

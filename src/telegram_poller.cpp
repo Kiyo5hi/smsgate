@@ -88,6 +88,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/ping \xe2\x80\x94 Liveness check\n";
             help += "/ntp \xe2\x80\x94 Force NTP time resync\n";
             help += "/status \xe2\x80\x94 Device health & stats\n";
+            help += "/last [N] \xe2\x80\x94 Show last N forwarded SMS (default 5)\n";
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
             help += "/cleardebug \xe2\x80\x94 Clear SMS diagnostic log\n";
             help += "/send <num> <msg> \xe2\x80\x94 Send outbound SMS\n";
@@ -137,6 +138,26 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         if (lower == "/ping")
         {
             bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x8F\x93 Pong")); // 🏓
+            return;
+        }
+
+        // RFC-0058: /last [N] — condensed recent SMS history (newest first).
+        if (lower == "/last" || lower.startsWith("/last "))
+        {
+            if (!debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/last ");
+            size_t n = 5; // default: last 5
+            if (arg.length() > 0)
+            {
+                int parsed = arg.toInt();
+                if (parsed > 0 && parsed <= 20) n = (size_t)parsed;
+                else if (parsed > 20) n = 20;
+            }
+            bot_.sendMessageTo(u.chatId, debugLog_->dumpBrief(n));
             return;
         }
 
