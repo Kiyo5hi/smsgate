@@ -1028,6 +1028,18 @@ void setup()
                 s_heartbeatIntervalSec = hbInterval;
         }
 
+        // RFC-0182: Restore timezone offset and forward tag from NVS.
+        {
+            int32_t gmtOffMin = 480;
+            if (realPersist.loadBlob("gmt_off_min", &gmtOffMin, sizeof(gmtOffMin)) == sizeof(gmtOffMin))
+                smsHandler.setGmtOffsetMinutes(gmtOffMin);
+        }
+        {
+            char fwdTagBuf[21] = {};
+            if (realPersist.loadBlob("fwd_tag", fwdTagBuf, sizeof(fwdTagBuf)) > 0)
+                smsHandler.setFwdTag(String(fwdTagBuf));
+        }
+
         // RFC-0150: Load auto-reply text from NVS.
         {
             char buf[161] = {};
@@ -1444,11 +1456,16 @@ void setup()
             s += (smsHandler.fwdTag().length() > 0 ? ("\"" + smsHandler.fwdTag() + "\"") : "(none)");
             return s;
         });
-        telegramPoller->setGmtOffsetFn([&smsHandler](int m) { // RFC-0169/0175: m = total minutes
+        telegramPoller->setGmtOffsetFn([&smsHandler](int m) { // RFC-0169/0175/0182
             smsHandler.setGmtOffsetMinutes(m);
+            int32_t v = m;
+            realPersist.saveBlob("gmt_off_min", &v, sizeof(v));
         });
-        telegramPoller->setFwdTagFn([&smsHandler](const String &tag) { // RFC-0172
+        telegramPoller->setFwdTagFn([&smsHandler](const String &tag) { // RFC-0172/0182
             smsHandler.setFwdTag(tag);
+            char buf[21] = {};
+            tag.toCharArray(buf, sizeof(buf));
+            realPersist.saveBlob("fwd_tag", buf, sizeof(buf));
         });
         telegramPoller->setFwdTestFn([&smsHandler]() -> String { // RFC-0181
             // Build a PDU-style timestamp "YY/MM/DD,HH:MM:SS+32" from now.
