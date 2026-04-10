@@ -366,7 +366,35 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             }
             help += "/shortcuts \xe2\x80\x94 Quick command reference\n";
             help += "\nReply to a forwarded SMS to send a response.";
-            bot_.sendMessageTo(u.chatId, help);
+            // RFC-0260: /help output is ~9100 chars, well over Telegram's 4096-char
+            // limit. Paginate into ≤3800-char chunks (line-boundary aligned) so
+            // every command is actually delivered. 3 pages × 27 s each = 81 s —
+            // within the 120 s WDT window covered by the per-update kick in tick().
+            if (help.length() <= 4096)
+            {
+                bot_.sendMessageTo(u.chatId, help);
+            }
+            else
+            {
+                static constexpr unsigned int kHelpPageLen = 3800;
+                unsigned int start = 0;
+                while (start < help.length())
+                {
+                    unsigned int end = start + kHelpPageLen;
+                    if (end >= help.length())
+                    {
+                        bot_.sendMessageTo(u.chatId, help.substring(start));
+                        break;
+                    }
+                    // Find the last newline before `end` to break at a line boundary.
+                    while (end > start && help[end] != '\n')
+                        --end;
+                    if (end == start)
+                        end = start + kHelpPageLen; // no newline found; hard cut
+                    bot_.sendMessageTo(u.chatId, help.substring(start, end));
+                    start = end + 1; // skip the newline
+                }
+            }
             return;
         }
 
