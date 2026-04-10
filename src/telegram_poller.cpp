@@ -191,6 +191,21 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0023: /restart — admin-only soft reboot (deferred via flag in main.cpp).
+        if (lower == "/restart")
+        {
+            if (!mutator_)
+            {
+                bot_.sendMessageTo(u.chatId, String("Restart not configured."));
+                return;
+            }
+            String reason;
+            bool ok = mutator_(u.fromId, String("restart"), 0, reason);
+            bot_.sendMessageTo(u.chatId, reason);
+            (void)ok;
+            return;
+        }
+
         // RFC-0021: /blocklist, /block <number>, /unblock <number>.
         // IMPORTANT: /blocklist must be checked BEFORE /block to prevent
         // "/blocklist" being partially matched by the /block prefix check.

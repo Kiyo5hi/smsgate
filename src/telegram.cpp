@@ -139,7 +139,7 @@ bool registerBotCommands(RealBotClient &bot)
 
     // RFC-0022: Register all 8 commands so Telegram's autocomplete menu
     // shows the full feature set (the / menu IS the /help command).
-    DynamicJsonDocument doc(768);
+    DynamicJsonDocument doc(1024);
     JsonArray cmds = doc.createNestedArray("commands");
     {
         JsonObject c = cmds.createNestedObject();
@@ -180,6 +180,11 @@ bool registerBotCommands(RealBotClient &bot)
         JsonObject c = cmds.createNestedObject();
         c["command"] = "unblock";
         c["description"] = "Unblock an SMS sender (admin only)";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "restart";
+        c["description"] = "Soft reboot the bridge (admin only)";
     }
 
     String payload;
@@ -236,7 +241,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /debug /status /listusers /adduser /removeuser /blocklist /block /unblock");
+        Serial.println("Bot commands registered: /debug /status /listusers /adduser /removeuser /blocklist /block /unblock /restart");
     }
     else
     {

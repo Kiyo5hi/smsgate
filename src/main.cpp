@@ -155,6 +155,11 @@ static int  sBlockListCount = 0;
 static char sRuntimeBlockList[kSmsBlockListMaxEntries][kSmsBlockListMaxNumberLen + 1] = {};
 static int  sRuntimeBlockListCount = 0;
 
+// RFC-0023: Deferred soft restart flag. Set by the /restart command lambda
+// inside ListMutatorFn; loop() checks and fires ESP.restart() on the next
+// iteration AFTER the Telegram "Restarting..." message has been sent.
+static bool s_pendingRestart = false;
+
 // The poller is a process-lifetime singleton; we heap-allocate it once
 // in setup() and never free it. A raw pointer keeps the call site clean.
 static TelegramPoller *telegramPoller = nullptr;
@@ -729,6 +734,19 @@ void setup()
                 runtimeIdCount--;
             }
 
+            // RFC-0023: /restart — admin only, deferred via flag.
+            if (cmd == "restart")
+            {
+                if (!isAdmin)
+                {
+                    reason = String("Admin access required.");
+                    return false;
+                }
+                reason = String("\xF0\x9F\x94\x84 Restarting..."); // U+1F504 counterclockwise arrows
+                s_pendingRestart = true;
+                return true;
+            }
+
             // Persist to NVS.
             struct { int32_t count; int64_t ids[10]; } blob{};
             blob.count = runtimeIdCount;
@@ -951,6 +969,16 @@ void setup()
 void loop()
 {
     esp_task_wdt_reset();  // RFC-0015: keep the hardware watchdog alive
+
+    // RFC-0023: Deferred restart from /restart bot command. The restart flag
+    // is set by the ListMutatorFn lambda AFTER the "Restarting..." Telegram
+    // reply was sent, so the message has already been delivered before we reset.
+    if (s_pendingRestart)
+    {
+        Serial.println("/restart command received, rebooting...");
+        delay(500); // let serial flush
+        ESP.restart();
+    }
 
     // NOTE: do NOT call modem.maintain() here. On TinyGSM/A76XX it internally
     // calls waitResponse() which eats unknown URCs (+CMTI included) and only
