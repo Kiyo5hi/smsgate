@@ -6,6 +6,10 @@
 #include <algorithm>
 #include <time.h>  // RFC-0159: time(nullptr) for unixTimestamp in log entries
 
+#ifdef ESP_PLATFORM
+#include <esp_task_wdt.h>
+#endif
+
 SmsHandler::SmsHandler(IModem &modem, IBotClient &bot, RebootFn reboot, ClockFn clock)
     : modem_(modem), bot_(bot), reboot_(std::move(reboot)), clock_(std::move(clock))
 {
@@ -756,6 +760,9 @@ int SmsHandler::sweepExistingSms()
         search = comma;
         if (idx > 0)
         {
+#ifdef ESP_PLATFORM
+            esp_task_wdt_reset(); // RFC-0248: each call can take ~10 s; kick between slots
+#endif
             handleSmsIndex(idx);
             count++;
         }
