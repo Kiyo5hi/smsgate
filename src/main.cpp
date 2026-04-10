@@ -815,6 +815,10 @@ void setup()
         }
         // RFC-0048: Build timestamp (compile-time).
         msg += "  Build: "; msg += String(__DATE__); msg += " "; msg += String(__TIME__); msg += "\n";
+        // RFC-0135: Show device note when set.
+        if (s_deviceNote.length() > 0) {
+            msg += "  Note: "; msg += s_deviceNote; msg += "\n";
+        }
         return msg;
     };
 

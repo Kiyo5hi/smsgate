@@ -124,6 +124,14 @@ public:
 
     int count() const { return count_; }
 
+    // RFC-0134: Remove all aliases and persist the empty store.
+    void clear()
+    {
+        count_ = 0;
+        for (auto &e : entries_) memset(&e, 0, sizeof(e));
+        save();
+    }
+
     // Enumerate all entries. Callback receives (name, phone) pairs.
     void forEach(std::function<void(const String &name, const String &phone)> fn) const
     {

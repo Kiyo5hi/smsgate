@@ -383,6 +383,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "shortcuts";
         c["description"] = "Quick reference of common commands";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "clearaliases";
+        c["description"] = "Remove all phone aliases";
+    }
 
     String payload;
     serializeJson(doc, payload);

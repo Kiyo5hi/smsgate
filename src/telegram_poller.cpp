@@ -157,6 +157,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 help += "/addalias <name> <num> \xe2\x80\x94 Add/replace alias\n";
                 help += "/rmalias <name> \xe2\x80\x94 Remove alias\n";
                 help += "/exportaliases \xe2\x80\x94 Export aliases as name=number lines\n";
+                help += "/clearaliases \xe2\x80\x94 Remove all aliases\n";
             }
             help += "/shortcuts \xe2\x80\x94 Quick command reference\n";
             help += "\nReply to a forwarded SMS to send a response.";
@@ -790,6 +791,27 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 out += name; out += String("="); out += phone; out += String("\n");
             });
             bot_.sendMessageTo(u.chatId, out);
+            return;
+        }
+
+        // RFC-0134: /clearaliases — remove all aliases at once.
+        if (lower == "/clearaliases")
+        {
+            if (!aliasStore_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(alias store not configured)"));
+                return;
+            }
+            int n = aliasStore_->count();
+            if (n == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("(no aliases)"));
+                return;
+            }
+            aliasStore_->clear();
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Cleared ") // ✅
+                + String(n) + String(n == 1 ? " alias." : " aliases."));
             return;
         }
 

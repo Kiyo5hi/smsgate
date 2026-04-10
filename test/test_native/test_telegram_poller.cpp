@@ -3800,6 +3800,75 @@ void test_TelegramPoller_shortcuts_replies_with_quick_ref()
     TEST_ASSERT_TRUE(sawHelp);
 }
 
+// RFC-0134: /clearaliases with populated store → removes all and confirms count.
+void test_TelegramPoller_clearaliases_removes_all()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsAliasStore store(persist);
+    store.set(String("alice"), String("+447911123456"));
+    store.set(String("bob"),   String("+447911654321"));
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setAliasStore(&store);
+
+    bot.queueUpdateBatch({makeUpdate(980, kAllowedFromId, 0, "/clearaliases", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(980, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(0, store.count());
+    bool sawCleared = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Cleared")) >= 0 && m.indexOf(String("2")) >= 0)
+        {
+            sawCleared = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawCleared);
+}
+
+// RFC-0134: /clearaliases with empty store → "(no aliases)".
+void test_TelegramPoller_clearaliases_empty_store_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsAliasStore store(persist);
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setAliasStore(&store);
+
+    bot.queueUpdateBatch({makeUpdate(981, kAllowedFromId, 0, "/clearaliases", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(981, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("no aliases")) >= 0) { sawPlaceholder = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
 // RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
 void test_TelegramPoller_send_duplicate_gets_already_queued_error()
 {
@@ -4001,6 +4070,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_exportaliases_empty_store_replies_placeholder);
     // RFC-0133: /shortcuts command
     RUN_TEST(test_TelegramPoller_shortcuts_replies_with_quick_ref);
+    // RFC-0134: /clearaliases command
+    RUN_TEST(test_TelegramPoller_clearaliases_removes_all);
+    RUN_TEST(test_TelegramPoller_clearaliases_empty_store_replies_placeholder);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }
