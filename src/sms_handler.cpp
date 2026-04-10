@@ -319,6 +319,16 @@ void SmsHandler::noteTelegramFailure()
     Serial.print("Post to Telegram FAILED (");
     Serial.print(consecutiveFailures_);
     Serial.println(" consecutive). Keeping SMS on SIM.");
+    // RFC-0057: Warn the user one step before the reboot threshold so
+    // they have a chance to see the alert (best-effort — Telegram may
+    // be unreachable, which is exactly what's causing these failures).
+    if (consecutiveFailures_ == MAX_CONSECUTIVE_FAILURES - 1)
+    {
+        bot_.sendMessage(
+            String("\xE2\x9A\xA0\xEF\xB8\x8F ") + // ⚠️
+            String(consecutiveFailures_) + "/" + String(MAX_CONSECUTIVE_FAILURES) +
+            String(" consecutive Telegram failures \xe2\x80\x94 bridge will reboot on next failure."));
+    }
     if (consecutiveFailures_ >= MAX_CONSECUTIVE_FAILURES)
     {
         Serial.println("Too many consecutive failures, rebooting to recover...");
