@@ -2336,6 +2336,55 @@ void test_TelegramPoller_addalias_invalid_name_sends_error()
     TEST_ASSERT_EQUAL(601, poller.lastUpdateId());
 }
 
+// RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
+void test_TelegramPoller_send_duplicate_gets_already_queued_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    modem.setPduSendDefault(-1); // keep first entry in queue
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // First /send — should enqueue fine.
+    bot.queueUpdateBatch({makeUpdate(700, kAllowedFromId, 0,
+        "/send +8613800138000 Hello world", kAllowedFromId)});
+    poller.tick();
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+    TEST_ASSERT_EQUAL(700, poller.lastUpdateId());
+
+    // Second /send with same phone+body — should be rejected as duplicate.
+    clk.nowMs += TelegramPoller::kPollIntervalMs;
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(701, kAllowedFromId, 0,
+        "/send +8613800138000 Hello world", kAllowedFromId)});
+    poller.tick();
+
+    // Queue should still have only one entry.
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+    TEST_ASSERT_EQUAL(701, poller.lastUpdateId());
+
+    // User must receive an "Already queued" error.
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Already queued")) >= 0 ||
+            m.indexOf(String("already queued")) >= 0)
+        {
+            sawError = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -2423,4 +2472,6 @@ void run_telegram_poller_tests()
     RUN_TEST(test_SmsAliasStore_isValidName_rejects_invalid_chars);
     RUN_TEST(test_SmsAliasStore_set_rejects_invalid_name);
     RUN_TEST(test_TelegramPoller_addalias_invalid_name_sends_error);
+    // RFC-0111: outbound dedup
+    RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

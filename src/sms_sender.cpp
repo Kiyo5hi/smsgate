@@ -105,6 +105,18 @@ bool SmsSender::enqueue(const String &phone, const String &body,
                         std::function<void()> onFinalFailure,
                         std::function<void()> onSuccess)
 {
+    // RFC-0111: Dedup check — reject if an identical (phone, body) entry
+    // is already pending in the queue.
+    for (const auto &e : queue_)
+    {
+        if (e.occupied && e.phone == phone && e.body == body)
+        {
+            Serial.print("SmsSender: duplicate enqueue rejected for ");
+            Serial.println(phone);
+            return false;
+        }
+    }
+
     // Find a free slot.
     for (auto &e : queue_)
     {

@@ -663,7 +663,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             }
             int64_t requesterChatId = u.chatId;
             String capturedPhone = phone;
-            smsSender_.enqueue(phone, body,
+            // RFC-0111: enqueue returns false for duplicates.
+            bool enqueued = smsSender_.enqueue(phone, body,
                 [this, requesterChatId, capturedPhone]() {
                     sendErrorReply(requesterChatId,
                         String("SMS to ") + capturedPhone + " failed after retries.");
@@ -676,6 +677,12 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     if (delivId > 0)
                         replyTargets_.put(delivId, capturedPhone);
                 });
+            if (!enqueued)
+            {
+                sendErrorReply(u.chatId,
+                    String("Already queued to ") + phone + String(". Use /queue to check."));
+                return;
+            }
             // RFC-0029: Include a body preview so the user can catch typos.
             String preview = body.substring(0, 30);
             if (body.length() > 30) preview += "\xE2\x80\xA6"; // U+2026 ellipsis

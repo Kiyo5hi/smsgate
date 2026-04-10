@@ -622,6 +622,63 @@ void test_SmsSender_clearQueue_empty_returns_zero()
     TEST_ASSERT_EQUAL(0, sender.clearQueue());
 }
 
+// RFC-0111: identical (phone, body) already in queue → enqueue returns false.
+void test_SmsSender_enqueue_rejects_duplicate()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1); // keep entries in queue
+
+    bool result1 = sender.enqueue(String("+1"), String("hello"));
+    TEST_ASSERT_TRUE(result1);
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    bool result2 = sender.enqueue(String("+1"), String("hello"));
+    TEST_ASSERT_FALSE(result2);
+    TEST_ASSERT_EQUAL(1, sender.queueSize()); // still only one entry
+}
+
+// RFC-0111: same phone, different body → accepted.
+void test_SmsSender_enqueue_accepts_different_body()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1);
+
+    TEST_ASSERT_TRUE(sender.enqueue(String("+1"), String("hello")));
+    TEST_ASSERT_TRUE(sender.enqueue(String("+1"), String("world")));
+    TEST_ASSERT_EQUAL(2, sender.queueSize());
+}
+
+// RFC-0111: same body, different phone → accepted.
+void test_SmsSender_enqueue_accepts_different_phone()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1);
+
+    TEST_ASSERT_TRUE(sender.enqueue(String("+1"), String("hello")));
+    TEST_ASSERT_TRUE(sender.enqueue(String("+2"), String("hello")));
+    TEST_ASSERT_EQUAL(2, sender.queueSize());
+}
+
+// RFC-0111: after successful delivery the slot is freed → same (phone, body) can be re-enqueued.
+void test_SmsSender_enqueue_accepts_after_delivery()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+
+    TEST_ASSERT_TRUE(sender.enqueue(String("+1"), String("hello")));
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    sender.drainQueue(0); // delivers and frees the slot
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+
+    // Should be accepted again now that the slot is gone.
+    TEST_ASSERT_TRUE(sender.enqueue(String("+1"), String("hello")));
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+}
+
 void run_sms_sender_tests()
 {
     RUN_TEST(test_SmsSender_ascii_builds_gsm7_pdu);
@@ -659,4 +716,9 @@ void run_sms_sender_tests()
     // RFC-0091: session counters
     RUN_TEST(test_SmsSender_sentCount_increments_on_success);
     RUN_TEST(test_SmsSender_failedCount_increments_on_final_failure);
+    // RFC-0111: outbound dedup
+    RUN_TEST(test_SmsSender_enqueue_rejects_duplicate);
+    RUN_TEST(test_SmsSender_enqueue_accepts_different_body);
+    RUN_TEST(test_SmsSender_enqueue_accepts_different_phone);
+    RUN_TEST(test_SmsSender_enqueue_accepts_after_delivery);
 }
