@@ -366,6 +366,14 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         sendErrorReply(u.chatId, String("Empty reply body — nothing to send."));
         return;
     }
+    // RFC-0050: Reject immediately if body exceeds 10-part limit (same
+    // check as in the /send path — RFC-0049).
+    if (sms_codec::countSmsParts(u.text) == 0)
+    {
+        sendErrorReply(u.chatId,
+            String("Reply too long (max ~1530 GSM-7 / ~670 Unicode chars)."));
+        return;
+    }
 
     String capturedPhone = phone; // copy for lambda capture
     int64_t requesterChatId = u.chatId; // copy for lambda capture (u is a local, lambda may fire later)
