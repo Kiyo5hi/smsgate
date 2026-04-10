@@ -2381,17 +2381,61 @@ void loop()
     callHandler.tick();
 
     // Refresh cached modem CSQ + registration status every 30 s.
-    // This block runs AFTER the URC drain and BEFORE the TelegramPoller
-    // tick so the AT commands here cannot race with URC lines being read
-    // from SerialAT. The StatusFn lambda (called from inside the poller)
-    // reads these cached values instead of calling the modem directly,
-    // avoiding the URC-eating hazard described in CLAUDE.md.
+    // This block runs AFTER the URC drain and BEFORE the TelegramPoller tick.
+    // URCs that arrive during the AT exchanges are captured in raw response
+    // buffers and dispatched at the end of the block (RFC-0236) — they cannot
+    // be processed by the drain loop above because TinyGSM's waitResponse()
+    // consumes them from SerialAT before the loop can see them.
+    // RFC-0236: all raw AT response bytes are accumulated in s236raw so
+    // piggybacked +CMTI / RING / +CLIP URCs can be dispatched at the end.
     static unsigned long lastStatusRefreshMs = 0;
     if (millis() - lastStatusRefreshMs > 30000UL)
     {
         lastStatusRefreshMs = millis();
-        cachedCsq = modem.getSignalQuality();
-        cachedRegStatus = modem.getRegistrationStatus();
+        String s236raw; // RFC-0236: accumulates raw bytes from all 4 AT exchanges
+
+        // RFC-0236: Use raw AT for CSQ so the captured buffer can be
+        // scanned for piggybacked URCs. modem.getSignalQuality() uses
+        // waitResponse() internally which swallows +CMTI silently.
+        {
+            String csqRaw;
+            realModem.sendAT("+CSQ");
+            realModem.waitResponse(2000UL, csqRaw);
+            s236raw += csqRaw;
+            int p = csqRaw.indexOf("+CSQ:");
+            if (p >= 0) {
+                int comma = csqRaw.indexOf(',', p);
+                String rssiStr = (comma > p) ? csqRaw.substring(p + 5, comma)
+                                             : csqRaw.substring(p + 5);
+                rssiStr.trim();
+                int v = rssiStr.toInt();
+                if (v >= 0 && v <= 31) cachedCsq = v;
+                else if (v == 99)      cachedCsq = 99;
+            }
+        }
+
+        // RFC-0236: Use raw AT for CREG. +CREG stat values map 1-to-1
+        // to TinyGSM's RegStatus enum so we cast directly.
+        {
+            String cregRaw;
+            realModem.sendAT("+CREG?");
+            realModem.waitResponse(2000UL, cregRaw);
+            s236raw += cregRaw;
+            int p = cregRaw.indexOf("+CREG:");
+            if (p >= 0) {
+                int comma = cregRaw.indexOf(',', p);
+                if (comma > p) {
+                    int stat = cregRaw.substring(comma + 1).toInt();
+                    switch (stat) {
+                        case 1:  cachedRegStatus = REG_OK_HOME;       break;
+                        case 5:  cachedRegStatus = REG_OK_ROAMING;    break;
+                        case 2:  cachedRegStatus = REG_SEARCHING;     break;
+                        case 3:  cachedRegStatus = REG_DENIED;        break;
+                        default: cachedRegStatus = REG_UNREGISTERED;  break;
+                    }
+                }
+            }
+        }
         // RFC-0082: Network registration loss / recovery alert.
         {
             bool regOk = (cachedRegStatus == REG_OK_HOME || cachedRegStatus == REG_OK_ROAMING);
@@ -2444,6 +2488,7 @@ void loop()
             String copsResp;
             modem.sendAT("+COPS?");
             modem.waitResponse(2000UL, copsResp);
+            s236raw += copsResp; // RFC-0236: accumulate for piggybacked URC scan
             int q1 = copsResp.indexOf('"');
             int q2 = (q1 >= 0) ? copsResp.indexOf('"', q1 + 1) : -1;
             cachedOperatorName = (q1 >= 0 && q2 > q1)
@@ -2456,6 +2501,7 @@ void loop()
             String cpmsResp;
             modem.sendAT("+CPMS?");
             modem.waitResponse(2000UL, cpmsResp);
+            s236raw += cpmsResp; // RFC-0236: accumulate for piggybacked URC scan
             // Find first "SM" or "ME" entry; take the numbers after it.
             int smPos = cpmsResp.indexOf('"');
             if (smPos >= 0) {
@@ -2595,6 +2641,42 @@ void loop()
         // Evict delivery report map entries older than 1 hour (RFC-0011).
         deliveryReportMap.evictExpired((uint32_t)millis());
 #endif
+
+        // RFC-0236: Scan all captured AT response buffers for piggybacked
+        // +CMTI / RING / +CLIP URCs. TinyGSM's waitResponse() reads every
+        // byte arriving on SerialAT into the capture string — URCs that race
+        // the AT exchange land here instead of in our drain loop above. Dispatch
+        // them now so no SMS is silently dropped during the 30 s status refresh.
+        {
+            int pos = 0;
+            while (pos < (int)s236raw.length())
+            {
+                int eol = s236raw.indexOf('\n', pos);
+                String line;
+                if (eol < 0) {
+                    line = s236raw.substring(pos);
+                    pos  = (int)s236raw.length();
+                } else {
+                    line = s236raw.substring(pos, eol);
+                    pos  = eol + 1;
+                }
+                line.trim();
+                if (line.length() == 0) continue;
+                if (line.startsWith("+CMTI:")) {
+                    int comma = line.indexOf(',');
+                    if (comma > 0) {
+                        int idx = line.substring(comma + 1).toInt();
+                        if (idx > 0) {
+                            Serial.printf("[RFC-0236] Piggybacked +CMTI idx=%d — dispatching\n", idx);
+                            esp_task_wdt_reset();
+                            smsHandler.handleSmsIndex(idx);
+                        }
+                    }
+                } else if (line.startsWith("RING") || line.startsWith("+CLIP:")) {
+                    callHandler.onUrcLine(line);
+                }
+            }
+        }
     }
 
     // RFC-0235: Periodic SIM sweep — recover SMS that failed to forward
