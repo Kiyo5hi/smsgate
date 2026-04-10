@@ -324,6 +324,10 @@ public:
     // calls this fn with true/false to enable/disable call Telegram notifications.
     void setCallNotifyFn(std::function<void(bool)> fn) { callNotifyFn_ = std::move(fn); }
 
+    // RFC-0165: Optional call dedup window setter fn. When set,
+    // /setcalldedup <seconds> calls this fn with the window in ms.
+    void setCallDedupFn(std::function<void(uint32_t)> fn) { callDedupFn_ = std::move(fn); }
+
     // RFC-0146: Optional SMS forward fn. When set, /forwardsim <idx> calls
     // this fn with the SIM index and replies success/failure.
     void setSmsForwardFn(std::function<bool(int)> fn) { smsForwardFn_ = std::move(fn); }
@@ -437,6 +441,7 @@ private:
     std::function<void(bool)> blockingEnabledFn_;  // RFC-0162
     std::function<String(const String &)> blockCheckFn_; // RFC-0163
     std::function<void(bool)> callNotifyFn_;            // RFC-0164
+    std::function<void(uint32_t)> callDedupFn_;        // RFC-0165
     std::function<bool(int)> smsForwardFn_;        // RFC-0146
     uint32_t pollIntervalMs_ = kPollIntervalMs;    // RFC-0147
     std::function<void(uint32_t)> dedupWindowFn_;  // RFC-0144

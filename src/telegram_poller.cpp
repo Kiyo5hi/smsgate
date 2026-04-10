@@ -1458,6 +1458,35 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0165: /setcalldedup <seconds> — set call dedup/cooldown window.
+        if (lower == "/setcalldedup" || lower.startsWith("/setcalldedup "))
+        {
+            if (!callDedupFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setcalldedup not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/setcalldedup ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setcalldedup <seconds>\nRange: 1\xe2\x80\x93" "60 (default 6)"));
+                return;
+            }
+            int secs = (int)arg.toInt();
+            if (secs < 1 || secs > 60)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Error: seconds must be 1\xe2\x80\x93" "60"));
+                return;
+            }
+            callDedupFn_((uint32_t)secs * 1000UL);
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Call dedup window set to ") // ✅
+                + String(secs) + String("s."));
+            return;
+        }
+
         // RFC-0162: /setblockmode on|off — toggle block list enforcement.
         if (lower == "/setblockmode on" || lower == "/setblockmode off")
         {

@@ -85,6 +85,11 @@ public:
     void setCallNotifyEnabled(bool enabled) { callNotifyEnabled_ = enabled; }
     bool callNotifyEnabled() const { return callNotifyEnabled_; }
 
+    // RFC-0165: Runtime-configurable call dedup/cooldown window.
+    // Default: kDedupeWindowMs (6000ms). Range enforced by caller.
+    void setDedupeWindowMs(uint32_t ms) { dedupeWindowMs_ = ms; }
+    uint32_t dedupeWindowMs() const { return dedupeWindowMs_; }
+
     // Test-only accessors.
     enum class State
     {
@@ -115,5 +120,6 @@ private:
     uint32_t cooldownUntilMs_ = 0;
     int callsReceived_ = 0;  // RFC-0043
     bool callNotifyEnabled_ = true;  // RFC-0164
+    uint32_t dedupeWindowMs_ = kDedupeWindowMs; // RFC-0165: runtime-settable
     std::function<void(const String &, int32_t)> onCallFn_; // RFC-0100/0108
 };

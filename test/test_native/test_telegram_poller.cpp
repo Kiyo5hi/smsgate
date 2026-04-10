@@ -5701,6 +5701,58 @@ void test_TelegramPoller_setcallnotify_on_calls_fn_true()
     TEST_ASSERT_TRUE(captured);
 }
 
+// RFC-0165: /setcalldedup command
+void test_TelegramPoller_setcalldedup_calls_fn_with_ms()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    uint32_t captured = 0;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setCallDedupFn([&captured](uint32_t ms) { captured = ms; });
+
+    bot.queueUpdateBatch({makeUpdate(1085, kAllowedFromId, 0, "/setcalldedup 10", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1085, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(10000, captured);
+}
+
+void test_TelegramPoller_setcalldedup_out_of_range_replies_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    uint32_t captured = 0;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setCallDedupFn([&captured](uint32_t ms) { captured = ms; });
+
+    bot.queueUpdateBatch({makeUpdate(1086, kAllowedFromId, 0, "/setcalldedup 99", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1086, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(0, captured); // fn not called
+    auto msgs = bot.sentMessages();
+    TEST_ASSERT_TRUE(msgs.size() > 0);
+    TEST_ASSERT_TRUE(msgs.back().indexOf("Error") >= 0);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5943,6 +5995,9 @@ void run_telegram_poller_tests()
     // RFC-0164: /setcallnotify command
     RUN_TEST(test_TelegramPoller_setcallnotify_off_calls_fn_false);
     RUN_TEST(test_TelegramPoller_setcallnotify_on_calls_fn_true);
+    // RFC-0165: /setcalldedup command
+    RUN_TEST(test_TelegramPoller_setcalldedup_calls_fn_with_ms);
+    RUN_TEST(test_TelegramPoller_setcalldedup_out_of_range_replies_error);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

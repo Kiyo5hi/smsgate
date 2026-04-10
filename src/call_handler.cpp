@@ -148,7 +148,7 @@ void CallHandler::commitRinging()
     // can, and the dedupe window keeps us from double-notifying on
     // continued RINGs if the hangup didn't take.
     uint32_t now = clock_ ? clock_() : 0;
-    cooldownUntilMs_ = now + kDedupeWindowMs;
+    cooldownUntilMs_ = now + dedupeWindowMs_; // RFC-0165: use runtime-settable window
     state_ = State::Cooldown;
 
     // Clear per-event scratch.

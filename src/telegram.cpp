@@ -538,6 +538,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "setcallnotify";
         c["description"] = "Enable/mute call notifications: /setcallnotify on|off";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setcalldedup";
+        c["description"] = "Set call dedup window in seconds (1-60): /setcalldedup <N>";
+    }
     String payload;
     serializeJson(doc, payload);
 

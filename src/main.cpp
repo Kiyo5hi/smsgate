@@ -1396,6 +1396,9 @@ void setup()
         telegramPoller->setCallNotifyFn([&callHandler](bool enable) { // RFC-0164
             callHandler.setCallNotifyEnabled(enable);
         });
+        telegramPoller->setCallDedupFn([&callHandler](uint32_t ms) { // RFC-0165
+            callHandler.setDedupeWindowMs(ms);
+        });
         telegramPoller->setBlockCheckFn([&smsHandler](const String &phone) -> String { // RFC-0163
             bool enfEnabled = smsHandler.blockingEnabled();
             bool hitCompile = (sBlockListCount > 0 &&
