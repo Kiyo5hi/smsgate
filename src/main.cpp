@@ -3097,6 +3097,16 @@ void loop()
             realModem.waitResponseOk(2000UL);
             realModem.sendAT("+CREG=1");           // RFC-0247: restore CREG URC subscription
             realModem.waitResponseOk(2000UL);
+            // RFC-0253: Sweep SIM after silent-reset re-arm. The modem was quiet
+            // for 2+ min without sending ready indicators (RFC-0245 RDY/APP READY).
+            // A silent internal reset would clear +CNMI (losing +CMTI URCs for any
+            // SMS that arrived) while leaving the SIM slot intact.  Re-arming above
+            // restores +CNMI; a sweep here catches any messages that queued during
+            // the silence window.  CMGL returns immediately if the SIM is empty.
+            if (activeTransport != ActiveTransport::kNone)
+            {
+                smsHandler.sweepExistingSms(); // WDT kicks handled inside sweepExistingSms
+            }
         }
         esp_task_wdt_reset();
     }
