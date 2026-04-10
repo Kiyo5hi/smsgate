@@ -121,6 +121,8 @@ void CallHandler::commitRinging()
     Serial.print(display);
     Serial.println(", posting and hanging up.");
 
+    callsReceived_++;  // RFC-0043: track lifetime call count
+
     // Best-effort notify. We don't share SmsHandler's reboot budget —
     // a flaky Telegram connection during a call shouldn't nuke the
     // device, especially because SmsHandler's own counter already

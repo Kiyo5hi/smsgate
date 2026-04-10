@@ -657,6 +657,9 @@ void setup()
             msg += "  SIM: "; msg += String(cachedSimUsed); msg += "/"; msg += String(cachedSimTotal); msg += " slots\n";
         }
 
+        // RFC-0043: Calls received since boot.
+        msg += "  Calls rcvd: "; msg += String(callHandler.callsReceived()); msg += "\n";
+
         msg += "\n\xF0\x9F\x92\xAC Telegram\n"; // 💬
         msg += "  Reply slots: ";
         msg += String((int)replyTargets.occupiedSlots()); msg += "/"; msg += String((int)ReplyTargetMap::kSlotCount); msg += "\n";

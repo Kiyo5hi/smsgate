@@ -63,6 +63,9 @@ public:
     // transition. Cheap — constant time, no AT traffic if nothing to do.
     void tick();
 
+    // RFC-0043: Lifetime call counter (RAM only, reset on reboot).
+    int callsReceived() const { return callsReceived_; }
+
     // Test-only accessors.
     enum class State
     {
@@ -91,4 +94,5 @@ private:
 
     // Cooldown bookkeeping — when the current suppression window ends.
     uint32_t cooldownUntilMs_ = 0;
+    int callsReceived_ = 0;  // RFC-0043
 };
