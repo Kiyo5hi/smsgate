@@ -1072,6 +1072,11 @@ void setup()
         telegramPoller->setUssdFn([](const String &code) -> String { // RFC-0103
             return realModem.ussdQuery(code, 10000UL);
         });
+        telegramPoller->setResetStatsFn([]() {                      // RFC-0110
+            smsHandler.resetStats();
+            callHandler.resetStats();
+            smsSender.resetStats();
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])
@@ -1552,6 +1557,7 @@ void loop()
                 if (cachedOperatorName.length() > 0) { hb += " "; hb += cachedOperatorName; }
                 hb += String(" | WiFi "); hb += String(WiFi.RSSI()); hb += "dBm";
                 hb += String(" | fwd "); hb += String(smsHandler.smsForwarded());
+                hb += String(" | calls "); hb += String(callHandler.callsReceived()); // RFC-0109
                 hb += String(" | q "); hb += String(smsSender.queueSize());
                 hb += String("/"); hb += String(SmsSender::kQueueSize);
 #ifdef USSD_BALANCE_CODE

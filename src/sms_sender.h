@@ -92,6 +92,8 @@ public:
     // RFC-0091: Session counters — reset on construction, never persisted.
     int sentCount()   const { return sentCount_; }
     int failedCount() const { return failedCount_; }
+    // RFC-0110: Reset outbound session counters.
+    void resetStats() { sentCount_ = 0; failedCount_ = 0; }
 
     // Snapshot of occupied queue entries (RFC-0033: /queue command).
     // Each entry carries phone, a body preview (up to 20 chars), and

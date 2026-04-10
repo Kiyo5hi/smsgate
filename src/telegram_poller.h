@@ -186,6 +186,10 @@ public:
     // Returns a non-empty string (the AT response or an error message).
     void setAtCmdFn(std::function<String(int64_t, const String &)> fn) { atCmdFn_ = std::move(fn); }
 
+    // RFC-0110: Optional stats reset callback. When set, /resetstats calls
+    // this to zero all session counters in SmsHandler, CallHandler, SmsSender.
+    void setResetStatsFn(std::function<void()> fn) { resetStatsFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -224,6 +228,7 @@ private:
     std::function<String(const String &)> ussdFn_;  // RFC-0103
     std::function<String()> simInfoFn_;              // RFC-0105
     std::function<String(int64_t, const String &)> atCmdFn_; // RFC-0107
+    std::function<void()> resetStatsFn_;                      // RFC-0110
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

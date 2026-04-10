@@ -66,6 +66,9 @@ public:
     // RFC-0043: Lifetime call counter (RAM only, reset on reboot).
     int callsReceived() const { return callsReceived_; }
 
+    // RFC-0110: Reset call counter.
+    void resetStats() { callsReceived_ = 0; }
+
     // RFC-0100 / RFC-0108: Optional callback fired when a call event is committed.
     // Receives the caller's phone number string (empty string if unknown) and the
     // Telegram message_id of the call notification (0 if the send failed or the

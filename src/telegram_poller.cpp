@@ -101,6 +101,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/queue \xe2\x80\x94 Show pending outbound queue\n";
             help += "/flushqueue \xe2\x80\x94 Immediately retry all pending outbound SMS\n";
             help += "/clearqueue \xe2\x80\x94 Discard all pending outbound SMS\n";
+            help += "/resetstats \xe2\x80\x94 Reset session counters (SMS fwd/fail, calls)\n";
             help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/mute [min] \xe2\x80\x94 Snooze proactive alerts (default 60m)\n";
@@ -899,6 +900,22 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     + String(" entr") + (n == 1 ? "y" : "ies") + String(" will drain on next tick."));
             else
                 bot_.sendMessageTo(u.chatId, String("Queue is empty."));
+            return;
+        }
+
+        // RFC-0110: /resetstats — reset all session-level counters.
+        if (lower == "/resetstats")
+        {
+            if (resetStatsFn_)
+            {
+                resetStatsFn_();
+                bot_.sendMessageTo(u.chatId,
+                    String("\xE2\x9C\x85 Session counters reset.")); // ✅
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("(resetstats not configured)"));
+            }
             return;
         }
 

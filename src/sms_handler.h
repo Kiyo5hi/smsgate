@@ -158,6 +158,17 @@ public:
     int smsBlocked() const { return smsBlocked_; }
     int smsDeduplicated() const { return smsDeduplicated_; }
 
+    // RFC-0110: Reset all session-level counters to zero without affecting
+    // NVS-persisted lifetime counters. Safe to call at any time.
+    void resetStats()
+    {
+        smsForwarded_ = 0;
+        telegramSendFailures_ = 0;
+        smsBlocked_ = 0;
+        smsDeduplicated_ = 0;
+        consecutiveFailures_ = 0;
+    }
+
 private:
     // Per-fragment record. We keep the raw decoded content so we can
     // reassemble when the last part arrives.

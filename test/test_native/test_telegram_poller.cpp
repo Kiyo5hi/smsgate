@@ -1583,6 +1583,72 @@ void test_TelegramPoller_sendall_delivery_summary_partial_failure()
     TEST_ASSERT_TRUE(sawSummary);
 }
 
+// ---------- RFC-0110: /resetstats command ----------
+
+void test_TelegramPoller_resetstats_calls_reset_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    bool resetCalled = false;
+    poller.setResetStatsFn([&]() { resetCalled = true; });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(840, kAllowedFromId, 0, "/resetstats", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(resetCalled);
+    bool sawConfirm = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("reset")) >= 0)
+        {
+            sawConfirm = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawConfirm);
+    TEST_ASSERT_EQUAL(840, poller.lastUpdateId());
+}
+
+void test_TelegramPoller_resetstats_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(841, kAllowedFromId, 0, "/resetstats", kAllowedFromId)});
+    poller.tick();
+
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("not configured")) >= 0)
+        {
+            sawNotConfigured = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
 // ---------- RFC-0107: /at command ----------
 
 void test_TelegramPoller_at_calls_at_fn_and_replies()
@@ -2319,6 +2385,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_send_multipart_shows_part_count);
     // RFC-0089: /clearqueue command
     RUN_TEST(test_TelegramPoller_clearqueue_discards_entries);
+    // RFC-0110: /resetstats command
+    RUN_TEST(test_TelegramPoller_resetstats_calls_reset_fn);
+    RUN_TEST(test_TelegramPoller_resetstats_not_configured_replies);
     // RFC-0107: /at command
     RUN_TEST(test_TelegramPoller_at_calls_at_fn_and_replies);
     RUN_TEST(test_TelegramPoller_at_strips_leading_AT_prefix);
