@@ -267,6 +267,43 @@ void test_countSmsParts_unicode_71_is_two_parts()
     TEST_ASSERT_EQUAL(2, sms_codec::countSmsParts(s));
 }
 
+// RFC-0078: normalizePhoneNumber
+void test_normalizePhone_strips_spaces_and_dashes()
+{
+    TEST_ASSERT_EQUAL_STRING("+447911123456",
+        sms_codec::normalizePhoneNumber("+44 7911-123 456").c_str());
+}
+
+void test_normalizePhone_strips_parentheses()
+{
+    TEST_ASSERT_EQUAL_STRING("+18005550100",
+        sms_codec::normalizePhoneNumber("(+1) 800-555-0100").c_str());
+}
+
+void test_normalizePhone_converts_double_zero_prefix()
+{
+    TEST_ASSERT_EQUAL_STRING("+447911123456",
+        sms_codec::normalizePhoneNumber("0044 7911 123456").c_str());
+}
+
+void test_normalizePhone_local_format_unchanged()
+{
+    TEST_ASSERT_EQUAL_STRING("07911123456",
+        sms_codec::normalizePhoneNumber("07911123456").c_str());
+}
+
+void test_normalizePhone_already_clean()
+{
+    TEST_ASSERT_EQUAL_STRING("+447911123456",
+        sms_codec::normalizePhoneNumber("+447911123456").c_str());
+}
+
+void test_normalizePhone_strips_dots()
+{
+    TEST_ASSERT_EQUAL_STRING("+33123456789",
+        sms_codec::normalizePhoneNumber("+33.1.23.45.67.89").c_str());
+}
+
 void run_sms_codec_tests()
 {
     RUN_TEST(test_decodeUCS2_plain_ascii_passthrough);
@@ -301,4 +338,11 @@ void run_sms_codec_tests()
     RUN_TEST(test_countSmsParts_161_gsm7_is_two_parts);
     RUN_TEST(test_countSmsParts_unicode_70_is_one_part);
     RUN_TEST(test_countSmsParts_unicode_71_is_two_parts);
+    // RFC-0078: normalizePhoneNumber
+    RUN_TEST(test_normalizePhone_strips_spaces_and_dashes);
+    RUN_TEST(test_normalizePhone_strips_parentheses);
+    RUN_TEST(test_normalizePhone_converts_double_zero_prefix);
+    RUN_TEST(test_normalizePhone_local_format_unchanged);
+    RUN_TEST(test_normalizePhone_already_clean);
+    RUN_TEST(test_normalizePhone_strips_dots);
 }

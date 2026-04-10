@@ -38,6 +38,16 @@ bool parseCmgrBody(const String &raw, String &sender, String &timestamp, String 
 //   anything else          -> unchanged
 String humanReadablePhoneNumber(const String &number);
 
+// RFC-0078: Strip formatting characters from a phone number entered by the user
+// before passing it to the modem. Removes spaces, dashes, parentheses, and dots,
+// keeping only '+' and digits. Also converts a leading "00" prefix to "+" (ITU
+// alternative for international prefix). Examples:
+//   "+44 7911-123 456"  -> "+447911123456"
+//   "0044 7911 123456"  -> "+447911123456"
+//   "(+1) 800-555-0100" -> "+18005550100"
+//   "07911123456"       -> "07911123456" (local format, unchanged)
+String normalizePhoneNumber(const String &raw);
+
 // Convert a CMGR timestamp ("yy/MM/dd,HH:mm:ss+zz") to RFC 3339.
 // Returns the empty string if the input is shorter than 17 chars
 // (we don't try to guess). The timezone is currently hardcoded to

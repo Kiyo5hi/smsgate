@@ -31,6 +31,21 @@ String humanReadablePhoneNumber(const String &number)
     }
 }
 
+String normalizePhoneNumber(const String &raw)
+{
+    String result;
+    for (unsigned int i = 0; i < raw.length(); i++) {
+        char c = raw[i];
+        if (c == '+' || (c >= '0' && c <= '9'))
+            result += c;
+        // skip spaces, dashes, dots, parentheses, slashes
+    }
+    // Convert leading "00" international prefix to "+"
+    if (result.length() >= 2 && result[0] == '0' && result[1] == '0')
+        result = String("+") + result.substring(2);
+    return result;
+}
+
 String timestampToRFC3339(const String &timestamp)
 {
     // Input format:  "yy/MM/dd,HH:mm:ss+zz" (as returned in +CMGR headers)

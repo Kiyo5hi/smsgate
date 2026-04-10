@@ -384,7 +384,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("Usage: /send <number> <message>\nExample: /send +8613800138000 Hello!"));
                 return;
             }
-            String phone = arg.substring(0, spacePos);
+            String phone = sms_codec::normalizePhoneNumber(arg.substring(0, spacePos)); // RFC-0078
             String body  = arg.substring(spacePos + 1);
             body.trim();
             if (body.length() == 0)
