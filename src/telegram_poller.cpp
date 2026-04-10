@@ -222,6 +222,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/schedrename <N> <phone> \xe2\x80\x94 Change destination phone of scheduled slot N\n"; // RFC-0197
             help += "/schedbody <N> <text> \xe2\x80\x94 Edit the body of scheduled slot N\n"; // RFC-0207
             help += "/schedclone <N> <min> \xe2\x80\x94 Duplicate a scheduled slot with a new delay\n"; // RFC-0215
+            help += "/schedpause \xe2\x80\x94 Pause all scheduled SMS delivery (volatile)\n"; // RFC-0218
+            help += "/schedresume \xe2\x80\x94 Resume scheduled SMS delivery\n"; // RFC-0218
             help += "/pending \xe2\x80\x94 Terse snapshot of all pending work (queue/sched/concat)\n"; // RFC-0209
             help += "/setquiethours <start>-<end> \xe2\x80\x94 Defer sched SMS during UTC window (e.g. 22-08)\n"; // RFC-0211
             help += "/clearquiethours \xe2\x80\x94 Disable quiet hours\n"; // RFC-0211
@@ -2848,9 +2850,14 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             if (pending == 0)
                 bot_.sendMessageTo(u.chatId, String("(no scheduled SMS)"));
             else
-                bot_.sendMessageTo(u.chatId,
-                    String("\xe2\x8f\xb0 Scheduled SMS (") // ⏰
-                    + String(pending) + String(" pending):\n") + out);
+            {
+                String header = String("\xe2\x8f\xb0 Scheduled SMS (") // ⏰
+                              + String(pending) + String(" pending)");
+                if (schedPaused_)
+                    header += String(" \xe2\x8f\xb8 PAUSED"); // ⏸
+                header += String(":\n");
+                bot_.sendMessageTo(u.chatId, header + out);
+            }
             return;
         }
 
@@ -3159,6 +3166,40 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                          + String(" (fires ") + eta + String(")")
                          + quietHoursWarning(sendAtClone, nowMsClone, quietStart_, quietEnd_, wallTimeFn_); // RFC-0212
             bot_.sendMessageTo(u.chatId, reply);
+            return;
+        }
+
+        // RFC-0218: /schedpause — globally pause scheduled SMS delivery.
+        if (lower == "/schedpause")
+        {
+            if (schedPaused_)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x8f\xb8 Already paused. Use /schedresume to resume.")); // ⏸
+            }
+            else
+            {
+                schedPaused_ = true;
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x8f\xb8 Scheduled SMS delivery paused. Use /schedresume to resume.")); // ⏸
+            }
+            return;
+        }
+
+        // RFC-0218: /schedresume — resume scheduled SMS delivery.
+        if (lower == "/schedresume")
+        {
+            if (!schedPaused_)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x96\xb6\xef\xb8\x8f Delivery not paused.")); // ▶️
+            }
+            else
+            {
+                schedPaused_ = false;
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x96\xb6\xef\xb8\x8f Scheduled SMS delivery resumed.")); // ▶️
+            }
             return;
         }
 
@@ -3555,7 +3596,8 @@ void TelegramPoller::tick()
     // RFC-0188: Drain scheduled SMS whose sendAtMs has passed.
     bool schedFired = false;
     // RFC-0211: suppress all slot firing during quiet hours.
-    bool inQuiet = isInQuietHours(quietStart_, quietEnd_, wallTimeFn_);
+    // RFC-0218: suppress during manual pause.
+    bool inQuiet = isInQuietHours(quietStart_, quietEnd_, wallTimeFn_) || schedPaused_;
     for (auto &slot : scheduledQueue_)
     {
         if (slot.sendAtMs != 0 && now >= slot.sendAtMs && !inQuiet)

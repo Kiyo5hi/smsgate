@@ -614,4 +614,5 @@ private:
     int pollAttempts_ = 0;
     uint32_t lastQueueStuckAlertMs_ = 0;  // RFC-0217
     bool     queueWasNonEmpty_      = false; // RFC-0217
+    bool     schedPaused_           = false; // RFC-0218: manual global pause
 };

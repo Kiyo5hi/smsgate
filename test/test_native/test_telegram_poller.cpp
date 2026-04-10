@@ -7585,6 +7585,58 @@ void test_TelegramPoller_stuck_alert_cooldown_suppresses_repeat()
     TEST_ASSERT_TRUE(TelegramPoller::kQueueStuckThresholdMs < TelegramPoller::kQueueStuckAlertCooldownMs);
 }
 
+// RFC-0218: /schedpause suppresses tick fire, /schedresume allows it.
+void test_TelegramPoller_schedpause_suppresses_fire()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // First, send /schedpause before any slot is set.
+    clk.nowMs += 4000;
+    poller.tick();
+    bot.queueUpdateBatch({makeUpdate(20001, kAllowedFromId, 0,
+        "/schedpause", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(20001, poller.lastUpdateId());
+
+    // Now set a slot that would fire immediately.
+    auto sq = poller.getSchedQueue();
+    sq[0].sendAtMs = 1; // already past
+    sq[0].phone    = String("+8888");
+    sq[0].body     = String("paused test");
+    poller.setSchedQueue(sq);
+
+    // Tick: slot should NOT fire while paused.
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+    TEST_ASSERT_NOT_EQUAL(0, (int)poller.getSchedQueue()[0].sendAtMs);
+
+    // Send /schedresume.
+    bot.queueUpdateBatch({makeUpdate(20002, kAllowedFromId, 0,
+        "/schedresume", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(20002, poller.lastUpdateId());
+
+    // Tick: slot should now fire.
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+    TEST_ASSERT_EQUAL(0, (int)poller.getSchedQueue()[0].sendAtMs);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -8264,6 +8316,8 @@ void run_telegram_poller_tests()
     // RFC-0217: stuck queue alert
     RUN_TEST(test_TelegramPoller_stuck_alert_fires_after_threshold);
     RUN_TEST(test_TelegramPoller_stuck_alert_cooldown_suppresses_repeat);
+    // RFC-0218: /schedpause / /schedresume
+    RUN_TEST(test_TelegramPoller_schedpause_suppresses_fire);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);
