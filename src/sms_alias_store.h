@@ -38,11 +38,27 @@ public:
             entries_[i] = blob.entries[i];
     }
 
-    // Add or replace an alias. Returns false if name or phone is too long
-    // or the store is full and name is not already present.
+    // Returns true if every character in `name` is [a-zA-Z0-9_-].
+    // Used by set() and by TelegramPoller to give targeted error messages.
+    static bool isValidName(const String &name)
+    {
+        if (name.length() == 0) return false;
+        for (unsigned int i = 0; i < name.length(); i++)
+        {
+            char c = name[i];
+            bool ok = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+                   || (c >= '0' && c <= '9') || c == '_' || c == '-';
+            if (!ok) return false;
+        }
+        return true;
+    }
+
+    // Add or replace an alias. Returns false if name is invalid, name or
+    // phone is too long, or the store is full and name is not already present.
     bool set(const String &name, const String &phone)
     {
-        if (name.length() == 0 || (int)name.length() > kMaxNameLen) return false;
+        if (!isValidName(name)) return false;
+        if ((int)name.length() > kMaxNameLen) return false;
         if (phone.length() == 0 || (int)phone.length() > kMaxPhoneLen) return false;
         // Check for existing entry to update.
         for (int i = 0; i < count_; i++)

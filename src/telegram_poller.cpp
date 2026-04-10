@@ -455,6 +455,13 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             }
             String aName  = arg.substring(0, spacePos);
             String aPhone = sms_codec::normalizePhoneNumber(arg.substring(spacePos + 1));
+            if (!SmsAliasStore::isValidName(aName))
+            {
+                sendErrorReply(u.chatId,
+                    String("Invalid alias name \xe2\x80\x9c") + aName // "
+                    + String("\xe2\x80\x9d. Use only letters, digits, _ and -.")); // "
+                return;
+            }
             if (!aliasStore_->set(aName, aPhone))
             {
                 sendErrorReply(u.chatId,

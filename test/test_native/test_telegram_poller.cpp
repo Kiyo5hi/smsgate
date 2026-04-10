@@ -1770,6 +1770,77 @@ void test_TelegramPoller_send_unknown_alias_sends_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// ---------- RFC-0101: alias name character validation ----------
+
+void test_SmsAliasStore_isValidName_accepts_alphanumeric_and_symbols()
+{
+    TEST_ASSERT_TRUE(SmsAliasStore::isValidName(String("alice")));
+    TEST_ASSERT_TRUE(SmsAliasStore::isValidName(String("Alice123")));
+    TEST_ASSERT_TRUE(SmsAliasStore::isValidName(String("my_contact")));
+    TEST_ASSERT_TRUE(SmsAliasStore::isValidName(String("dad-cell")));
+    TEST_ASSERT_TRUE(SmsAliasStore::isValidName(String("a"))); // single char
+}
+
+void test_SmsAliasStore_isValidName_rejects_invalid_chars()
+{
+    TEST_ASSERT_FALSE(SmsAliasStore::isValidName(String("")));           // empty
+    TEST_ASSERT_FALSE(SmsAliasStore::isValidName(String("my contact"))); // space
+    TEST_ASSERT_FALSE(SmsAliasStore::isValidName(String("@alice")));     // @ sign
+    TEST_ASSERT_FALSE(SmsAliasStore::isValidName(String("alice/bob")));  // slash
+    TEST_ASSERT_FALSE(SmsAliasStore::isValidName(String("a.b")));        // dot
+    TEST_ASSERT_FALSE(SmsAliasStore::isValidName(String("foo+bar")));    // plus
+}
+
+void test_SmsAliasStore_set_rejects_invalid_name()
+{
+    FakePersist persist;
+    SmsAliasStore store(persist);
+    store.load();
+
+    // A name with a space should be rejected before the store even looks at the phone.
+    TEST_ASSERT_FALSE(store.set(String("bad name"), String("+447911123456")));
+    TEST_ASSERT_EQUAL(0, store.count());
+}
+
+void test_TelegramPoller_addalias_invalid_name_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    poller.setAliasStore(&store);
+    poller.begin();
+
+    // Name with a dot — invalid char, should be rejected with a targeted error.
+    bot.queueUpdateBatch({makeUpdate(601, kAllowedFromId, 0,
+        "/addalias my.contact +447911123456", kAllowedFromId)});
+    poller.tick();
+
+    // Alias must not have been added.
+    TEST_ASSERT_EQUAL(0, store.count());
+    // Reply must mention the constraint.
+    bool sawError = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("letters")) >= 0 || m.text.indexOf(String("Invalid")) >= 0)
+        {
+            sawError = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawError);
+    TEST_ASSERT_EQUAL(601, poller.lastUpdateId());
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -1834,4 +1905,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_aliases_lists_entries);
     RUN_TEST(test_TelegramPoller_send_expands_at_alias);
     RUN_TEST(test_TelegramPoller_send_unknown_alias_sends_error);
+    // RFC-0101: alias name character validation
+    RUN_TEST(test_SmsAliasStore_isValidName_accepts_alphanumeric_and_symbols);
+    RUN_TEST(test_SmsAliasStore_isValidName_rejects_invalid_chars);
+    RUN_TEST(test_SmsAliasStore_set_rejects_invalid_name);
+    RUN_TEST(test_TelegramPoller_addalias_invalid_name_sends_error);
 }
