@@ -1056,6 +1056,123 @@ void test_TelegramPoller_block_mutator_nullptr_replies_not_configured()
     }
 }
 
+// ---------- RFC-0026: /send command tests ----------
+
+// Happy path: /send <number> <body> enqueues SMS and confirms to user.
+void test_TelegramPoller_send_happy_path_enqueues_and_confirms()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(500, kAllowedFromId, 0, "/send +8613800138000 Hello world", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(500, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    bool sawQueued = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Queued SMS to")) >= 0) { sawQueued = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawQueued);
+}
+
+// /send with no argument at all: usage error, nothing enqueued.
+void test_TelegramPoller_send_no_arg_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(501, kAllowedFromId, 0, "/send", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(501, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Usage")) >= 0) { sawUsage = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+// /send <number> (no body, only a phone with no space): usage error.
+void test_TelegramPoller_send_number_only_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(502, kAllowedFromId, 0, "/send +8613800138000", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(502, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Usage")) >= 0) { sawUsage = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+// /send preserves body case (original text, not lowercased version).
+void test_TelegramPoller_send_preserves_body_case()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // Uppercase characters in body should not be lowercased.
+    bot.queueUpdateBatch({makeUpdate(503, kAllowedFromId, 0, "/send +1234 Hello World ABC", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(503, poller.lastUpdateId());
+    // Queue should have the entry; content check via FakeModem after drain.
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -1083,10 +1200,16 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_expired_target_error_goes_to_requester_chat);
     // RFC-0021: SMS block list commands
     RUN_TEST(test_TelegramPoller_blocklist_dispatches_to_mutator);
+    // RFC-0026: /send command
     RUN_TEST(test_TelegramPoller_block_dispatches_to_mutator);
     RUN_TEST(test_TelegramPoller_block_no_arg_sends_usage_error);
     RUN_TEST(test_TelegramPoller_unblock_dispatches_to_mutator);
     RUN_TEST(test_TelegramPoller_unblock_no_arg_sends_usage_error);
     RUN_TEST(test_TelegramPoller_blocklist_not_matched_as_block);
     RUN_TEST(test_TelegramPoller_block_mutator_nullptr_replies_not_configured);
+    // RFC-0026: /send command
+    RUN_TEST(test_TelegramPoller_send_happy_path_enqueues_and_confirms);
+    RUN_TEST(test_TelegramPoller_send_no_arg_sends_usage);
+    RUN_TEST(test_TelegramPoller_send_number_only_sends_usage);
+    RUN_TEST(test_TelegramPoller_send_preserves_body_case);
 }

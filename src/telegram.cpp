@@ -138,7 +138,7 @@ bool registerBotCommands(RealBotClient &bot)
     String url = String("/bot") + botToken + "/setMyCommands";
 
     // Register all commands so Telegram's autocomplete menu shows them.
-    DynamicJsonDocument doc(512);
+    DynamicJsonDocument doc(768);
     JsonArray cmds = doc.createNestedArray("commands");
     {
         JsonObject c = cmds.createNestedObject();
@@ -169,6 +169,11 @@ bool registerBotCommands(RealBotClient &bot)
         JsonObject c = cmds.createNestedObject();
         c["command"] = "restart";
         c["description"] = "Soft reboot the bridge";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "send";
+        c["description"] = "Send an SMS: /send <number> <message>";
     }
 
     String payload;
@@ -225,7 +230,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /debug /status /blocklist /block /unblock /restart");
+        Serial.println("Bot commands registered: /debug /status /blocklist /block /unblock /restart /send");
     }
     else
     {

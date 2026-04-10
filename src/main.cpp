@@ -169,6 +169,8 @@ static TelegramPoller *telegramPoller = nullptr;
 // Default values (0 / REG_NO_RESULT) shown if loop hasn't run yet.
 static int cachedCsq = 0;
 static RegStatus cachedRegStatus = REG_NO_RESULT;
+// RFC-0027: Operator name (AT+COPS?), refreshed every 30s alongside CSQ.
+static String cachedOperatorName;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -591,7 +593,9 @@ void setup()
         msg += "  Time: ";      msg += timeBuf; msg += " "; msg += tzLabel; msg += "\n";
         msg += "  Uptime: ";    msg += String((int)days); msg += "d "; msg += String((int)hours); msg += "h "; msg += String((int)mins); msg += "m\n";
         msg += "  WiFi: ";      msg += String(WiFi.RSSI()); msg += " dBm\n";
-        msg += "  Modem: CSQ "; msg += String(cachedCsq); msg += " ("; msg += csqLabel; msg += ")  "; msg += regStr; msg += "\n";
+        msg += "  Modem: CSQ "; msg += String(cachedCsq); msg += " ("; msg += csqLabel; msg += ")  "; msg += regStr;
+        if (cachedOperatorName.length() > 0) { msg += " ("; msg += cachedOperatorName; msg += ")"; }
+        msg += "\n";
         msg += "  Heap: ";      msg += String((int)ESP.getFreeHeap()); msg += " B\n";
         msg += "  Reset: ";     msg += resetReasonStr(s_resetReason); msg += "\n";
 
@@ -818,9 +822,20 @@ void setup()
     // RFC-0021: Apply runtime SMS block list (loaded from NVS above, or empty on first boot).
     smsHandler.setRuntimeBlockList(sRuntimeBlockList, sRuntimeBlockListCount);
 
-    // RFC-0022: Rich startup notification. Prime cachedCsq so the boot banner
-    // shows a real signal quality (modem is idle here, pre-sweepExistingSms).
+    // RFC-0022: Rich startup notification. Prime cachedCsq and operator name
+    // so the boot banner shows real values (modem is idle here).
     cachedCsq = modem.getSignalQuality();
+    // RFC-0027: Also prime operator name at boot.
+    {
+        String copsResp;
+        modem.sendAT("+COPS?");
+        modem.waitResponse(2000UL, copsResp);
+        int q1 = copsResp.indexOf('"');
+        int q2 = (q1 >= 0) ? copsResp.indexOf('"', q1 + 1) : -1;
+        cachedOperatorName = (q1 >= 0 && q2 > q1)
+                             ? copsResp.substring(q1 + 1, q2)
+                             : String();
+    }
     {
         String bootMsg = String("\xF0\x9F\x9A\x80 Bridge online\n"); // U+1F680 rocket
         if (statusFn)
@@ -939,6 +954,17 @@ void loop()
         lastStatusRefreshMs = millis();
         cachedCsq = modem.getSignalQuality();
         cachedRegStatus = modem.getRegistrationStatus();
+        // RFC-0027: Cache operator name via AT+COPS?
+        {
+            String copsResp;
+            modem.sendAT("+COPS?");
+            modem.waitResponse(2000UL, copsResp);
+            int q1 = copsResp.indexOf('"');
+            int q2 = (q1 >= 0) ? copsResp.indexOf('"', q1 + 1) : -1;
+            cachedOperatorName = (q1 >= 0 && q2 > q1)
+                                 ? copsResp.substring(q1 + 1, q2)
+                                 : String();
+        }
 #ifdef ENABLE_DELIVERY_REPORTS
         // Evict delivery report map entries older than 1 hour (RFC-0011).
         deliveryReportMap.evictExpired((uint32_t)millis());

@@ -185,10 +185,46 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0026: /send <number> <body> — one-shot outbound SMS that
+        // doesn't require a prior incoming SMS to reply to.
+        if (lower == "/send" || lower.startsWith("/send "))
+        {
+            // Extract the argument from the ORIGINAL (non-lowercased) text
+            // so the body preserves its original case and Unicode characters.
+            String arg = u.text.substring(strlen("/send"));
+            arg.trim();
+            int spacePos = arg.indexOf(' ');
+            if (arg.length() == 0 || spacePos <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /send <number> <message>\nExample: /send +8613800138000 Hello!"));
+                return;
+            }
+            String phone = arg.substring(0, spacePos);
+            String body  = arg.substring(spacePos + 1);
+            body.trim();
+            if (body.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /send <number> <message>\nExample: /send +8613800138000 Hello!"));
+                return;
+            }
+            int64_t requesterChatId = u.chatId;
+            String capturedPhone = phone;
+            smsSender_.enqueue(phone, body, [this, requesterChatId, capturedPhone]() {
+                sendErrorReply(requesterChatId,
+                    String("SMS to ") + capturedPhone + " failed after retries.");
+            });
+            bot_.sendMessageTo(u.chatId, String("\xE2\x9C\x85 Queued SMS to ") + phone); // U+2705
+            Serial.print("TelegramPoller: /send queued to ");
+            Serial.println(phone);
+            return;
+        }
+
         Serial.println("TelegramPoller: no reply_to_message_id, dropping");
         {
             String help = "Reply to a forwarded SMS to send a response. ";
-            help += "Commands: /debug, /status, /restart";
+            help += "Commands: /debug, /status, /restart, /send <num> <msg>";
             if (smsBlockMutator_)
                 help += ", /blocklist, /block <num>, /unblock <num>";
             sendErrorReply(u.chatId, help);
