@@ -160,6 +160,11 @@ static int  sRuntimeBlockListCount = 0;
 // iteration AFTER the Telegram "Restarting..." message has been sent.
 static bool s_pendingRestart = false;
 
+// RFC-0071: Deferred WiFi reconnect flag. Set by the /wifi bot command lambda;
+// loop() reconnects WiFi and re-initialises the Telegram client on the next
+// iteration AFTER the "WiFi reconnect initiated" Telegram reply has been sent.
+static bool s_pendingWifiReconnect = false;
+
 // The poller is a process-lifetime singleton; we heap-allocate it once
 // in setup() and never free it. A raw pointer keeps the call site clean.
 static TelegramPoller *telegramPoller = nullptr;
@@ -940,6 +945,7 @@ void setup()
         telegramPoller->setDebugLog(&smsDebugLog);
         telegramPoller->setNtpSyncFn([]() { syncTime(); }); // RFC-0055
         telegramPoller->setConcatSummaryFn([]() { return smsHandler.concatGroupsSummary(); }); // RFC-0069
+        telegramPoller->setWifiReconnectFn([]() { s_pendingWifiReconnect = true; });            // RFC-0071
         smsSender.setDebugLog(&smsDebugLog); // RFC-0035: log outbound failures
         telegramPoller->begin();
         Serial.print("TG->SMS poller online; reply-target slots in use: ");
@@ -1046,6 +1052,33 @@ void loop()
         Serial.println("/restart command received, rebooting...");
         delay(500); // let serial flush
         ESP.restart();
+    }
+
+    // RFC-0071: Deferred WiFi reconnect from /wifi bot command.
+    if (s_pendingWifiReconnect)
+    {
+        s_pendingWifiReconnect = false;
+        Serial.println("/wifi command received, reconnecting WiFi...");
+        WiFi.disconnect(true);
+        delay(500);
+        if (connectToWiFi())
+        {
+            if (setupTelegramClient(realBot))
+            {
+                realBot.sendMessage("\xF0\x9F\x9F\xA2 WiFi reconnected."); // 🟢
+                Serial.println("WiFi reconnected successfully.");
+            }
+            else
+            {
+                realBot.sendMessage("\xE2\x9A\xA0\xEF\xB8\x8F WiFi up but Telegram TLS failed."); // ⚠️
+                Serial.println("WiFi up but Telegram TLS init failed.");
+            }
+        }
+        else
+        {
+            Serial.println("WiFi reconnect failed.");
+            // No Telegram message possible — we're offline.
+        }
     }
 
     // NOTE: do NOT call modem.maintain() here. On TinyGSM/A76XX it internally

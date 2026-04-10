@@ -97,6 +97,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/send <num> <msg> \xe2\x80\x94 Send outbound SMS\n";
             help += "/queue \xe2\x80\x94 Show pending outbound queue\n";
             help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
+            help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/restart \xe2\x80\x94 Soft reboot\n";
             if (smsBlockMutator_) {
                 help += "/blocklist \xe2\x80\x94 Show block list\n";
@@ -231,6 +232,22 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, concatSummaryFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(concat summary not configured)"));
+            return;
+        }
+
+        // RFC-0071: /wifi — trigger a deferred WiFi reconnect.
+        if (lower == "/wifi")
+        {
+            if (wifiReconnectFn_)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xF0\x9F\x94\x84 WiFi reconnect initiated.")); // 🔄
+                wifiReconnectFn_();
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("(WiFi reconnect not configured)"));
+            }
             return;
         }
 

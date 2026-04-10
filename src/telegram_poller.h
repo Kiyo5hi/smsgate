@@ -139,6 +139,12 @@ public:
     // smsHandler.concatGroupsSummary() in main.cpp.
     void setConcatSummaryFn(std::function<String()> fn) { concatSummaryFn_ = std::move(fn); }
 
+    // RFC-0071: Optional WiFi reconnect trigger. When set, /wifi calls this
+    // function (deferred — the actual reconnect runs in the next loop()
+    // iteration). Production wires this to a lambda that sets a flag in
+    // main.cpp; the flag is checked at the top of loop().
+    void setWifiReconnectFn(std::function<void()> fn) { wifiReconnectFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -167,6 +173,7 @@ private:
     SmsDebugLog *debugLog_ = nullptr;
     std::function<void()> ntpSyncFn_;
     std::function<String()> concatSummaryFn_; // RFC-0069
+    std::function<void()> wifiReconnectFn_;   // RFC-0071
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;
