@@ -1,6 +1,7 @@
 #include "sms_handler.h"
 #include "sms_codec.h"
 #include "reply_target_map.h"
+#include "sms_debug_log.h"
 
 #include <algorithm>
 
@@ -102,6 +103,7 @@ bool SmsHandler::forwardSingle(const sms_codec::SmsPdu &pdu, int /*simIndex*/)
     {
         replyTargets_->put(mid, pdu.sender);
     }
+    smsForwarded_++;
     return true;
 }
 
@@ -295,6 +297,7 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
     {
         replyTargets_->put(mid, group->sender);
     }
+    smsForwarded_++;
 
     // Success: collect all SIM slots for deletion and drop the group.
     for (const auto &f : sorted)
@@ -310,6 +313,7 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
 void SmsHandler::noteTelegramFailure()
 {
     consecutiveFailures_++;
+    telegramSendFailures_++;
     Serial.print("Post to Telegram FAILED (");
     Serial.print(consecutiveFailures_);
     Serial.println(" consecutive). Keeping SMS on SIM.");
@@ -392,6 +396,39 @@ void SmsHandler::handleSmsIndex(int idx)
     Serial.print("Content:   ");
     Serial.println(pdu.content);
 
+    // RFC-0018/RFC-0021: Block list check (compile-time + runtime).
+    // If the sender matches either list, silently delete the SIM slot
+    // and return without forwarding. Deletion is UNCONDITIONAL — unlike
+    // the normal path where deletion is conditional on a successful
+    // Telegram POST. Omitting the CMGD would cause infinite boot-loop
+    // replays of blocked fragments via sweepExistingSms.
+    if ((blockList_   && isBlocked(pdu.sender.c_str(), blockList_,   blockListCount_))  ||
+        (runtimeList_ && isBlocked(pdu.sender.c_str(), runtimeList_, runtimeListCount_)))
+    {
+        Serial.print("SMS from blocked sender ");
+        Serial.print(pdu.sender);
+        Serial.println(", deleting silently.");
+        modem_.sendAT("+CMGD=" + String(idx));
+        modem_.waitResponseOk(1000UL);
+        return;
+    }
+
+    // Capture diagnostic entry before any branching so we get a log
+    // record regardless of the outcome.
+    SmsDebugLog::Entry logEntry;
+    if (debugLog_)
+    {
+        logEntry.timestampMs = clock_ ? clock_() : 0;
+        logEntry.sender = pdu.sender;
+        logEntry.bodyChars = (uint16_t)pdu.content.length();
+        logEntry.isConcat = pdu.isConcatenated;
+        logEntry.concatRef = pdu.concatRefNumber;
+        logEntry.concatTotal = pdu.concatTotalParts;
+        logEntry.concatPart = pdu.concatPartNumber;
+        logEntry.pduPrefix = pduHex.substring(0, 120);
+        // outcome is filled in below
+    }
+
     if (!pdu.isConcatenated)
     {
         if (forwardSingle(pdu, idx))
@@ -400,10 +437,12 @@ void SmsHandler::handleSmsIndex(int idx)
             Serial.println("Posted to Telegram OK, deleting SMS.");
             modem_.sendAT("+CMGD=" + String(idx));
             modem_.waitResponseOk(1000UL);
+            if (debugLog_) { logEntry.outcome = "fwd OK"; debugLog_->push(logEntry); }
         }
         else
         {
             noteTelegramFailure();
+            if (debugLog_) { logEntry.outcome = "fwd FAIL"; debugLog_->push(logEntry); }
         }
         return;
     }
@@ -429,6 +468,7 @@ void SmsHandler::handleSmsIndex(int idx)
             modem_.sendAT("+CMGD=" + String(slot));
             modem_.waitResponseOk(1000UL);
         }
+        if (debugLog_) { logEntry.outcome = "assembled+fwd OK"; debugLog_->push(logEntry); }
         return;
     }
 
@@ -440,12 +480,14 @@ void SmsHandler::handleSmsIndex(int idx)
     {
         // All parts landed but bot rejected the send. Failure path.
         noteTelegramFailure();
+        if (debugLog_) { logEntry.outcome = "assembled+fwd FAIL"; debugLog_->push(logEntry); }
     }
     else
     {
         // Incomplete — do NOT bump the failure counter; this is
         // expected. Leave the SIM slot alone so a reboot rehydrates.
         Serial.println("Concat incomplete, leaving SIM slot in place.");
+        if (debugLog_) { logEntry.outcome = "buffered"; debugLog_->push(logEntry); }
     }
 }
 

@@ -13,6 +13,8 @@
 
 #include "utilities.h"
 #include "secrets.h"
+#include "allow_list.h"
+#include "sms_block_list.h"
 #include "telegram.h"
 #include "sms_handler.h"
 #include "call_handler.h"
@@ -20,10 +22,43 @@
 #include "real_persist.h"
 #include "reply_target_map.h"
 #include "sms_sender.h"
+#include "sms_debug_log.h"
 #include "telegram_poller.h"
+#ifdef ENABLE_DELIVERY_REPORTS
+#include "delivery_report_map.h"
+#include "delivery_report_handler.h"
+#endif
+
+#include <esp_system.h>
+#include <esp_task_wdt.h>
 
 #ifdef TINY_GSM_MODEM_SIM7080
 #error "This modem has no SMS function"
+#endif
+
+// RFC-0014: Multi-user allow list.
+// Backward-compat shim: if only TELEGRAM_CHAT_ID is defined (pre-RFC-0014
+// secrets.h), treat it as a single-entry TELEGRAM_CHAT_IDS automatically.
+// If BOTH are defined simultaneously the build is ambiguous — error out so
+// the developer knows to clean up their secrets.h.
+#if defined(TELEGRAM_CHAT_ID) && defined(TELEGRAM_CHAT_IDS)
+#error "Define either TELEGRAM_CHAT_ID (single user) or TELEGRAM_CHAT_IDS (multi-user CSV), not both."
+#endif
+#ifndef TELEGRAM_CHAT_IDS
+#  ifdef TELEGRAM_CHAT_ID
+#    define TELEGRAM_CHAT_IDS TELEGRAM_CHAT_ID
+#  else
+#    error "Define TELEGRAM_CHAT_IDS (or legacy TELEGRAM_CHAT_ID) in secrets.h — see secrets.h.example"
+#  endif
+#endif
+
+// RFC-0017: Scheduled heartbeat. Default 6 hours; 0 = disabled.
+// Override in secrets.h or via -DHEARTBEAT_INTERVAL_SEC=... in platformio.ini.
+#ifndef HEARTBEAT_INTERVAL_SEC
+#  define HEARTBEAT_INTERVAL_SEC 21600  // 6 hours
+#endif
+#if HEARTBEAT_INTERVAL_SEC != 0 && HEARTBEAT_INTERVAL_SEC < 300
+#  error "HEARTBEAT_INTERVAL_SEC must be 0 (disabled) or >= 300 (5 minutes)"
 #endif
 
 #define SerialMon Serial
@@ -55,13 +90,24 @@ TinyGsm modem(SerialAT);
 static const char *ssid = WIFI_SSID;
 static const char *password = WIFI_PASSWORD;
 
+// Track which transport is currently active so the loop() WiFi-drop
+// handler knows whether to attempt a cellular takeover.
+static enum class ActiveTransport { kNone, kWiFi, kCellular } activeTransport = ActiveTransport::kNone;
+
 // Composition root state. These objects are singletons for the
 // lifetime of the process; the handlers borrow references to them.
-static RealModem realModem(modem);
+static RealModem realModem(modem, SerialAT);
 static RealBotClient realBot;
+static SmsDebugLog smsDebugLog;
 static RealPersist realPersist;
 static ReplyTargetMap replyTargets(realPersist);
 static SmsSender smsSender(realModem);
+#ifdef ENABLE_DELIVERY_REPORTS
+static DeliveryReportMap deliveryReportMap;
+static DeliveryReportHandler deliveryReportHandler(
+    realBot, deliveryReportMap,
+    []() -> uint32_t { return (uint32_t)millis(); });
+#endif
 static SmsHandler smsHandler(
     realModem, realBot,
     []() {
@@ -75,34 +121,87 @@ static CallHandler callHandler(realModem, realBot, []() -> uint32_t {
     return (uint32_t)millis();
 });
 
-// TG -> SMS poller (RFC-0003). Allow-list is the configured chat id
-// parsed as int64. Constructed late so it can capture the parsed id.
-static int64_t parseChatIdAsInt64(const char *s)
-{
-    if (!s)
-        return 0;
-    return (int64_t)strtoll(s, nullptr, 10);
-}
-static const int64_t kAllowedChatId = parseChatIdAsInt64(TELEGRAM_CHAT_ID);
-static TelegramPoller telegramPoller(
-    realBot, smsSender, replyTargets, realPersist,
-    []() -> uint32_t { return (uint32_t)millis(); },
-    [](int64_t fromId) -> bool {
-        // Single-user allow list (RFC-0003 §4). Multi-user later.
-        return fromId != 0 && fromId == kAllowedChatId;
-    });
+// RFC-0014: Process-lifetime allow list, parsed in setup() from
+// TELEGRAM_CHAT_IDS. allowedIds[0] is the admin (forward target).
+// All entries may send replies and use bot commands.
+// parseAllowedIds() is defined in src/allow_list.h (inline, also
+// reachable by the native test env).
+static int64_t allowedIds[10] = {};
+static int     allowedIdCount = 0;
 
-void connectToWiFi()
+// RFC-0019: Runtime user list, loaded from NVS at startup and mutated
+// at runtime via /adduser and /removeuser. Max 10 entries.
+// Only compile-time users (allowedIds[]) may mutate this list.
+static int64_t runtimeIds[10] = {};
+static int     runtimeIdCount = 0;
+
+// RFC-0018: SMS sender block list. Declared as file-scope statics so
+// the pointer passed to smsHandler.setBlockList() remains valid for the
+// process lifetime (a setup()-local variable would dangle after return).
+#ifdef SMS_BLOCK_LIST
+static char sBlockList[kSmsBlockListMaxEntries][kSmsBlockListMaxNumberLen + 1];
+static int  sBlockListCount = 0;
+#else
+// Declare empty arrays even when SMS_BLOCK_LIST is not defined so the
+// SmsBlockMutatorFn lambda can reference them unconditionally (the lambda
+// will report count == 0 and nothing will be blocked).
+static char sBlockList[kSmsBlockListMaxEntries][kSmsBlockListMaxNumberLen + 1] = {};
+static int  sBlockListCount = 0;
+#endif
+
+// RFC-0021: Runtime SMS block list. Loaded from NVS at startup and mutated
+// at runtime via /block and /unblock. File-scope so the pointer passed to
+// smsHandler.setRuntimeBlockList() remains valid for the process lifetime.
+static char sRuntimeBlockList[kSmsBlockListMaxEntries][kSmsBlockListMaxNumberLen + 1] = {};
+static int  sRuntimeBlockListCount = 0;
+
+// The poller is a process-lifetime singleton; we heap-allocate it once
+// in setup() and never free it. A raw pointer keeps the call site clean.
+static TelegramPoller *telegramPoller = nullptr;
+
+// Cached modem signal/registration values, refreshed every 30 s in
+// loop() from a safe point OUTSIDE the AT-response read window.
+// Default values (0 / REG_NO_RESULT) shown if loop hasn't run yet.
+static int cachedCsq = 0;
+static RegStatus cachedRegStatus = REG_NO_RESULT;
+
+// RFC-0017: StatusFn promoted to file scope so loop() can call it for
+// the scheduled heartbeat. Assigned in setup() before TelegramPoller is
+// constructed. Default-constructed to nullptr; guarded with `if (statusFn)`
+// before use.
+static std::function<String()> statusFn;
+
+// RFC-0017: Heartbeat timer. Initialised to 0 so the first heartbeat fires
+// one full interval after boot (the boot banner already covers "just started").
+#if HEARTBEAT_INTERVAL_SEC != 0
+static uint32_t lastHeartbeatMs = 0;
+#endif
+
+// Try to connect to WiFi. Returns true if connected within the timeout.
+// Times out after ~15 s (30 retries × 500 ms) so we don't block setup()
+// forever when WiFi is unavailable and cellular fallback is configured.
+bool connectToWiFi()
 {
+    if (strlen(ssid) == 0)
+    {
+        Serial.println("WiFi: SSID not configured, skipping.");
+        return false;
+    }
     WiFi.mode(WIFI_STA);
     WiFi.begin(ssid, password);
     Serial.print("Connecting to WiFi");
-    while (WiFi.status() != WL_CONNECTED)
+    for (int i = 0; i < 30 && WiFi.status() != WL_CONNECTED; i++)
     {
         delay(500);
         Serial.print(".");
     }
-    Serial.println("\nWiFi connected!");
+    if (WiFi.status() == WL_CONNECTED)
+    {
+        Serial.println("\nWiFi connected!");
+        return true;
+    }
+    Serial.println("\nWiFi connection failed (timeout).");
+    return false;
 }
 
 void syncTime()
@@ -112,6 +211,7 @@ void syncTime()
     time_t now = time(nullptr);
     while (now < 8 * 3600 * 2)
     {
+        esp_task_wdt_reset();  // RFC-0015: syncTime() is also called from loop()
         delay(500);
         Serial.print(".");
         now = time(nullptr);
@@ -119,8 +219,29 @@ void syncTime()
     Serial.printf("\nCurrent time: %s\n", ctime(&now));
 }
 
+// RFC-0020: Map esp_reset_reason_t to a human-readable string for /status.
+// Lives in main.cpp (not sms_debug_log.cpp) to keep hardware headers out of
+// the files compiled in the native test environment.
+static const char *resetReasonStr(esp_reset_reason_t r)
+{
+    switch (r)
+    {
+    case ESP_RST_POWERON:   return "Power-on";
+    case ESP_RST_SW:        return "Software reset";
+    case ESP_RST_PANIC:     return "Panic/exception";
+    case ESP_RST_WDT:       return "Watchdog (TWDT)";
+    case ESP_RST_BROWNOUT:  return "Brownout";
+    case ESP_RST_DEEPSLEEP: return "Deep sleep wake";
+    default:                return "Unknown";
+    }
+}
+
 void setup()
 {
+    // RFC-0020: Capture reset reason once at startup (before any code path
+    // can trigger another reset). Used in the /status lambda below.
+    static esp_reset_reason_t s_resetReason = esp_reset_reason();
+
     Serial.begin(115200);
 #ifdef BOARD_POWERON_PIN
     pinMode(BOARD_POWERON_PIN, OUTPUT);
@@ -279,8 +400,20 @@ void setup()
     modem.waitResponse(2000);
 
     // Route new-message indications to TE as +CMTI URCs (store in SIM, notify us).
+    // When -DENABLE_DELIVERY_REPORTS is set, also route +CDS status report URCs
+    // to the TE by setting ds=1 (4th parameter). RFC-0011.
+#ifdef ENABLE_DELIVERY_REPORTS
+    modem.sendAT("+CNMI=2,1,0,1,0");
+    modem.waitResponse(2000);
+    // Enable Phase 2+ mode so the modem processes incoming status reports.
+    modem.sendAT("+CSMS=1");
+    modem.waitResponse(2000);
+    smsSender.setDeliveryReportMap(&deliveryReportMap);
+    Serial.println("Delivery reports enabled (+CDS routing active, RFC-0011).");
+#else
     modem.sendAT("+CNMI=2,1,0,0,0");
     modem.waitResponse(2000);
+#endif
 
     // Enable Caller Line Identification Presentation so incoming RINGs
     // are followed by a +CLIP: "<number>",<type>,... URC carrying the
@@ -288,13 +421,418 @@ void setup()
     modem.sendAT("+CLIP=1");
     modem.waitResponse(2000);
 
-    connectToWiFi();
-    syncTime();
-    if (!setupTelegramClient())
+    // --- Network / Telegram transport setup (RFC-0004) ---
+    //
+    // Strategy: WiFi primary, cellular fallback.
+    //   1. Try WiFi. If connected, use WiFiClientSecure with the CA bundle
+    //      (RFC-0001 full TLS verification). setupTelegramClient() also calls
+    //      realBot.setTransport() to inject the WiFi client.
+    //   2. If WiFi unavailable (SSID not set, AP unreachable, timeout), try
+    //      GPRS/LTE data via the modem. The modem TLS path uses authmode=0
+    //      (no server certificate verification — see the [CELLULAR TLS]
+    //      warning printed by setupCellularClient() for the rationale).
+    //      Requires CELLULAR_APN to be defined in secrets.h.
+    //
+    // NTP sync is attempted after WiFi connects. It is skipped on the
+    // cellular path (the modem provides time via AT+CCLK; NTP over LTE is
+    // possible but not yet implemented).
+    bool transportReady = false;
+    if (connectToWiFi())
     {
-        Serial.println("Telegram client setup failed, aborting SMS bridge.");
-        return;
+        syncTime();
+        // setupTelegramClient() configures the CA bundle and sets the
+        // WiFi client as the active transport on realBot.
+        if (setupTelegramClient(realBot))
+        {
+            activeTransport = ActiveTransport::kWiFi;
+            transportReady = true;
+        }
+        else
+        {
+            Serial.println("WiFi Telegram setup failed.");
+        }
     }
+
+    if (!transportReady)
+    {
+        Serial.println("WiFi unavailable; attempting cellular fallback...");
+#if defined(CELLULAR_APN) && defined(TINY_GSM_MODEM_A76XXSSL)
+        const char *apn = CELLULAR_APN;
+        if (strlen(apn) == 0)
+        {
+            Serial.println("Cellular fallback: CELLULAR_APN is empty, trying without APN.");
+        }
+        Serial.printf("Connecting to GPRS (APN: \"%s\")...\n", apn);
+        if (modem.gprsConnect(apn))
+        {
+            Serial.println("GPRS connected.");
+            // setupCellularClient() sets authmode=0 (no cert verification),
+            // prints the [CELLULAR TLS] warning, and sets the modem client
+            // as the active transport on realBot.
+            if (setupCellularClient(realBot))
+            {
+                activeTransport = ActiveTransport::kCellular;
+                transportReady = true;
+            }
+            else
+            {
+                Serial.println("Cellular Telegram setup failed.");
+                modem.gprsDisconnect();
+            }
+        }
+        else
+        {
+            Serial.println("GPRS connect failed.");
+        }
+#else
+        Serial.println("Cellular fallback not available (define CELLULAR_APN in secrets.h and rebuild).");
+#endif
+    }
+
+    if (!transportReady)
+    {
+        Serial.println("No network transport available. SMS bridge running in receive-only mode (no Telegram forwarding).");
+        // Continue: SMS receive still works; Telegram sends will fail gracefully.
+    }
+
+    // RFC-0014: Parse the allow list and wire the admin chat id into the
+    // bot client. Must happen before registerBotCommands (which fires off
+    // an API call that doesn't use the chat id, but ordering is cleaner)
+    // and before the TelegramPoller is constructed (AuthFn uses allowedIds).
+    allowedIdCount = parseAllowedIds(TELEGRAM_CHAT_IDS, allowedIds, 10);
+    if (allowedIdCount == 0)
+    {
+        Serial.println("WARNING: no valid Telegram chat IDs found in TELEGRAM_CHAT_IDS — all updates will be rejected.");
+    }
+    else
+    {
+        Serial.printf("Allow list: %d user(s). Admin (forward target): %lld\n",
+                      allowedIdCount, (long long)allowedIds[0]);
+    }
+    realBot.setAdminChatId(allowedIdCount > 0 ? allowedIds[0] : 0);
+
+    registerBotCommands(realBot);
+
+    // RFC-0003 / RFC-0010: Build the TelegramPoller with a StatusFn
+    // that closes over all composition-root objects. All captured
+    // references are to file-scope statics with process lifetime.
+    // cachedCsq and cachedRegStatus are file-scope statics updated
+    // every 30 s in loop() — safe to read from this lambda because
+    // the lambda runs inside telegramPoller.tick() which is called
+    // AFTER the cache refresh block in loop().
+    //
+    // RFC-0017: statusFn is a file-scope static (assigned here, read in
+    // loop() for the scheduled heartbeat). The lambda body is identical to
+    // the previous inline 7th argument; only the assignment location moves.
+    statusFn = []() -> String {
+        // --- uptime ---
+        unsigned long uptimeSec = millis() / 1000UL;
+        unsigned long days = uptimeSec / 86400UL;
+        unsigned long hours = (uptimeSec % 86400UL) / 3600UL;
+        unsigned long mins = (uptimeSec % 3600UL) / 60UL;
+        String uptime;
+        uptime += String((int)days);
+        uptime += "d ";
+        uptime += String((int)hours);
+        uptime += "h ";
+        uptime += String((int)mins);
+        uptime += "m";
+
+        // --- WiFi RSSI ---
+        int rssi = WiFi.RSSI();
+
+        // --- CSQ interpretation ---
+        String csqLabel;
+        if (cachedCsq == 99)
+            csqLabel = "unknown/no signal";
+        else if (cachedCsq <= 9)
+            csqLabel = "marginal";
+        else if (cachedCsq <= 14)
+            csqLabel = "ok";
+        else if (cachedCsq <= 19)
+            csqLabel = "good";
+        else
+            csqLabel = "excellent";
+
+        // --- registration status ---
+        String regStr;
+        switch (cachedRegStatus)
+        {
+        case REG_OK_HOME:      regStr = "home";      break;
+        case REG_OK_ROAMING:   regStr = "roaming";   break;
+        case REG_SEARCHING:    regStr = "searching"; break;
+        case REG_DENIED:       regStr = "denied";    break;
+        case REG_UNREGISTERED: regStr = "unregistered"; break;
+        default:               regStr = "unknown";   break;
+        }
+
+        // --- heap ---
+        uint32_t freeHeap = ESP.getFreeHeap();
+
+        // --- reboot reason (RFC-0020) ---
+        // s_resetReason was captured once at the top of setup() via
+        // esp_reset_reason(); resetReasonStr() converts it to a string.
+        String rebootReason = String(resetReasonStr(s_resetReason));
+
+        // --- assemble message ---
+        String msg;
+        msg += "--- Device Status ---\n";
+        msg += "Uptime: ";          msg += uptime;                     msg += "\n";
+        msg += "WiFi RSSI: ";       msg += String(rssi);               msg += " dBm\n";
+        msg += "Modem CSQ: ";       msg += String(cachedCsq);
+        msg += " (";                msg += csqLabel;                   msg += ")\n";
+        msg += "Registration: ";    msg += regStr;                     msg += "\n";
+        msg += "Free heap: ";       msg += String((int)freeHeap);      msg += " bytes\n";
+        msg += "Reboot reason: ";   msg += rebootReason;               msg += "\n";
+        msg += "\n";
+        msg += "--- SMS Stats ---\n";
+        msg += "Forwarded: ";       msg += String(smsHandler.smsForwarded());      msg += "\n";
+        msg += "Failed: ";          msg += String(smsHandler.smsFailed());         msg += "\n";
+        msg += "Consecutive failures: ";
+        msg += String(smsHandler.consecutiveFailures());               msg += "\n";
+        msg += "Concat groups in flight: ";
+        msg += String((int)smsHandler.concatKeyCount());               msg += "\n";
+        msg += "\n";
+        msg += "--- Telegram ---\n";
+        msg += "Reply-target slots: ";
+        msg += String((int)replyTargets.occupiedSlots());
+        msg += "/";
+        msg += String((int)ReplyTargetMap::kSlotCount);                msg += "\n";
+        if (telegramPoller)
+        {
+            msg += "Poll attempts: ";
+            msg += String(telegramPoller->pollAttempts());             msg += "\n";
+            msg += "Last update_id: ";
+            msg += String((long)telegramPoller->lastUpdateId());       msg += "\n";
+        }
+        msg += "\n";
+        msg += "--- Debug Log ---\n";
+        msg += "Entries: ";
+        msg += String((int)smsDebugLog.count());
+        msg += "/";
+        msg += String((int)SmsDebugLog::kMaxEntries);                  msg += "\n";
+        return msg;
+    };
+
+    telegramPoller = new TelegramPoller(
+        realBot, smsSender, replyTargets, realPersist,
+        []() -> uint32_t { return (uint32_t)millis(); },
+        [](int64_t fromId) -> bool {
+            // RFC-0014: scan the compile-time allow list.
+            // RFC-0019: also scan the runtime NVS list.
+            // Both arrays are file-scope statics with process lifetime —
+            // safe to read without explicit capture syntax.
+            if (fromId == 0) return false;
+            for (int i = 0; i < allowedIdCount; i++)
+            {
+                if (fromId == allowedIds[i]) return true;
+            }
+            for (int i = 0; i < runtimeIdCount; i++)
+            {
+                if (fromId == runtimeIds[i]) return true;
+            }
+            return false;
+        },
+        statusFn,
+        // RFC-0019: ListMutatorFn — handles /adduser, /removeuser, /listusers.
+        // Admin check (callerId in compile-time list) is performed here,
+        // not in TelegramPoller. All state is file-scope statics with
+        // process lifetime.
+        [](int64_t callerId, const String &cmd, int64_t targetId, String &reason) -> bool {
+            bool isAdmin = false;
+            for (int i = 0; i < allowedIdCount; i++)
+            {
+                if (callerId == allowedIds[i]) { isAdmin = true; break; }
+            }
+
+            if (cmd == "list")
+            {
+                // /listusers — any authorized user (auth already passed upstream).
+                String out = "Compile-time users (" + String(allowedIdCount) + "):\n";
+                for (int i = 0; i < allowedIdCount; i++)
+                {
+                    out += "  " + String((long long)allowedIds[i]);
+                    if (i == 0) out += " [admin]";
+                    out += "\n";
+                }
+                out += "Runtime users (" + String(runtimeIdCount) + "):\n";
+                for (int i = 0; i < runtimeIdCount; i++)
+                {
+                    out += "  " + String((long long)runtimeIds[i]) + "\n";
+                }
+                out += "Total: " + String(allowedIdCount + runtimeIdCount);
+                reason = out;
+                return true;
+            }
+
+            if (!isAdmin)
+            {
+                reason = String("Permission denied. Only compile-time users may manage the user list.");
+                return false;
+            }
+
+            if (cmd == "add")
+            {
+                for (int i = 0; i < allowedIdCount; i++)
+                {
+                    if (targetId == allowedIds[i])
+                    {
+                        reason = String("User is already a compile-time admin user.");
+                        return false;
+                    }
+                }
+                for (int i = 0; i < runtimeIdCount; i++)
+                {
+                    if (targetId == runtimeIds[i])
+                    {
+                        reason = String("User is already in the runtime list.");
+                        return false;
+                    }
+                }
+                if (runtimeIdCount >= 10)
+                {
+                    reason = String("Runtime user list is full (maximum 10). Remove a user first.");
+                    return false;
+                }
+                runtimeIds[runtimeIdCount++] = targetId;
+            }
+            else if (cmd == "remove")
+            {
+                for (int i = 0; i < allowedIdCount; i++)
+                {
+                    if (targetId == allowedIds[i])
+                    {
+                        reason = String("Cannot remove a compile-time user. Edit secrets.h and reflash.");
+                        return false;
+                    }
+                }
+                int idx = -1;
+                for (int i = 0; i < runtimeIdCount; i++)
+                {
+                    if (runtimeIds[i] == targetId) { idx = i; break; }
+                }
+                if (idx < 0)
+                {
+                    reason = String("User ") + String((long long)targetId) + " not in the runtime list.";
+                    return false;
+                }
+                for (int i = idx; i < runtimeIdCount - 1; i++)
+                {
+                    runtimeIds[i] = runtimeIds[i + 1];
+                }
+                runtimeIdCount--;
+            }
+
+            // Persist to NVS.
+            struct { int32_t count; int64_t ids[10]; } blob{};
+            blob.count = runtimeIdCount;
+            memcpy(blob.ids, runtimeIds, (size_t)runtimeIdCount * sizeof(int64_t));
+            realPersist.saveBlob("ulist", &blob, sizeof(blob));
+            return true;
+        },
+        // RFC-0021: SmsBlockMutatorFn — handles /block, /unblock, /blocklist.
+        // Admin check (callerId in compile-time list) performed here.
+        // All state is file-scope statics with process lifetime.
+        [](int64_t callerId, const String &cmd, const String &number, String &reason) -> bool {
+            bool isAdmin = false;
+            for (int i = 0; i < allowedIdCount; i++)
+                if (callerId == allowedIds[i]) { isAdmin = true; break; }
+
+            // /blocklist — any authorized user.
+            if (cmd == "list")
+            {
+                String reply;
+                reply += "Compile-time block list (" + String(sBlockListCount) + "):\n";
+                for (int i = 0; i < sBlockListCount; i++)
+                    reply += String("  ") + sBlockList[i] + "\n";
+                reply += "\nRuntime block list (" + String(sRuntimeBlockListCount) + "):\n";
+                for (int i = 0; i < sRuntimeBlockListCount; i++)
+                    reply += String("  ") + sRuntimeBlockList[i] + "\n";
+                if (sRuntimeBlockListCount == 0 && sBlockListCount == 0)
+                    reply = "(No numbers blocked)";
+                reason = reply;
+                return true;
+            }
+
+            // Mutating commands require admin.
+            if (!isAdmin)
+            {
+                reason = String("Admin access required.");
+                return false;
+            }
+
+            if (cmd == "block")
+            {
+                if (isBlocked(number.c_str(), sBlockList, sBlockListCount))
+                {
+                    reason = number + " is already in the compile-time block list.";
+                    return false;
+                }
+                if (isBlocked(number.c_str(), sRuntimeBlockList, sRuntimeBlockListCount))
+                {
+                    reason = number + " is already in the runtime block list.";
+                    return false;
+                }
+                if (sRuntimeBlockListCount >= kSmsBlockListMaxEntries)
+                {
+                    reason = String("Runtime block list full (max ") +
+                             String(kSmsBlockListMaxEntries) +
+                             " entries). Use /unblock to remove one first.";
+                    return false;
+                }
+                if ((int)number.length() > kSmsBlockListMaxNumberLen)
+                {
+                    reason = String("Number too long (max ") +
+                             String(kSmsBlockListMaxNumberLen) + " characters).";
+                    return false;
+                }
+                memcpy(sRuntimeBlockList[sRuntimeBlockListCount],
+                       number.c_str(), number.length() + 1);
+                sRuntimeBlockListCount++;
+                smsHandler.setRuntimeBlockList(sRuntimeBlockList, sRuntimeBlockListCount);
+                struct { int32_t count; char numbers[20][21]; } blob{};
+                blob.count = sRuntimeBlockListCount;
+                memcpy(blob.numbers, sRuntimeBlockList,
+                       (size_t)sRuntimeBlockListCount * (kSmsBlockListMaxNumberLen + 1));
+                realPersist.saveBlob("smsblist", &blob, sizeof(blob));
+                Serial.printf("SMS block list: added %s (%d runtime entries)\n",
+                              number.c_str(), sRuntimeBlockListCount);
+                return true;
+            }
+
+            if (cmd == "unblock")
+            {
+                int found = -1;
+                for (int i = 0; i < sRuntimeBlockListCount; i++)
+                    if (strcmp(sRuntimeBlockList[i], number.c_str()) == 0) { found = i; break; }
+                if (found < 0)
+                {
+                    if (isBlocked(number.c_str(), sBlockList, sBlockListCount))
+                        reason = number + " is in the compile-time list and cannot be removed at runtime.";
+                    else
+                        reason = number + " is not in the runtime block list.";
+                    return false;
+                }
+                for (int i = found; i < sRuntimeBlockListCount - 1; i++)
+                    memcpy(sRuntimeBlockList[i], sRuntimeBlockList[i + 1],
+                           kSmsBlockListMaxNumberLen + 1);
+                memset(sRuntimeBlockList[sRuntimeBlockListCount - 1], 0,
+                       kSmsBlockListMaxNumberLen + 1);
+                sRuntimeBlockListCount--;
+                smsHandler.setRuntimeBlockList(sRuntimeBlockList, sRuntimeBlockListCount);
+                struct { int32_t count; char numbers[20][21]; } blob{};
+                blob.count = sRuntimeBlockListCount;
+                memcpy(blob.numbers, sRuntimeBlockList,
+                       (size_t)sRuntimeBlockListCount * (kSmsBlockListMaxNumberLen + 1));
+                realPersist.saveBlob("smsblist", &blob, sizeof(blob));
+                Serial.printf("SMS block list: removed %s (%d runtime entries)\n",
+                              number.c_str(), sRuntimeBlockListCount);
+                return true;
+            }
+
+            reason = String("Unknown command.");
+            return false;
+        });
 
     // RFC-0003 persistence: open NVS, hydrate the reply-target ring
     // buffer and the last-seen update_id watermark, and wire the
@@ -307,21 +845,97 @@ void setup()
     }
     else
     {
+        // RFC-0019: Load runtime user list from NVS. Must happen before the
+        // first telegramPoller->tick() so the AuthFn lambda sees the
+        // persisted list. The lambda captures runtimeIds/runtimeIdCount by
+        // implicit reference (file-scope statics), so values written here are
+        // visible on the first tick().
+        {
+            struct { int32_t count; int64_t ids[10]; } blob{};
+            size_t got = realPersist.loadBlob("ulist", &blob, sizeof(blob));
+            if (got >= sizeof(int32_t) && blob.count >= 0 && blob.count <= 10)
+            {
+                runtimeIdCount = blob.count;
+                memcpy(runtimeIds, blob.ids, (size_t)blob.count * sizeof(int64_t));
+            }
+            Serial.printf("Runtime user list: %d entr%s\n",
+                          runtimeIdCount, runtimeIdCount == 1 ? "y" : "ies");
+        }
+
+        // RFC-0021: Load runtime SMS block list from NVS.
+        {
+            struct { int32_t count; char numbers[20][21]; } blob{};
+            size_t got = realPersist.loadBlob("smsblist", &blob, sizeof(blob));
+            if (got >= sizeof(int32_t) && blob.count >= 0 && blob.count <= 20)
+            {
+                sRuntimeBlockListCount = blob.count;
+                memcpy(sRuntimeBlockList, blob.numbers,
+                       (size_t)blob.count * (kSmsBlockListMaxNumberLen + 1));
+            }
+            Serial.printf("Runtime SMS block list: %d entr%s\n",
+                          sRuntimeBlockListCount,
+                          sRuntimeBlockListCount == 1 ? "y" : "ies");
+        }
+
+        // RFC-0020: Restore the last 10 SMS debug log entries from NVS so
+        // /debug shows history from before the reboot, then register the
+        // sink so every subsequent push() persists to NVS.
+        smsDebugLog.loadFrom(realPersist);
+        smsDebugLog.setSink(realPersist);
+
         replyTargets.load();
         smsHandler.setReplyTargetMap(&replyTargets);
-        telegramPoller.begin();
+        smsHandler.setDebugLog(&smsDebugLog);
+        telegramPoller->setDebugLog(&smsDebugLog);
+        telegramPoller->begin();
         Serial.print("TG->SMS poller online; reply-target slots in use: ");
         Serial.println((unsigned long)replyTargets.occupiedSlots());
     }
+
+    // RFC-0018: Parse and apply the compile-time SMS sender block list.
+#ifdef SMS_BLOCK_LIST
+    sBlockListCount = parseBlockList(SMS_BLOCK_LIST, sBlockList, kSmsBlockListMaxEntries);
+    Serial.print("SMS block list: ");
+    Serial.print(sBlockListCount);
+    Serial.println(" entries");
+    if (sBlockListCount == kSmsBlockListMaxEntries)
+        Serial.println("[WARN] Block list truncated at max entries — check SMS_BLOCK_LIST");
+    smsHandler.setBlockList(sBlockList, sBlockListCount);
+#endif
+
+    // RFC-0021: Apply runtime SMS block list (loaded from NVS above, or empty on first boot).
+    smsHandler.setRuntimeBlockList(sRuntimeBlockList, sRuntimeBlockListCount);
 
     realBot.sendMessage("🚀 Modem SMS to Telegram Bridge is now online!");
 
     // Drain anything that arrived while we were offline.
     smsHandler.sweepExistingSms();
+
+    // Hardware watchdog (RFC-0015). Initialized at the end of setup() so
+    // unbounded startup sections (modem probe, network registration, NTP)
+    // are not covered. loop() resets it at the top of every iteration.
+    // IDF v5+ uses esp_task_wdt_reconfigure(); IDF v4 uses esp_task_wdt_init().
+    {
+#if ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)
+        esp_task_wdt_config_t wdtCfg = {
+            .timeout_ms = 120000,
+            .idle_core_mask = 0,
+            .trigger_panic = false, // soft reset → ESP_RST_WDT → "/status" shows "watchdog"
+        };
+        esp_task_wdt_reconfigure(&wdtCfg);
+#else
+        // IDF v4: timeout in seconds, panic flag
+        esp_task_wdt_init(120, false);  // 120s, no panic
+#endif
+        esp_task_wdt_add(NULL);
+        Serial.println("Hardware watchdog armed (120s timeout).");
+    }
 }
 
 void loop()
 {
+    esp_task_wdt_reset();  // RFC-0015: keep the hardware watchdog alive
+
     // NOTE: do NOT call modem.maintain() here. On TinyGSM/A76XX it internally
     // calls waitResponse() which eats unknown URCs (+CMTI included) and only
     // prints "### Unhandled: ..." in debug mode — meaning our +CMTI would be
@@ -329,12 +943,35 @@ void loop()
     // We drain the serial buffer ourselves and dispatch the URCs we care about.
 
     // Consume unsolicited lines and dispatch to the SMS / Call handlers.
+    // +CDS state machine (RFC-0011): +CDS is a two-line URC.
+    // The first line "+CDS: <length>" sets a flag; the very next line
+    // (the PDU hex) is then routed to deliveryReportHandler.
+#ifdef ENABLE_DELIVERY_REPORTS
+    static bool waitingCdsPdu = false;
+#endif
     while (SerialAT.available())
     {
         String line = SerialAT.readStringUntil('\n');
         line.trim();
         if (line.length() == 0)
             continue;
+
+#ifdef ENABLE_DELIVERY_REPORTS
+        // Second line of a +CDS URC: this is the PDU hex.
+        if (waitingCdsPdu)
+        {
+            waitingCdsPdu = false;
+            deliveryReportHandler.onStatusReport(line);
+            continue;
+        }
+
+        // First line of a +CDS URC: "+CDS: <length>".
+        if (line.startsWith("+CDS:"))
+        {
+            waitingCdsPdu = true;
+            continue; // PDU arrives on the next line
+        }
+#endif
 
         if (line.startsWith("+CMTI:"))
         {
@@ -358,22 +995,182 @@ void loop()
     // Cheap: constant-time and does no AT traffic unless a deadline fires.
     callHandler.tick();
 
+    // Refresh cached modem CSQ + registration status every 30 s.
+    // This block runs AFTER the URC drain and BEFORE the TelegramPoller
+    // tick so the AT commands here cannot race with URC lines being read
+    // from SerialAT. The StatusFn lambda (called from inside the poller)
+    // reads these cached values instead of calling the modem directly,
+    // avoiding the URC-eating hazard described in CLAUDE.md.
+    static unsigned long lastStatusRefreshMs = 0;
+    if (millis() - lastStatusRefreshMs > 30000UL)
+    {
+        lastStatusRefreshMs = millis();
+        cachedCsq = modem.getSignalQuality();
+        cachedRegStatus = modem.getRegistrationStatus();
+#ifdef ENABLE_DELIVERY_REPORTS
+        // Evict delivery report map entries older than 1 hour (RFC-0011).
+        deliveryReportMap.evictExpired((uint32_t)millis());
+#endif
+    }
+
     // Drive the TG->SMS poller (RFC-0003). Rate-limited internally to
     // kPollIntervalMs; uses short polling so it doesn't block the URC
     // drain above. See telegram_poller.h "Implementation note" for
     // why we don't long-poll in the first cut.
-    telegramPoller.tick();
+    if (telegramPoller)
+        telegramPoller->tick();
 
-    // Periodically verify WiFi is still up; ESP will auto-reconnect on its own
-    // but if it can't, we'd rather reboot than loop forever.
-    static unsigned long lastWifiCheck = 0;
-    if (millis() - lastWifiCheck > 30000)
+    // Drain one pending outbound SMS per loop iteration (RFC-0012).
+    // Placed after the poller tick so AT commands are not issued while
+    // the poller HTTP exchange is in flight. One send per loop keeps
+    // the loop non-blocking from the perspective of URC processing.
+    // NOTE: multi-PDU sends inside send() are atomic from the queue's
+    // perspective — a +CMTI URC that arrives mid-PDU-sequence will sit
+    // in the SerialAT RX buffer and be serviced on the next loop() call.
+    smsSender.drainQueue((uint32_t)millis());
+
+    // RFC-0017: Periodic heartbeat. Reuses statusFn output — same content as
+    // the /status command. Fires once per HEARTBEAT_INTERVAL_SEC starting after
+    // the first full interval post-boot (the boot banner already covers
+    // "just started"). Uses unsigned subtraction so millis() wraparound at
+    // ~49.7 days is handled correctly.
+    // lastHeartbeatMs is advanced regardless of send result: a missed heartbeat
+    // during a connectivity failure is itself a signal; no retry queue is needed.
+#if HEARTBEAT_INTERVAL_SEC != 0
     {
-        lastWifiCheck = millis();
-        if (WiFi.status() != WL_CONNECTED)
+        uint32_t nowMs = (uint32_t)millis();
+        if ((uint32_t)(nowMs - lastHeartbeatMs) >= (uint32_t)HEARTBEAT_INTERVAL_SEC * 1000u)
         {
-            Serial.println("WiFi dropped, attempting reconnect...");
-            WiFi.reconnect();
+            lastHeartbeatMs = nowMs;  // advance regardless of send result
+            if (statusFn)
+            {
+                esp_task_wdt_reset();  // heartbeat sendMessage can block; pet WDT first
+                String msg = String("⏱ Heartbeat\n") + statusFn();
+                if (!realBot.sendMessage(msg))
+                    Serial.println("Heartbeat: sendMessage failed (connectivity issue)");
+            }
+        }
+    }
+#endif
+
+    // Periodically verify the active transport is still viable.
+    // - If WiFi was primary and drops: try WiFi reconnect. If it's still down
+    //   on the second consecutive check (~60 s later), fall over to cellular
+    //   (RFC-0004). We use a flag rather than a blocking delay so the URC
+    //   drain keeps running uninterrupted.
+    // - If cellular was primary: check whether WiFi has recovered; if so,
+    //   switch back to the verified (CA-bundle) path.
+    static unsigned long lastTransportCheck = 0;
+    static bool wifiDownLastCheck = false;
+    if (millis() - lastTransportCheck > 30000)
+    {
+        lastTransportCheck = millis();
+        if (activeTransport == ActiveTransport::kWiFi)
+        {
+            if (WiFi.status() != WL_CONNECTED)
+            {
+                Serial.println("WiFi dropped, attempting reconnect...");
+                WiFi.reconnect();
+                if (wifiDownLastCheck)
+                {
+                    // Two consecutive checks with WiFi down — fall over.
+#if defined(CELLULAR_APN) && defined(TINY_GSM_MODEM_A76XXSSL)
+                    Serial.println("WiFi still down; falling over to cellular transport...");
+                    if (modem.gprsConnect(CELLULAR_APN))
+                    {
+                        if (setupCellularClient(realBot))
+                        {
+                            activeTransport = ActiveTransport::kCellular;
+                            wifiDownLastCheck = false;
+                            Serial.println("Switched to cellular transport.");
+                        }
+                    }
+#endif
+                }
+                else
+                {
+                    wifiDownLastCheck = true;
+                }
+            }
+            else
+            {
+                wifiDownLastCheck = false;
+            }
+        }
+        else if (activeTransport == ActiveTransport::kCellular)
+        {
+            // Non-blocking WiFi recovery check: on the first tick we kick off
+            // WiFi.begin(); on the second tick (30s later) we check if it
+            // connected. This avoids blocking the URC drain for up to 15s as
+            // the old connectToWiFi() would. See rfc/0004-cellular-fallback.md
+            // §Code Review (URC-eating blocker).
+            static bool wifiBeginPending = false;
+            if (strlen(ssid) > 0)
+            {
+                if (!wifiBeginPending)
+                {
+                    WiFi.mode(WIFI_STA);
+                    WiFi.begin(ssid, password);
+                    wifiBeginPending = true;
+                    Serial.println("WiFi recovery: begin() issued, checking next tick.");
+                }
+                else
+                {
+                    wifiBeginPending = false; // reset for next cycle regardless
+                    if (WiFi.status() == WL_CONNECTED)
+                    {
+                        Serial.println("WiFi recovered; switching from cellular to WiFi transport.");
+                        syncTime();
+                        if (setupTelegramClient(realBot))
+                        {
+                            activeTransport = ActiveTransport::kWiFi;
+                            Serial.println("Transport switched to WiFi.");
+                        }
+                    }
+                    else
+                    {
+                        Serial.println("WiFi recovery check: still not connected.");
+                    }
+                }
+            }
+        }
+        else if (activeTransport == ActiveTransport::kNone)
+        {
+            // No transport yet — retry both paths on each check.
+            // Non-blocking WiFi attempt: issue begin() one tick, check next.
+            static bool wifiBeginPendingNone = false;
+            if (strlen(ssid) > 0 && !wifiBeginPendingNone)
+            {
+                WiFi.mode(WIFI_STA);
+                WiFi.begin(ssid, password);
+                wifiBeginPendingNone = true;
+            }
+            else if (wifiBeginPendingNone)
+            {
+                wifiBeginPendingNone = false;
+                if (WiFi.status() == WL_CONNECTED)
+                {
+                    syncTime();
+                    if (setupTelegramClient(realBot))
+                    {
+                        activeTransport = ActiveTransport::kWiFi;
+                        Serial.println("WiFi transport established (deferred).");
+                    }
+                }
+            }
+#if defined(CELLULAR_APN) && defined(TINY_GSM_MODEM_A76XXSSL)
+            if (activeTransport == ActiveTransport::kNone)
+            {
+                if (modem.gprsConnect(CELLULAR_APN))
+                {
+                    if (setupCellularClient(realBot))
+                    {
+                        activeTransport = ActiveTransport::kCellular;
+                        Serial.println("Cellular transport established (deferred).");
+                    }
+                }
+            }
+#endif
         }
     }
 

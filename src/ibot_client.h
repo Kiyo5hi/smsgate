@@ -17,7 +17,8 @@
 struct TelegramUpdate
 {
     int32_t updateId = 0;          // Telegram's monotonic update id
-    int64_t fromId = 0;            // message.from.id (or message.chat.id fallback)
+    int64_t fromId = 0;            // message.from.id (or message.chat.id fallback); used for auth gate
+    int64_t chatId = 0;            // message.chat.id; used as reply target (group or DM)
     int32_t replyToMessageId = 0;  // message.reply_to_message.message_id; 0 if absent
     String text;                   // message.text; empty if absent
     bool valid = false;            // true iff the update parsed cleanly enough to act on
@@ -47,6 +48,13 @@ public:
     // Implementations that don't need the id (CallHandler, the boot
     // banner) can keep using the bool sendMessage(...) overload.
     virtual int32_t sendMessageReturningId(const String &text) = 0;
+
+    // Send a plain-text message to an arbitrary chat ID. Returns true iff
+    // the message was accepted end-to-end (HTTP 200 and "ok":true). Use
+    // this for per-requester command replies where the target chat differs
+    // from the admin chat. SMS forwards should still use sendMessage() /
+    // sendMessageReturningId(), which always target adminChatId_.
+    virtual bool sendMessageTo(int64_t chatId, const String &text) = 0;
 
     // Long-poll the Telegram getUpdates endpoint. Sends `offset =
     // sinceUpdateId + 1` if sinceUpdateId > 0, otherwise no offset.

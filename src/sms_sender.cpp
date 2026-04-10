@@ -1,29 +1,20 @@
 #include "sms_sender.h"
+#include "sms_codec.h"
+
+#ifdef ESP_PLATFORM
+#include <esp_task_wdt.h>
+#endif
+
+// Out-of-line definition required for constexpr array with external linkage
+// on older C++ standards (pre-C++17 inline variables).
+constexpr uint32_t SmsSender::kBackoffMs[5];
 
 SmsSender::SmsSender(IModem &modem)
-    : modem_(modem)
+    : modem_(modem), queue_{}
 {
-}
-
-bool SmsSender::isAscii(const String &s)
-{
-    for (unsigned int i = 0; i < s.length(); ++i)
-    {
-        unsigned char c = (unsigned char)s[i];
-        if (c == 0 || c > 0x7F)
-        {
-            return false;
-        }
-    }
-    return true;
-}
-
-void SmsSender::restorePduMode()
-{
-    // Re-enter PDU mode after TinyGSM's sendSMS flipped us to text.
-    // We don't actually care about the response — best-effort.
-    modem_.sendAT("+CMGF=0");
-    modem_.waitResponseOk(2000UL);
+    // Mark all queue slots as unoccupied.
+    for (auto &e : queue_)
+        e.occupied = false;
 }
 
 bool SmsSender::send(const String &number, const String &body)
@@ -36,40 +27,162 @@ bool SmsSender::send(const String &number, const String &body)
         return false;
     }
 
-    if (!isAscii(body))
+    if (body.length() == 0)
     {
-        lastError_ = "non-ASCII SMS replies not yet supported - needs RFC-0002 Unicode TX path";
+        lastError_ = "SMS body is empty";
         return false;
     }
 
-    // The body must also fit in a single non-concat SMS for the first
-    // cut. GSM-7 supports 160 chars per single PDU; TinyGSM's
-    // sendSMS happily concatenates beyond that for some modems but
-    // we don't currently rely on it. Hard-cap at 160.
-    if (body.length() > 160)
+    // Build the SMS-SUBMIT PDU(s). Auto-selects GSM-7 (160 char single-
+    // part / 153 char per concat part) or UCS-2 (70 / 67 chars) based
+    // on body content.  Splits automatically into up to 10 concat parts.
+    // Request a delivery status report (TP-SRR bit) when the
+    // DeliveryReportMap is wired in — that's the signal that
+    // -DENABLE_DELIVERY_REPORTS is active in this build.
+    bool requestSR = (deliveryReportMap_ != nullptr);
+    auto pdus = sms_codec::buildSmsSubmitPduMulti(number, body, 10, requestSR);
+    if (pdus.empty())
     {
-        lastError_ = "SMS reply too long (max 160 ASCII chars in first cut)";
+        bool gsm7 = sms_codec::isGsm7Compatible(body);
+        if (gsm7)
+            lastError_ = "SMS too long (max ~1530 chars for GSM-7)";
+        else
+            lastError_ = "SMS too long (max ~670 chars for Unicode)";
         return false;
     }
 
-    Serial.print("SmsSender: sending to ");
-    Serial.print(number);
-    Serial.print(" len=");
-    Serial.println(body.length());
-
-    bool ok = modem_.sendSMS(number, body);
-
-    // Restore PDU mode regardless of success/failure — leaving the
-    // modem in text mode would silently break the receive path.
-    restorePduMode();
-
-    if (!ok)
+    for (size_t i = 0; i < pdus.size(); ++i)
     {
-        lastError_ = "modem rejected the outbound SMS";
-        Serial.println("SmsSender: send FAILED");
-        return false;
+#ifdef ESP_PLATFORM
+        esp_task_wdt_reset();  // RFC-0015: each part can block up to 70s
+#endif
+        Serial.print("SmsSender: sending part ");
+        Serial.print((int)(i + 1));
+        Serial.print("/");
+        Serial.print((int)pdus.size());
+        Serial.print(" to ");
+        Serial.print(number);
+        Serial.print(" tpduLen=");
+        Serial.print(pdus[i].tpduLen);
+        Serial.print(" hexLen=");
+        Serial.println(pdus[i].hex.length());
+
+        int mr = modem_.sendPduSms(pdus[i].hex, pdus[i].tpduLen);
+        if (mr < 0)
+        {
+            lastError_ = "modem rejected part " + String((int)(i + 1))
+                       + " of " + String((int)pdus.size());
+            Serial.println("SmsSender: send FAILED");
+            return false;
+        }
+
+        // Store MR for delivery report correlation (RFC-0011).
+        // Only track single-part sends — multi-part tracking is deferred.
+        if (deliveryReportMap_ != nullptr)
+        {
+            if (pdus.size() == 1)
+            {
+                deliveryReportMap_->put(
+                    (uint8_t)mr, number, (uint32_t)millis());
+            }
+            else if (i == 0)
+            {
+                // Log once at the start of a multi-part send.
+                Serial.println(
+                    "SmsSender: delivery report tracking skipped for multipart SMS");
+            }
+        }
     }
 
     Serial.println("SmsSender: send OK");
     return true;
+}
+
+// ---- RFC-0012: outbound queue with exponential-backoff retry ----
+
+bool SmsSender::enqueue(const String &phone, const String &body,
+                        std::function<void()> onFinalFailure)
+{
+    // Find a free slot.
+    for (auto &e : queue_)
+    {
+        if (!e.occupied)
+        {
+            e.phone          = phone;
+            e.body           = body;
+            e.attempts       = 0;
+            e.nextRetryMs    = 0; // first attempt is immediate
+            e.onFinalFailure = onFinalFailure;
+            e.occupied       = true;
+            Serial.print("SmsSender: enqueued SMS to ");
+            Serial.println(phone);
+            return true;
+        }
+    }
+
+    // Queue is full — reject the new entry (do not evict existing ones).
+    Serial.println("SmsSender: outbound queue full, dropping new message");
+    if (onFinalFailure)
+        onFinalFailure();
+    return false;
+}
+
+void SmsSender::drainQueue(uint32_t nowMs)
+{
+    // Attempt at most ONE send per call so the loop stays non-blocking.
+    for (auto &e : queue_)
+    {
+        if (!e.occupied)
+            continue;
+        if (nowMs < e.nextRetryMs)
+            continue;
+
+        // This entry is due — attempt to send it.
+        bool ok = send(e.phone, e.body);
+        if (ok)
+        {
+            Serial.print("SmsSender: queue entry delivered to ");
+            Serial.println(e.phone);
+            e.occupied = false;
+        }
+        else
+        {
+            e.attempts++;
+            Serial.print("SmsSender: queue entry failed (attempt ");
+            Serial.print(e.attempts);
+            Serial.print("/");
+            Serial.print(kMaxAttempts);
+            Serial.print(") to ");
+            Serial.println(e.phone);
+
+            if (e.attempts >= kMaxAttempts)
+            {
+                // All retries exhausted — drop the entry.
+                Serial.print("SmsSender: queue entry permanently failed to ");
+                Serial.println(e.phone);
+                auto cb = e.onFinalFailure; // copy before clearing slot
+                e.occupied = false;
+                if (cb)
+                    cb();
+            }
+            else
+            {
+                // Schedule next retry with backoff.
+                // kBackoffMs is indexed by attempt count (1..4 -> 2s,4s,8s,16s).
+                int idx = (e.attempts < 5) ? e.attempts : 4;
+                e.nextRetryMs = nowMs + kBackoffMs[idx];
+            }
+        }
+        // Only one send attempt per drainQueue call.
+        return;
+    }
+}
+
+int SmsSender::queueSize() const
+{
+    int count = 0;
+    for (const auto &e : queue_)
+        if (e.occupied)
+            ++count;
+    return count;
 }

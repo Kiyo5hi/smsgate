@@ -98,8 +98,12 @@
     #define MODEM_GPS_ENABLE_GPIO               (-1)
     #define MODEM_GPS_ENABLE_LEVEL              (-1)
 
-    #ifndef TINY_GSM_MODEM_A7670
-        #define TINY_GSM_MODEM_A7670
+    // Use the SSL-capable A76xx modem class (TINY_GSM_MODEM_A76XXSSL) instead
+    // of the plain A7670 class. This gives GsmClientSecureA76xxSSL for the
+    // cellular fallback path (RFC-0004). Trade-off: MUX count drops from 10
+    // to 2, which is fine for 1 SSL socket + 0 spare.
+    #ifndef TINY_GSM_MODEM_A76XXSSL
+        #define TINY_GSM_MODEM_A76XXSSL
     #endif
 
     // It is only available in V1.4 version. In other versions, IO36 is not connected.
@@ -107,7 +111,7 @@
 
 
     //! The following pins are for SimShield and need to be used with SimShield
-    //! 以下引脚针对SimShield,需要搭配SimShield 
+    //! 以下引脚针对SimShield,需要搭配SimShield
     #define SIMSHIELD_MOSI                      (23)
     #define SIMSHIELD_MISO                      (19)
     #define SIMSHIELD_SCK                       (18)
@@ -143,8 +147,8 @@
     #define MODEM_GPS_ENABLE_LEVEL              (-1)
 
 
-    #ifndef TINY_GSM_MODEM_A7670
-        #define TINY_GSM_MODEM_A7670
+    #ifndef TINY_GSM_MODEM_A76XXSSL
+        #define TINY_GSM_MODEM_A76XXSSL
     #endif
 
     #define PRODUCT_MODEL_NAME                  "LilyGo-T-Call A7670 V1.0"
@@ -168,8 +172,8 @@
     #define MODEM_GPS_ENABLE_GPIO               (-1)
     #define MODEM_GPS_ENABLE_LEVEL              (-1)
 
-    #ifndef TINY_GSM_MODEM_A7670
-        #define TINY_GSM_MODEM_A7670
+    #ifndef TINY_GSM_MODEM_A76XXSSL
+        #define TINY_GSM_MODEM_A76XXSSL
     #endif
 
     #define PRODUCT_MODEL_NAME                  "LilyGo-T-Call A7670 V1.1"
@@ -563,8 +567,8 @@
 
     #ifdef LILYGO_A7670X_S3_STAN
         // Modem model:A7670G/A7670E/A7670SA
-    #ifndef TINY_GSM_MODEM_A7670
-        #define TINY_GSM_MODEM_A7670
+    #ifndef TINY_GSM_MODEM_A76XXSSL
+        #define TINY_GSM_MODEM_A76XXSSL
     #endif
         // GPS antenna power control GPIO, this GPIO is the modem GPIO
         #define MODEM_GPS_ENABLE_GPIO               (1)
@@ -668,8 +672,8 @@
 
 #elif defined(LILYGO_T_RELAY_S3_SIMSHIELD)
 
-    #ifndef TINY_GSM_MODEM_A7670
-        #define TINY_GSM_MODEM_A7670
+    #ifndef TINY_GSM_MODEM_A76XXSSL
+        #define TINY_GSM_MODEM_A76XXSSL
     #endif
 
     #define BOARD_PWRKEY_PIN                    46
@@ -685,8 +689,8 @@
 
     #define LILYGO_T_PCIE
 
-    #ifndef TINY_GSM_MODEM_A7670
-        #define TINY_GSM_MODEM_A7670
+    #ifndef TINY_GSM_MODEM_A76XXSSL
+        #define TINY_GSM_MODEM_A76XXSSL
     #endif
 
     // Modem GPIO 4 control gps enable
@@ -745,8 +749,8 @@
 
     #define LILYGO_T_ETH_ELITE
 
-    #ifndef TINY_GSM_MODEM_A7670
-        #define TINY_GSM_MODEM_A7670
+    #ifndef TINY_GSM_MODEM_A76XXSSL
+        #define TINY_GSM_MODEM_A76XXSSL
     #endif
 
 
@@ -835,7 +839,7 @@
 
 
 
-#if defined(TINY_GSM_MODEM_SIM7670G) || defined(TINY_GSM_MODEM_A7670) || defined(TINY_GSM_MODEM_A7608)
+#if defined(TINY_GSM_MODEM_SIM7670G) || defined(TINY_GSM_MODEM_A7670) || defined(TINY_GSM_MODEM_A76XXSSL) || defined(TINY_GSM_MODEM_A7608)
     #define MODEM_REG_SMS_ONLY
 #endif
 
@@ -843,7 +847,7 @@
 // #define LILYGO_T_A7608X_DC_S3
 
 // Power on/off sequence
-#if defined(TINY_GSM_MODEM_A7670)
+#if defined(TINY_GSM_MODEM_A7670) || defined(TINY_GSM_MODEM_A76XXSSL)
     #define MODEM_POWERON_PULSE_WIDTH_MS      (100)
     #define MODEM_POWEROFF_PULSE_WIDTH_MS     (3000)
 #elif defined(TINY_GSM_MODEM_SIM7670G)

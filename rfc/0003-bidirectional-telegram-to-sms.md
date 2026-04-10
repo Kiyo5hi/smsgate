@@ -161,8 +161,12 @@ first cut, document the rest as follow-ups":
 
 The other RFC bullets (ring buffer keyed by `message_id % 200` with
 both `{message_id, phone}` per slot, NVS persistence, fail-closed
-parsing, single-user allow-list reusing `TELEGRAM_CHAT_ID`, ASCII-only
-SMS body for the first cut) are implemented as written.
+parsing, single-user allow-list reusing `TELEGRAM_CHAT_ID`) are
+implemented as written. **Unicode SMS replies are now supported:**
+`SmsSender` builds an SMS-SUBMIT PDU via `sms_codec::buildSmsSubmitPdu`
+(auto-selects GSM-7 or UCS-2) and sends it via `IModem::sendPduSms`,
+staying in PDU mode without any text-mode flip. The original ASCII-only
+gate and `+CMGF=0` restoration have been removed.
 
 Module map of what landed:
 
@@ -173,16 +177,18 @@ Module map of what landed:
   serialized as a versioned blob via IPersist. The "stale slot"
   guard checks the stored message_id matches the lookup key before
   returning the phone.
-- `src/sms_sender.{h,cpp}` (+ `ISmsSender` interface) — wraps
-  `IModem::sendSMS` with the ASCII gate and the post-send
-  `+CMGF=0` PDU-mode restoration.
+- `src/sms_sender.{h,cpp}` (+ `ISmsSender` interface) — builds
+  SMS-SUBMIT PDUs and sends via `IModem::sendPduSms`. Auto-selects
+  GSM-7 (160 chars) or UCS-2 (70 chars) based on body content.
 - `src/telegram_poller.{h,cpp}` — the loop-driven poller. Calls
   `IBotClient::pollUpdates`, runs each update through the auth /
   reply-target / sms-sender pipeline, advances the watermark
   fail-closed, persists.
 - `src/ibot_client.h` — added `TelegramUpdate` struct and the
   `sendMessageReturningId` and `pollUpdates` methods.
-- `src/imodem.h` + `src/real_modem.h` — added `sendSMS(number, body)`.
+- `src/imodem.h` + `src/real_modem.h` — added `sendSMS(number, body)`
+  and `sendPduSms(pduHex, tpduLen)`. RealModem now takes `Stream&`
+  for raw serial writes during PDU submission.
 - `src/sms_handler.{h,cpp}` — added optional `setReplyTargetMap()`
   hook; the success path now writes the new Telegram message_id +
   SMS sender phone into the ring buffer.

@@ -58,6 +58,16 @@ public:
         prefs_.putBytes("rtm", buf, bufSize);
     }
 
+    size_t loadBlob(const char *key, void *buf, size_t bufSize) override
+    {
+        return prefs_.getBytes(key, buf, bufSize);
+    }
+
+    void saveBlob(const char *key, const void *buf, size_t bufSize) override
+    {
+        prefs_.putBytes(key, buf, bufSize);
+    }
+
 private:
     Preferences prefs_;
 };

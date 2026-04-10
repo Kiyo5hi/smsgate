@@ -1,73 +1,99 @@
 // Unit tests for src/sms_sender.{h,cpp}.
+//
+// SmsSender now builds SMS-SUBMIT PDU(s) via sms_codec and sends them
+// through IModem::sendPduSms. Tests verify:
+//   - ASCII body builds a GSM-7 PDU and calls sendPduSms (not sendSMS)
+//   - Unicode body builds a UCS-2 PDU
+//   - Modem failure propagates
+//   - Empty phone / body rejected
+//   - GSM-7 body > 10*153 chars rejected (maxParts cap)
+//   - UCS-2 body > 10*67 chars rejected (maxParts cap)
+//   - Exactly 160 GSM-7 chars: 1 part, no UDH
+//   - Exactly 70 UCS-2 chars: 1 part, no UDH
+//   - 161 GSM-7 chars: 2 parts with UDH
+//   - Partial failure: second part fails -> SmsSender returns false
 
 #include <unity.h>
 #include <Arduino.h>
 
 #include "sms_sender.h"
+#include "sms_codec.h"
 #include "fake_modem.h"
 
-void test_SmsSender_ascii_happy_path_restores_pdu_mode()
+void test_SmsSender_ascii_builds_gsm7_pdu()
 {
     FakeModem modem;
     SmsSender sender(modem);
-    // Queue OK for the +CMGF=0 we expect after the send.
-    modem.queueOkEmpty();
 
-    TEST_ASSERT_TRUE(sender.send(String("+8613800138000"), String("hello world")));
+    TEST_ASSERT_TRUE(sender.send(String("+8613800138000"), String("hello")));
 
-    // FakeModem records sendSMS calls separately from sendAT.
-    TEST_ASSERT_EQUAL(1, (int)modem.smsSendCalls().size());
-    TEST_ASSERT_EQUAL_STRING("+8613800138000", modem.smsSendCalls()[0].number.c_str());
-    TEST_ASSERT_EQUAL_STRING("hello world", modem.smsSendCalls()[0].text.c_str());
+    // Must use sendPduSms, NOT the old text-mode sendSMS.
+    TEST_ASSERT_EQUAL(0, (int)modem.smsSendCalls().size());
+    TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
 
-    // After the send, we expect a +CMGF=0 to restore PDU mode.
-    const auto &sent = modem.sentCommands();
-    TEST_ASSERT_EQUAL(1, (int)sent.size());
-    TEST_ASSERT_EQUAL_STRING("+CMGF=0", sent[0].c_str());
+    // Verify the PDU is plausible: starts with "00" (default SCA),
+    // then "01" (SMS-SUBMIT first octet), then "00" (TP-MR).
+    const String &hex = modem.pduSendCalls()[0].pduHex;
+    TEST_ASSERT_TRUE(hex.startsWith("000100"));
+
+    // No +CMGF=0 restoration needed (we never left PDU mode).
+    TEST_ASSERT_EQUAL(0, (int)modem.sentCommands().size());
 
     TEST_ASSERT_EQUAL(0, (int)sender.lastError().length());
 }
 
-void test_SmsSender_modem_failure_still_restores_pdu_mode()
+void test_SmsSender_unicode_builds_ucs2_pdu()
 {
     FakeModem modem;
     SmsSender sender(modem);
-    modem.setSmsSendDefault(false);
-    // Queue OK for the +CMGF=0 anyway.
-    modem.queueOkEmpty();
+
+    // "你好" in UTF-8 = 0xE4BDA0 0xE5A5BD
+    String body;
+    body += (char)(unsigned char)0xE4;
+    body += (char)(unsigned char)0xBD;
+    body += (char)(unsigned char)0xA0;
+    body += (char)(unsigned char)0xE5;
+    body += (char)(unsigned char)0xA5;
+    body += (char)(unsigned char)0xBD;
+
+    TEST_ASSERT_TRUE(sender.send(String("+8613800138000"), body));
+
+    TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
+
+    // The PDU should contain TP-DCS = 0x08 (UCS-2). Let's verify
+    // by decoding: SCA(1) + firstOctet(1) + MR(1) + DA(varies) + PID(1) + DCS.
+    // For +8613800138000: DA = 0D 91 68310080300F0 -> 8 bytes
+    // So DCS is at byte offset 1 + 1 + 1 + 8 + 1 = 12, hex offset 24.
+    const String &hex = modem.pduSendCalls()[0].pduHex;
+    // The DCS byte in the hex string: after SCA(00) + first(01) + MR(00)
+    // + DA(0D 91 ...). Phone "+8613800138000" has 13 digits -> 7 BCD bytes.
+    // DA = [0D] [91] [68 31 00 80 03 F0 00] wait, that's wrong...
+    // Actually: 13 digits, (13+1)/2 = 7 BCD bytes.
+    // DA total = 1 (len) + 1 (TOA) + 7 (BCD) = 9 bytes = 18 hex chars.
+    // Offset of TP-PID: 2 (SCA) + 2 (first) + 2 (MR) + 18 (DA) = 24
+    // Offset of TP-DCS: 24 + 2 = 26
+    String dcs = hex.substring(26, 28);
+    TEST_ASSERT_EQUAL_STRING("08", dcs.c_str());
+
+    // UDL should be 4 (two UCS-2 code units = 4 bytes)
+    String udl = hex.substring(28, 30);
+    TEST_ASSERT_EQUAL_STRING("04", udl.c_str());
+
+    // "你好" in UTF-16BE = 4F60 597D
+    String ud = hex.substring(30, 38);
+    TEST_ASSERT_EQUAL_STRING("4F60597D", ud.c_str());
+}
+
+void test_SmsSender_modem_failure_propagates()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1); // -1 = failure
 
     TEST_ASSERT_FALSE(sender.send(String("+8613800138000"), String("hello")));
 
-    // PDU mode restoration must run regardless.
-    TEST_ASSERT_EQUAL(1, (int)modem.sentCommands().size());
-    TEST_ASSERT_EQUAL_STRING("+CMGF=0", modem.sentCommands()[0].c_str());
-
-    TEST_ASSERT_TRUE(sender.lastError().length() > 0);
+    TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
     TEST_ASSERT_TRUE(sender.lastError().indexOf(String("modem rejected")) >= 0);
-}
-
-void test_SmsSender_non_ascii_body_bails_without_calling_modem()
-{
-    FakeModem modem;
-    SmsSender sender(modem);
-
-    // "你好" in UTF-8 = 0xE4 0xBD 0xA0 0xE5 0xA5 0xBD
-    String body;
-    body += (char)0xE4;
-    body += (char)0xBD;
-    body += (char)0xA0;
-    body += (char)0xE5;
-    body += (char)0xA5;
-    body += (char)0xBD;
-
-    TEST_ASSERT_FALSE(sender.send(String("+8613800138000"), body));
-
-    // No sendSMS call, no AT traffic.
-    TEST_ASSERT_EQUAL(0, (int)modem.smsSendCalls().size());
-    TEST_ASSERT_EQUAL(0, (int)modem.sentCommands().size());
-
-    TEST_ASSERT_TRUE(sender.lastError().indexOf(String("non-ASCII")) >= 0);
-    TEST_ASSERT_TRUE(sender.lastError().indexOf(String("RFC-0002")) >= 0);
 }
 
 void test_SmsSender_empty_phone_bails()
@@ -76,28 +102,299 @@ void test_SmsSender_empty_phone_bails()
     SmsSender sender(modem);
 
     TEST_ASSERT_FALSE(sender.send(String(""), String("hello")));
-    TEST_ASSERT_EQUAL(0, (int)modem.smsSendCalls().size());
+    TEST_ASSERT_EQUAL(0, (int)modem.pduSendCalls().size());
     TEST_ASSERT_TRUE(sender.lastError().indexOf(String("empty")) >= 0);
 }
 
-void test_SmsSender_too_long_body_bails()
+void test_SmsSender_empty_body_bails()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+
+    TEST_ASSERT_FALSE(sender.send(String("+8613800138000"), String("")));
+    TEST_ASSERT_EQUAL(0, (int)modem.pduSendCalls().size());
+    TEST_ASSERT_TRUE(sender.lastError().indexOf(String("empty")) >= 0);
+}
+
+void test_SmsSender_gsm7_too_long_bails()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+
+    // Build a body that exceeds 10 parts (10 * 153 = 1530 septets).
+    // 1531 'x' characters exceeds the maxParts=10 cap.
+    String body;
+    for (int i = 0; i < 1531; ++i)
+        body += 'x';
+    TEST_ASSERT_FALSE(sender.send(String("+8613800138000"), body));
+    TEST_ASSERT_EQUAL(0, (int)modem.pduSendCalls().size());
+    TEST_ASSERT_TRUE(sender.lastError().indexOf(String("too long")) >= 0);
+    TEST_ASSERT_TRUE(sender.lastError().indexOf(String("1530")) >= 0);
+}
+
+void test_SmsSender_ucs2_too_long_bails()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+
+    // Build a string exceeding 10 UCS-2 parts (10 * 67 = 670 chars).
+    // 671 Chinese characters exceeds the maxParts=10 cap.
+    String body;
+    for (int i = 0; i < 671; ++i)
+    {
+        body += (char)(unsigned char)0xE4;
+        body += (char)(unsigned char)0xBD;
+        body += (char)(unsigned char)0xA0; // 你 (U+4F60)
+    }
+    TEST_ASSERT_FALSE(sender.send(String("+8613800138000"), body));
+    TEST_ASSERT_EQUAL(0, (int)modem.pduSendCalls().size());
+    TEST_ASSERT_TRUE(sender.lastError().indexOf(String("too long")) >= 0);
+    TEST_ASSERT_TRUE(sender.lastError().indexOf(String("670")) >= 0);
+}
+
+void test_SmsSender_exactly_160_gsm7_succeeds()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+
+    String body;
+    for (int i = 0; i < 160; ++i)
+        body += 'A';
+    TEST_ASSERT_TRUE(sender.send(String("+8613800138000"), body));
+    TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
+}
+
+void test_SmsSender_exactly_70_ucs2_succeeds()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+
+    // 70 Chinese characters = 140 UCS-2 bytes (exactly at limit)
+    String body;
+    for (int i = 0; i < 70; ++i)
+    {
+        body += (char)(unsigned char)0xE4;
+        body += (char)(unsigned char)0xBD;
+        body += (char)(unsigned char)0xA0;
+    }
+    TEST_ASSERT_TRUE(sender.send(String("+8613800138000"), body));
+    TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
+}
+
+// 161 GSM-7 characters -> two sendPduSms calls
+void test_SmsSender_161_gsm7_sends_two_parts()
 {
     FakeModem modem;
     SmsSender sender(modem);
 
     String body;
     for (int i = 0; i < 161; ++i)
-        body += 'x';
+        body += 'A';
+    TEST_ASSERT_TRUE(sender.send(String("+8613800138000"), body));
+
+    // Must have called sendPduSms exactly twice.
+    TEST_ASSERT_EQUAL(2, (int)modem.pduSendCalls().size());
+
+    // Both PDUs must start with "00" (SCA) then "41" (SMS-SUBMIT | UDHI).
+    TEST_ASSERT_TRUE(modem.pduSendCalls()[0].pduHex.startsWith("004100"));
+    TEST_ASSERT_TRUE(modem.pduSendCalls()[1].pduHex.startsWith("004100"));
+}
+
+// Partial failure: second part rejected -> SmsSender returns false
+void test_SmsSender_partial_failure_second_part()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+
+    // First call succeeds (MR=0), second fails (MR=-1).
+    modem.queuePduSendResult(0);
+    modem.queuePduSendResult(-1);
+
+    String body;
+    for (int i = 0; i < 161; ++i)
+        body += 'B';
     TEST_ASSERT_FALSE(sender.send(String("+8613800138000"), body));
-    TEST_ASSERT_EQUAL(0, (int)modem.smsSendCalls().size());
-    TEST_ASSERT_TRUE(sender.lastError().indexOf(String("too long")) >= 0);
+
+    // Both parts were attempted.
+    TEST_ASSERT_EQUAL(2, (int)modem.pduSendCalls().size());
+    // Error message identifies which part failed.
+    TEST_ASSERT_TRUE(sender.lastError().indexOf(String("part 2")) >= 0);
+    TEST_ASSERT_TRUE(sender.lastError().indexOf(String("of 2")) >= 0);
+}
+
+// ---- RFC-0012 queue tests ----
+
+// Happy path: enqueue then drainQueue(0) delivers immediately.
+void test_SmsSender_enqueue_drain_success()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+
+    bool failureCalled = false;
+    TEST_ASSERT_TRUE(sender.enqueue(String("+1"), String("hello"),
+                                    [&]() { failureCalled = true; }));
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    sender.drainQueue(0);
+
+    // Entry was removed on success.
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+    TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
+    TEST_ASSERT_FALSE(failureCalled);
+}
+
+// Retry: first attempt fails, then succeeds after the backoff window.
+void test_SmsSender_enqueue_retry_after_backoff()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+
+    // Fail once (MR=-1), then succeed (MR=0).
+    modem.queuePduSendResult(-1);
+    modem.queuePduSendResult(0);
+
+    bool failureCalled = false;
+    sender.enqueue(String("+1"), String("hello"),
+                   [&]() { failureCalled = true; });
+
+    // Attempt 1 at t=0 — fails; nextRetryMs should be 0 + kBackoffMs[1] = 2000.
+    sender.drainQueue(0);
+    TEST_ASSERT_EQUAL(1, sender.queueSize()); // still queued
+    TEST_ASSERT_FALSE(failureCalled);
+
+    // t=500: not yet due (backoff = 2000 ms).
+    sender.drainQueue(500);
+    TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size()); // no new send
+
+    // t=2001: due — attempt 2 succeeds.
+    sender.drainQueue(2001);
+    TEST_ASSERT_EQUAL(2, (int)modem.pduSendCalls().size());
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+    TEST_ASSERT_FALSE(failureCalled);
+}
+
+// After kMaxAttempts failures, onFinalFailure is called and entry removed.
+void test_SmsSender_max_retries_calls_on_final_failure()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1); // always fail
+
+    bool failureCalled = false;
+    sender.enqueue(String("+1"), String("hello"),
+                   [&]() { failureCalled = true; });
+
+    // Drive through all 5 attempts with advancing clock.
+    // Delays: immediate (0), 2000, 4000, 8000, 16000 ms between attempts.
+    uint32_t t = 0;
+    sender.drainQueue(t); // attempt 1 fails; nextRetry = 2000
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+    TEST_ASSERT_FALSE(failureCalled);
+
+    t += 2000;
+    sender.drainQueue(t); // attempt 2 fails; nextRetry = t+4000
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    t += 4000;
+    sender.drainQueue(t); // attempt 3 fails; nextRetry = t+8000
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    t += 8000;
+    sender.drainQueue(t); // attempt 4 fails; nextRetry = t+16000
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    t += 16000;
+    sender.drainQueue(t); // attempt 5 fails -> max reached, entry dropped
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+    TEST_ASSERT_TRUE(failureCalled);
+
+    // Total 5 send attempts issued.
+    TEST_ASSERT_EQUAL(5, (int)modem.pduSendCalls().size());
+}
+
+// Queue full: 8 slots filled; 9th enqueue returns false and calls onFinalFailure.
+void test_SmsSender_queue_full_rejects_new_entry()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1); // keep entries in queue by always failing
+
+    // Fill all 8 slots.
+    for (int i = 0; i < SmsSender::kQueueSize; ++i)
+    {
+        TEST_ASSERT_TRUE(sender.enqueue(String("+") + String(i), String("x")));
+    }
+    TEST_ASSERT_EQUAL(SmsSender::kQueueSize, sender.queueSize());
+
+    // 9th enqueue should fail immediately.
+    bool failureCalled = false;
+    bool result = sender.enqueue(String("+99"), String("overflow"),
+                                 [&]() { failureCalled = true; });
+    TEST_ASSERT_FALSE(result);
+    TEST_ASSERT_TRUE(failureCalled);
+    // Queue still at 8.
+    TEST_ASSERT_EQUAL(SmsSender::kQueueSize, sender.queueSize());
+}
+
+// One send per drainQueue call: two ready entries -> only one send attempt.
+void test_SmsSender_drain_queue_one_send_per_call()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+
+    sender.enqueue(String("+1"), String("first"));
+    sender.enqueue(String("+2"), String("second"));
+    TEST_ASSERT_EQUAL(2, sender.queueSize());
+
+    // Both entries are immediately due; only one should be sent per call.
+    sender.drainQueue(0);
+    TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    sender.drainQueue(0);
+    TEST_ASSERT_EQUAL(2, (int)modem.pduSendCalls().size());
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+}
+
+// Nullptr onFinalFailure: exhaust retries without crashing.
+void test_SmsSender_nullptr_on_final_failure_no_crash()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1);
+
+    // Pass nullptr — no crash expected on final failure.
+    sender.enqueue(String("+1"), String("hello"), nullptr);
+
+    uint32_t t = 0;
+    for (int attempt = 0; attempt < SmsSender::kMaxAttempts; ++attempt)
+    {
+        sender.drainQueue(t);
+        // Advance past the next backoff period.
+        int idx = (attempt + 1 < 5) ? (attempt + 1) : 4;
+        t += SmsSender::kBackoffMs[idx] + 1;
+    }
+    // Entry should be gone, no crash.
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
 }
 
 void run_sms_sender_tests()
 {
-    RUN_TEST(test_SmsSender_ascii_happy_path_restores_pdu_mode);
-    RUN_TEST(test_SmsSender_modem_failure_still_restores_pdu_mode);
-    RUN_TEST(test_SmsSender_non_ascii_body_bails_without_calling_modem);
+    RUN_TEST(test_SmsSender_ascii_builds_gsm7_pdu);
+    RUN_TEST(test_SmsSender_unicode_builds_ucs2_pdu);
+    RUN_TEST(test_SmsSender_modem_failure_propagates);
     RUN_TEST(test_SmsSender_empty_phone_bails);
-    RUN_TEST(test_SmsSender_too_long_body_bails);
+    RUN_TEST(test_SmsSender_empty_body_bails);
+    RUN_TEST(test_SmsSender_gsm7_too_long_bails);
+    RUN_TEST(test_SmsSender_ucs2_too_long_bails);
+    RUN_TEST(test_SmsSender_exactly_160_gsm7_succeeds);
+    RUN_TEST(test_SmsSender_exactly_70_ucs2_succeeds);
+    RUN_TEST(test_SmsSender_161_gsm7_sends_two_parts);
+    RUN_TEST(test_SmsSender_partial_failure_second_part);
+    RUN_TEST(test_SmsSender_enqueue_drain_success);
+    RUN_TEST(test_SmsSender_enqueue_retry_after_backoff);
+    RUN_TEST(test_SmsSender_max_retries_calls_on_final_failure);
+    RUN_TEST(test_SmsSender_queue_full_rejects_new_entry);
+    RUN_TEST(test_SmsSender_drain_queue_one_send_per_call);
+    RUN_TEST(test_SmsSender_nullptr_on_final_failure_no_crash);
 }

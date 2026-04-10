@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 #include <stdint.h>
+#include <vector>
 
 namespace sms_codec {
 
@@ -97,5 +98,90 @@ struct SmsPdu
 // USSD, flash / silent SMS special handling (they still decode; they
 // just aren't flagged as such).
 bool parseSmsPdu(const String &hexPdu, SmsPdu &out);
+
+// ---------- PDU mode encoder (Unicode SMS TX) ----------
+
+// Result of building an SMS-SUBMIT PDU.
+struct SmsSubmitPdu
+{
+    String hex;    // Full PDU as hex string (SCA + TPDU)
+    int tpduLen;   // TPDU byte count (everything after the SCA field);
+                   // this is the value passed to AT+CMGS=<tpduLen>
+};
+
+// Pack an array of 7-bit septets into bytes (GSM-7 packing).
+// bitOffset: number of bits to skip at the start of the output buffer
+// before writing the first septet (used for concat UDH fill bits;
+// default 0 for normal single-part PDUs).  The first bitOffset bits
+// of the output are zero-filled, then septets are packed starting at
+// that bit position.
+//
+// This is the inverse of unpackSeptets() on the RX side.
+std::vector<uint8_t> packSeptets(const std::vector<uint8_t> &septets,
+                                 int bitOffset = 0);
+
+// Build an SMS-SUBMIT PDU for the given destination phone number and
+// UTF-8 body.  Auto-selects GSM-7 (160 char capacity) when the body
+// contains only characters in the GSM 7-bit default alphabet +
+// extension table; falls back to UCS-2 / UTF-16BE (70 BMP-char /
+// fewer with supplementary characters) otherwise.
+//
+// Single-PDU backward-compatible overload: returns false if the body
+// won't fit in a single non-concatenated SMS (>160 GSM-7 septets or
+// >140 UCS-2 octets) OR if the multi-part result has more than one
+// part.  Kept for test compatibility; production callers should use
+// buildSmsSubmitPduMulti.
+bool buildSmsSubmitPdu(const String &phone, const String &body,
+                       SmsSubmitPdu &out);
+
+// Build a vector of SMS-SUBMIT PDUs for the given destination and
+// UTF-8 body.  For bodies that fit in a single PDU (<=160 GSM-7
+// septets or <=70 UCS-2 code units), returns a 1-element vector with
+// NO UDH -- identical output to the single-PDU overload above.  For
+// longer bodies, splits into multiple parts with concat UDH
+// (IEI=0x00, 8-bit reference counter).
+//
+// When `requestStatusReport` is true, sets bit 5 (TP-SRR) in the
+// first octet of each PDU (0x01->0x21 for single-part; 0x41->0x61
+// for concat with UDHI). Used by SmsSender when -DENABLE_DELIVERY_REPORTS
+// is defined. Default is false so the default build is unchanged.
+//
+// Returns an empty vector if:
+//   - phone or body is empty
+//   - the body requires more than maxParts parts (default 10)
+//
+// maxParts = 10 gives:
+//   GSM-7:  10 x 153 = 1,530 characters
+//   UCS-2:  10 x  67 =   670 characters
+std::vector<SmsSubmitPdu> buildSmsSubmitPduMulti(const String &phone,
+                                                  const String &body,
+                                                  int maxParts = 10,
+                                                  bool requestStatusReport = false);
+
+// Return true iff every code point in the UTF-8 string `s` can be
+// represented in the GSM 7-bit default alphabet (basic table +
+// extension table).  Used by SmsSender to choose between GSM-7 (160
+// char) and UCS-2 (70 char) and give a precise length error.
+bool isGsm7Compatible(const String &s);
+
+// ---------- SMS-STATUS-REPORT PDU parser (RFC-0011) ----------
+
+// Parsed SMS-STATUS-REPORT PDU (3GPP TS 23.040 section 9.2.2.3).
+// All String fields are UTF-8.
+struct StatusReport
+{
+    uint8_t messageRef;     // TP-MR: correlates to the outbound SMS MR
+    String  recipient;      // TP-RA: destination address (for display)
+    String  scTimestamp;    // TP-SCTS: when SMSC received the outbound SMS
+    String  dischargeTime;  // TP-DT: when the disposition was determined
+    uint8_t status;         // TP-ST: 0x00 = delivered, others = failure
+    bool    delivered;      // convenience: status == 0x00
+    String  statusText;     // human-readable status description
+};
+
+// Parse a hex-encoded SMS-STATUS-REPORT PDU as delivered in a +CDS URC.
+// Returns true on success, false on any malformed / truncated PDU or
+// if the TP-MTI field is not 0b10 (status report).
+bool parseStatusReportPdu(const String &hexPdu, StatusReport &out);
 
 } // namespace sms_codec

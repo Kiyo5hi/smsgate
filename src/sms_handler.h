@@ -8,10 +8,13 @@
 #include "imodem.h"
 #include "ibot_client.h"
 #include "sms_codec.h"
+#include "sms_block_list.h"
 
-// Forward declaration — sms_handler doesn't otherwise need to know
-// about reply target storage; it just calls put() on the pointer.
+// Forward declarations — sms_handler doesn't otherwise need to know
+// about reply target storage or the debug log; it just calls their
+// narrow APIs via the pointer.
 class ReplyTargetMap;
+class SmsDebugLog;
 
 // Reboot callback injected from the composition root. Production code
 // passes a lambda that calls `ESP.restart()`; tests pass a lambda that
@@ -64,6 +67,34 @@ public:
     // this) to disable the bidirectional path.
     void setReplyTargetMap(ReplyTargetMap *map) { replyTargets_ = map; }
 
+    // Optional: attach a diagnostic log. When set, every PDU parse
+    // result is pushed into the ring buffer so the user can inspect
+    // concat metadata / encoding / outcomes via a Telegram /debug
+    // command.
+    void setDebugLog(SmsDebugLog *log) { debugLog_ = log; }
+
+    // Optional: set an SMS sender block list (RFC-0018). When set,
+    // any incoming SMS whose sender exactly matches an entry in the
+    // list is silently deleted from the SIM without forwarding to
+    // Telegram. Pass nullptr / 0 (or just don't call this) to disable.
+    // The array must remain valid for the lifetime of SmsHandler.
+    void setBlockList(const char (*list)[kSmsBlockListMaxNumberLen + 1], int count)
+    {
+        blockList_ = list;
+        blockListCount_ = count;
+    }
+
+    // Optional: set a runtime SMS sender block list (RFC-0021). Checked
+    // in addition to the compile-time block list. Call from main.cpp after
+    // loading the NVS blob, and again after each /block or /unblock command.
+    // The array must remain valid for the lifetime of SmsHandler (file-scope
+    // static in main.cpp satisfies this).
+    void setRuntimeBlockList(const char (*list)[kSmsBlockListMaxNumberLen + 1], int count)
+    {
+        runtimeList_ = list;
+        runtimeListCount_ = count;
+    }
+
     // Read the SMS at SIM index <idx>, forward it to the bot, and
     // delete it from the SIM on success. Leaves the SMS in place on
     // failure so a later retry can pick it up. After
@@ -85,6 +116,16 @@ public:
 
     // Test-only accessor — returns number of in-flight concat groups.
     size_t concatKeyCount() const { return concatGroups_.size(); }
+
+    // Lifetime counters (RAM only, reset on reboot).
+    // smsForwarded_: messages (or assembled concat groups) successfully
+    //                delivered to Telegram.
+    // telegramSendFailures_: individual Telegram send attempts that failed
+    //                        (includes transient failures; NOT a count of
+    //                        permanently lost messages — a single message
+    //                        that exhausts retries counts once per attempt).
+    int smsForwarded() const { return smsForwarded_; }
+    int smsFailed() const { return telegramSendFailures_; }
 
 private:
     // Per-fragment record. We keep the raw decoded content so we can
@@ -143,7 +184,14 @@ private:
     RebootFn reboot_;
     ClockFn clock_;
     ReplyTargetMap *replyTargets_ = nullptr;
+    SmsDebugLog *debugLog_ = nullptr;
+    const char (*blockList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;
+    int blockListCount_ = 0;
+    const char (*runtimeList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;
+    int runtimeListCount_ = 0;
     int consecutiveFailures_ = 0;
+    int smsForwarded_ = 0;
+    int telegramSendFailures_ = 0;
 
     // Holds the in-flight concatenated groups. Vector is fine at this
     // scale (cap = 8).

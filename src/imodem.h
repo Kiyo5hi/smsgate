@@ -43,11 +43,22 @@ public:
     // Send an outbound SMS via TinyGSM's text-mode `sendSMS` path
     // (RFC-0003). Returns true iff the modem accepted the message.
     //
-    // CRITICAL: TinyGSM's sendSMS internally flips the modem to text
-    // mode (`+CMGF=1`) and a GSM-7 charset (`+CSCS="GSM"`). After a
-    // successful send, the receive path (which expects PDU mode) is
-    // broken until something restores `+CMGF=0`. SmsSender is the
-    // only caller and is responsible for re-entering PDU mode after
-    // every send attempt (success or failure).
+    // DEPRECATED: SmsSender now uses sendPduSms() to stay in PDU mode.
+    // Kept on the interface for backwards compatibility; may be removed
+    // in a future cleanup.
     virtual bool sendSMS(const String &number, const String &text) = 0;
+
+    // Send a pre-built SMS-SUBMIT PDU via AT+CMGS in PDU mode.
+    // `pduHex` is the full PDU (SCA + TPDU) as a hex string.
+    // `tpduLen` is the TPDU byte count (PDU bytes minus the SCA field);
+    // this is the value sent as `AT+CMGS=<tpduLen>`.
+    //
+    // Returns the modem-assigned TP-MR (0-255) on success, or -1 on
+    // failure. The MR is echoed back by the modem as `+CMGS: <mr>` and
+    // is needed to correlate delivery reports (RFC-0011).
+    //
+    // The modem must already be in PDU mode (+CMGF=0). Unlike sendSMS(),
+    // this method does NOT flip to text mode, so no post-send
+    // restoration is needed.
+    virtual int sendPduSms(const String &pduHex, int tpduLen) = 0;
 };

@@ -1,22 +1,20 @@
 // Unit tests for src/telegram_poller.{h,cpp}.
 //
 // Coverage (RFC-0003):
-//   - Long poll happy path: update with reply_to_message_id matching
-//     a slot in the ring buffer triggers an SMS send + watermark advance.
+//   - Happy path: update with reply_to_message_id matching a slot in
+//     the ring buffer triggers a PDU SMS send + watermark advance.
 //   - Authorization reject: from_id != allow list -> drop, watermark
 //     still advances.
 //   - Stale slot reject: ring buffer has been overwritten -> error
 //     reply, no SMS, watermark advances.
-//   - Non-ASCII body bail: SmsSender returns false, error reply
-//     posted, watermark advances.
+//   - Unicode body: SmsSender now handles Unicode via UCS-2 PDU.
 //   - Update with no message: skipped via valid=false flag, watermark
 //     still advances past it.
 //   - Pollers respect rate limit: tick() within kPollIntervalMs is a
 //     no-op.
 //   - Persistence across "restart": destroy + recreate poller; the
 //     new instance reads the watermark from FakePersist and does NOT
-//     re-process old updates (we feed it the same script, it asks
-//     for offset > saved id).
+//     re-process old updates.
 
 #include <unity.h>
 #include <Arduino.h>
@@ -38,12 +36,16 @@ struct ClockFixture
 };
 
 // Build a single update.
+// chatId defaults to 0; pass an explicit value to test per-requester routing.
+// In real Telegram messages chatId == fromId for DMs and chatId is negative for groups.
 TelegramUpdate makeUpdate(int32_t updateId, int64_t fromId,
-                          int32_t replyToId, const char *text)
+                          int32_t replyToId, const char *text,
+                          int64_t chatId = 0)
 {
     TelegramUpdate u;
     u.updateId = updateId;
     u.fromId = fromId;
+    u.chatId = chatId;
     u.replyToMessageId = replyToId;
     u.text = String(text);
     u.valid = true;
@@ -76,27 +78,31 @@ void test_TelegramPoller_happy_path_routes_reply_to_phone()
                           allowedAuth);
     poller.begin();
 
-    // Modem will accept the SMS, then we restore PDU mode.
-    modem.queueOkEmpty(); // for +CMGF=0 after sendSMS
-
     bot.queueUpdateBatch({makeUpdate(101, kAllowedFromId, 42, "hi there")});
 
+    // tick() enqueues the SMS but does NOT send it yet (RFC-0012).
     poller.tick();
 
-    // Exactly one SMS sent to the right number.
-    TEST_ASSERT_EQUAL(1, (int)modem.smsSendCalls().size());
-    TEST_ASSERT_EQUAL_STRING("+8613800138000", modem.smsSendCalls()[0].number.c_str());
-    TEST_ASSERT_EQUAL_STRING("hi there", modem.smsSendCalls()[0].text.c_str());
+    // No PDU send yet — entry is in the queue.
+    TEST_ASSERT_EQUAL(0, (int)modem.pduSendCalls().size());
+
+    // drainQueue triggers the actual send.
+    sender.drainQueue(0);
+
+    // Exactly one PDU SMS sent (SmsSender now uses sendPduSms).
+    TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
+    // No text-mode sendSMS used.
+    TEST_ASSERT_EQUAL(0, (int)modem.smsSendCalls().size());
 
     // Watermark advanced.
     TEST_ASSERT_EQUAL(101, poller.lastUpdateId());
     TEST_ASSERT_EQUAL(101, persist.loadLastUpdateId());
 
-    // Confirmation reply was posted.
+    // "Queued reply" confirmation was posted immediately by tick().
     bool sawConfirmation = false;
     for (const auto &m : bot.sentMessages())
     {
-        if (m.indexOf(String("Reply sent to")) >= 0)
+        if (m.indexOf(String("Queued reply to")) >= 0)
         {
             sawConfirmation = true;
             break;
@@ -127,7 +133,7 @@ void test_TelegramPoller_unauthorized_drops_and_advances()
     poller.tick();
 
     // No SMS sent.
-    TEST_ASSERT_EQUAL(0, (int)modem.smsSendCalls().size());
+    TEST_ASSERT_EQUAL(0, (int)modem.pduSendCalls().size());
     // Watermark still advanced.
     TEST_ASSERT_EQUAL(50, poller.lastUpdateId());
     TEST_ASSERT_EQUAL(50, persist.loadLastUpdateId());
@@ -159,7 +165,7 @@ void test_TelegramPoller_stale_slot_rejects_with_error_reply()
     poller.tick();
 
     // No SMS sent.
-    TEST_ASSERT_EQUAL(0, (int)modem.smsSendCalls().size());
+    TEST_ASSERT_EQUAL(0, (int)modem.pduSendCalls().size());
     // Watermark advanced.
     TEST_ASSERT_EQUAL(7, poller.lastUpdateId());
     TEST_ASSERT_EQUAL(7, persist.loadLastUpdateId());
@@ -176,7 +182,7 @@ void test_TelegramPoller_stale_slot_rejects_with_error_reply()
     TEST_ASSERT_TRUE(sawError);
 }
 
-void test_TelegramPoller_non_ascii_body_bails_with_error_reply()
+void test_TelegramPoller_unicode_body_sends_via_ucs2()
 {
     FakeModem modem;
     FakeBotClient bot;
@@ -192,37 +198,37 @@ void test_TelegramPoller_non_ascii_body_bails_with_error_reply()
                           allowedAuth);
     poller.begin();
 
-    // "你好" in UTF-8.
+    // "你好" in UTF-8 — should now succeed via UCS-2 PDU.
     String body;
-    body += (char)0xE4;
-    body += (char)0xBD;
-    body += (char)0xA0;
-    body += (char)0xE5;
-    body += (char)0xA5;
-    body += (char)0xBD;
+    body += (char)(unsigned char)0xE4;
+    body += (char)(unsigned char)0xBD;
+    body += (char)(unsigned char)0xA0;
+    body += (char)(unsigned char)0xE5;
+    body += (char)(unsigned char)0xA5;
+    body += (char)(unsigned char)0xBD;
     TelegramUpdate u = makeUpdate(33, kAllowedFromId, 42, "");
     u.text = body;
     bot.queueUpdateBatch({u});
 
+    // tick() enqueues the SMS; drainQueue triggers the actual send.
     poller.tick();
+    sender.drainQueue(0);
 
-    // No SMS attempted (the ASCII gate happens before sendSMS).
-    TEST_ASSERT_EQUAL(0, (int)modem.smsSendCalls().size());
-
-    // Watermark advanced.
+    // Unicode SMS now succeeds (was rejected in the old ASCII-only path).
+    TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
     TEST_ASSERT_EQUAL(33, poller.lastUpdateId());
 
-    // Error reply mentions ASCII / RFC-0002.
-    bool sawError = false;
+    // "Queued reply" confirmation was posted immediately by tick().
+    bool sawConfirmation = false;
     for (const auto &m : bot.sentMessages())
     {
-        if (m.indexOf(String("non-ASCII")) >= 0)
+        if (m.indexOf(String("Queued reply to")) >= 0)
         {
-            sawError = true;
+            sawConfirmation = true;
             break;
         }
     }
-    TEST_ASSERT_TRUE(sawError);
+    TEST_ASSERT_TRUE(sawConfirmation);
 }
 
 void test_TelegramPoller_invalid_update_advances_watermark()
@@ -240,9 +246,6 @@ void test_TelegramPoller_invalid_update_advances_watermark()
                           allowedAuth);
     poller.begin();
 
-    // Update with valid=false (e.g. channel_post that the JSON parser
-    // saw and recorded the update_id for, but couldn't extract a
-    // message body from). RFC-0003 §5: drop, advance.
     TelegramUpdate u;
     u.updateId = 999;
     u.valid = false;
@@ -250,7 +253,7 @@ void test_TelegramPoller_invalid_update_advances_watermark()
 
     poller.tick();
 
-    TEST_ASSERT_EQUAL(0, (int)modem.smsSendCalls().size());
+    TEST_ASSERT_EQUAL(0, (int)modem.pduSendCalls().size());
     TEST_ASSERT_EQUAL(999, poller.lastUpdateId());
     TEST_ASSERT_EQUAL(999, persist.loadLastUpdateId());
 }
@@ -274,7 +277,7 @@ void test_TelegramPoller_no_reply_to_message_id_drops_with_help()
 
     poller.tick();
 
-    TEST_ASSERT_EQUAL(0, (int)modem.smsSendCalls().size());
+    TEST_ASSERT_EQUAL(0, (int)modem.pduSendCalls().size());
     TEST_ASSERT_EQUAL(11, poller.lastUpdateId());
     bool sawHelp = false;
     for (const auto &m : bot.sentMessages())
@@ -361,17 +364,16 @@ void test_TelegramPoller_persistence_across_restart_does_not_replay()
                           [&]() -> uint32_t { return clk.nowMs; },
                           allowAllAuth);
         p1.begin();
-        modem.queueOkEmpty(); // PDU restore after sendSMS
         bot.queueUpdateBatch({makeUpdate(50, kAllowedFromId, 42, "hi")});
         p1.tick();
+        // drainQueue needed to actually send (RFC-0012).
+        sender.drainQueue(0);
         TEST_ASSERT_EQUAL(50, p1.lastUpdateId());
         TEST_ASSERT_EQUAL(50, persist.loadLastUpdateId());
-        TEST_ASSERT_EQUAL(1, (int)modem.smsSendCalls().size());
+        TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
     }
 
-    // "Restart": new poller from same persist. Even if the bot
-    // happened to return the same update again, the poller's
-    // in-RAM watermark loaded from persist would skip it.
+    // "Restart": new poller from same persist.
     {
         TelegramPoller p2(bot, sender, rtm, persist,
                           [&]() -> uint32_t { return clk.nowMs; },
@@ -379,14 +381,10 @@ void test_TelegramPoller_persistence_across_restart_does_not_replay()
         p2.begin();
         TEST_ASSERT_EQUAL(50, p2.lastUpdateId());
 
-        // Replay the same update id (simulating Telegram echoing it
-        // back if our offset were wrong). The poller's
-        // "<= lastUpdateId_" guard skips it.
         bot.queueUpdateBatch({makeUpdate(50, kAllowedFromId, 42, "hi again")});
         p2.tick();
         // No new SMS.
-        TEST_ASSERT_EQUAL(1, (int)modem.smsSendCalls().size());
-        // Watermark unchanged.
+        TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
         TEST_ASSERT_EQUAL(50, p2.lastUpdateId());
     }
 }
@@ -405,8 +403,6 @@ void test_TelegramPoller_offset_passed_to_bot_uses_watermark()
                           [&]() -> uint32_t { return clk.nowMs; },
                           allowAllAuth);
 
-    // Pre-seed the persist watermark BEFORE begin() so the poller
-    // picks it up at startup.
     persist.saveLastUpdateId(77);
     poller.begin();
 
@@ -431,23 +427,1053 @@ void test_TelegramPoller_multiple_updates_in_one_batch()
                           allowAllAuth);
     poller.begin();
 
-    // Two PDU restores expected.
-    modem.queueOkEmpty();
-    modem.queueOkEmpty();
-
     bot.queueUpdateBatch({
         makeUpdate(100, kAllowedFromId, 10, "first"),
         makeUpdate(101, kAllowedFromId, 20, "second"),
     });
 
+    // tick() enqueues both; two drainQueue calls deliver them (one per call).
+    poller.tick();
+    sender.drainQueue(0);
+    sender.drainQueue(0);
+
+    TEST_ASSERT_EQUAL(2, (int)modem.pduSendCalls().size());
+    TEST_ASSERT_EQUAL(101, poller.lastUpdateId());
+}
+
+// ---------- /status command tests (RFC-0010) ----------
+
+void test_TelegramPoller_status_command_calls_status_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    // StatusFn returns a canned string.
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          []() -> String { return String("device-ok"); });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(200, kAllowedFromId, 0, "/status")});
     poller.tick();
 
-    TEST_ASSERT_EQUAL(2, (int)modem.smsSendCalls().size());
-    TEST_ASSERT_EQUAL_STRING("+86A", modem.smsSendCalls()[0].number.c_str());
-    TEST_ASSERT_EQUAL_STRING("first", modem.smsSendCalls()[0].text.c_str());
-    TEST_ASSERT_EQUAL_STRING("+86B", modem.smsSendCalls()[1].number.c_str());
-    TEST_ASSERT_EQUAL_STRING("second", modem.smsSendCalls()[1].text.c_str());
-    TEST_ASSERT_EQUAL(101, poller.lastUpdateId());
+    // No SMS sent — /status is a command, not a reply.
+    TEST_ASSERT_EQUAL(0, (int)modem.pduSendCalls().size());
+    // Watermark advanced.
+    TEST_ASSERT_EQUAL(200, poller.lastUpdateId());
+    // The canned status string was sent to the bot.
+    bool sawStatus = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("device-ok")) >= 0)
+        {
+            sawStatus = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawStatus);
+}
+
+void test_TelegramPoller_status_command_nullptr_fallback()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    // No StatusFn supplied (nullptr default).
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(201, kAllowedFromId, 0, "/status")});
+    poller.tick();
+
+    // Fallback message sent.
+    bool sawFallback = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("status not configured")) >= 0)
+        {
+            sawFallback = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawFallback);
+}
+
+void test_TelegramPoller_help_message_mentions_status()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // Non-reply, non-command message triggers the help/error text.
+    bot.queueUpdateBatch({makeUpdate(202, kAllowedFromId, 0, "hello bot")});
+    poller.tick();
+
+    bool sawStatusMention = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("/status")) >= 0)
+        {
+            sawStatusMention = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawStatusMention);
+}
+
+// ---------- RFC-0016: per-requester command reply ----------
+
+// /status from a non-admin user (chatId=999): reply must go to chatId=999.
+void test_TelegramPoller_status_reply_goes_to_requester_chat()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    constexpr int64_t kNonAdminChatId = 999;
+    // Allow both the admin and the non-admin for this test.
+    auto multiAuth = [](int64_t fromId) -> bool {
+        return fromId == kAllowedFromId || fromId == kNonAdminChatId;
+    };
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          multiAuth,
+                          []() -> String { return String("device-ok"); });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(300, kNonAdminChatId, 0, "/status", kNonAdminChatId)});
+    poller.tick();
+
+    // No SMS, watermark advanced.
+    TEST_ASSERT_EQUAL(0, (int)modem.pduSendCalls().size());
+    TEST_ASSERT_EQUAL(300, poller.lastUpdateId());
+
+    // Reply must target chatId=999, not admin.
+    bool sawCorrectTarget = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.chatId == kNonAdminChatId && m.text.indexOf(String("device-ok")) >= 0)
+        {
+            sawCorrectTarget = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawCorrectTarget);
+}
+
+// /debug from a non-admin user (chatId=999): reply must go to chatId=999.
+void test_TelegramPoller_debug_reply_goes_to_requester_chat()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    constexpr int64_t kNonAdminChatId = 999;
+    auto multiAuth = [](int64_t fromId) -> bool {
+        return fromId == kAllowedFromId || fromId == kNonAdminChatId;
+    };
+
+    ClockFixture clk;
+    // No debug log configured — should reply "(debug log not configured)".
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          multiAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(301, kNonAdminChatId, 0, "/debug", kNonAdminChatId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(301, poller.lastUpdateId());
+
+    bool sawCorrectTarget = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.chatId == kNonAdminChatId && m.text.indexOf(String("debug log not configured")) >= 0)
+        {
+            sawCorrectTarget = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawCorrectTarget);
+}
+
+// Error reply (no reply_to_message_id) goes to u.chatId, not admin chat.
+void test_TelegramPoller_error_reply_goes_to_requester_chat()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    constexpr int64_t kRequesterChatId = 555;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          [](int64_t) -> bool { return true; }); // allow all
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(302, kAllowedFromId, 0, "hello bot", kRequesterChatId)});
+    poller.tick();
+
+    bool sawCorrectTarget = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.chatId == kRequesterChatId && m.text.indexOf(String("Reply to a forwarded SMS")) >= 0)
+        {
+            sawCorrectTarget = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawCorrectTarget);
+}
+
+// Group chat scenario: chatId is negative, fromId is the individual's positive ID.
+// The reply must go to the group (negative chatId), not the individual.
+void test_TelegramPoller_group_chat_reply_goes_to_group()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+    rtm.put(42, String("+8613800138000"));
+
+    constexpr int64_t kGroupChatId = -1001234567890LL;
+    constexpr int64_t kMemberId = 111;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          [](int64_t) -> bool { return true; },
+                          []() -> String { return String("group-status"); });
+    poller.begin();
+
+    // /status from a group member — chatId is the group, fromId is the member.
+    bot.queueUpdateBatch({makeUpdate(303, kMemberId, 0, "/status", kGroupChatId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(303, poller.lastUpdateId());
+
+    bool sawGroupTarget = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.chatId == kGroupChatId && m.text.indexOf(String("group-status")) >= 0)
+        {
+            sawGroupTarget = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawGroupTarget);
+}
+
+// sendMessageReturningId for SMS forward still uses the admin sentinel (chatId=0).
+// This exercises the SmsHandler isolation invariant from RFC-0016 §5.
+void test_TelegramPoller_sms_forward_uses_admin_sentinel()
+{
+    // SmsHandler (not TelegramPoller) calls sendMessageReturningId. We verify
+    // here that FakeBotClient records it with chatId=0 (the admin sentinel).
+    FakeBotClient bot;
+    bot.sendMessageReturningId(String("forwarded SMS text"));
+
+    TEST_ASSERT_EQUAL(1, (int)bot.sentMessagesWithTarget().size());
+    TEST_ASSERT_EQUAL(0, (int)bot.sentMessagesWithTarget()[0].chatId);
+    TEST_ASSERT_EQUAL(1, (int)bot.callCount());
+}
+
+// Admin user invokes /status — reply goes to u.chatId which equals the admin's chat.
+void test_TelegramPoller_admin_status_reply_goes_to_admin_chat()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    constexpr int64_t kAdminChatId = kAllowedFromId; // DM: chatId == fromId
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          []() -> String { return String("admin-status-ok"); });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(304, kAllowedFromId, 0, "/status", kAdminChatId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(304, poller.lastUpdateId());
+
+    bool sawAdminTarget = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.chatId == kAdminChatId && m.text.indexOf(String("admin-status-ok")) >= 0)
+        {
+            sawAdminTarget = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawAdminTarget);
+}
+
+// Successful SMS enqueue: "Queued reply" confirmation goes to u.chatId.
+void test_TelegramPoller_enqueue_confirmation_goes_to_requester_chat()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+    rtm.put(42, String("+8613800138000"));
+
+    constexpr int64_t kRequesterChatId = 777;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          [](int64_t) -> bool { return true; });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(305, kAllowedFromId, 42, "hi there", kRequesterChatId)});
+    poller.tick();
+
+    bool sawCorrectTarget = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.chatId == kRequesterChatId && m.text.indexOf(String("Queued reply to")) >= 0)
+        {
+            sawCorrectTarget = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawCorrectTarget);
+}
+
+// Reply-target expired: error reply goes to u.chatId.
+void test_TelegramPoller_expired_target_error_goes_to_requester_chat()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+    // Slot for 42 has been overwritten by 242.
+    rtm.put(242, String("+8613800138000"));
+
+    constexpr int64_t kRequesterChatId = 888;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          [](int64_t) -> bool { return true; });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(306, kAllowedFromId, 42, "hi", kRequesterChatId)});
+    poller.tick();
+
+    bool sawCorrectTarget = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.chatId == kRequesterChatId && m.text.indexOf(String("expired")) >= 0)
+        {
+            sawCorrectTarget = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawCorrectTarget);
+}
+
+// ---------- RFC-0019: /adduser, /removeuser, /listusers command tests ----------
+
+namespace {
+
+// Helper: build a ListMutatorFn that records calls and returns a canned result.
+struct MutatorRecord
+{
+    bool called = false;
+    int64_t callerIdSeen = 0;
+    String cmdSeen;
+    int64_t targetIdSeen = 0;
+    bool returnValue = true;
+    String reasonToSet;
+};
+
+TelegramPoller::ListMutatorFn makeMutator(MutatorRecord &rec)
+{
+    return [&rec](int64_t callerId, const String &cmd, int64_t targetId, String &reason) -> bool {
+        rec.called = true;
+        rec.callerIdSeen = callerId;
+        rec.cmdSeen = cmd;
+        rec.targetIdSeen = targetId;
+        reason = rec.reasonToSet;
+        return rec.returnValue;
+    };
+}
+
+} // namespace
+
+// /listusers from an authorized user: mutator called with cmd="list", reply sent.
+void test_TelegramPoller_listusers_calls_mutator_with_list()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    MutatorRecord rec;
+    rec.returnValue = true;
+    rec.reasonToSet = "Compile-time users (1):\n  12345 [admin]\nRuntime users (0):\nTotal: 1";
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr,
+                          makeMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(400, kAllowedFromId, 0, "/listusers", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(rec.called);
+    TEST_ASSERT_EQUAL_INT64(kAllowedFromId, rec.callerIdSeen);
+    TEST_ASSERT_TRUE(rec.cmdSeen == String("list"));
+    TEST_ASSERT_EQUAL_INT64(0, rec.targetIdSeen);
+
+    // Reply contains the list text.
+    bool sawList = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Compile-time users")) >= 0)
+        {
+            sawList = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawList);
+    TEST_ASSERT_EQUAL(400, poller.lastUpdateId());
+}
+
+// /listusers when mutator_ is nullptr: "not configured" reply.
+void test_TelegramPoller_listusers_no_mutator_replies_not_configured()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    // No mutator passed.
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(401, kAllowedFromId, 0, "/listusers", kAllowedFromId)});
+    poller.tick();
+
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0)
+        {
+            sawNotConfigured = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+    TEST_ASSERT_EQUAL(401, poller.lastUpdateId());
+}
+
+// /adduser 999 from admin: mutator called with cmd="add", targetId=999.
+void test_TelegramPoller_adduser_from_admin_calls_mutator()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    MutatorRecord rec;
+    rec.returnValue = true;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr,
+                          makeMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(402, kAllowedFromId, 0, "/adduser 999", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(rec.called);
+    TEST_ASSERT_EQUAL_INT64(kAllowedFromId, rec.callerIdSeen);
+    TEST_ASSERT_TRUE(rec.cmdSeen == String("add"));
+    TEST_ASSERT_EQUAL_INT64(999, rec.targetIdSeen);
+
+    // Success reply sent.
+    bool sawAdded = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("added")) >= 0)
+        {
+            sawAdded = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawAdded);
+    TEST_ASSERT_EQUAL(402, poller.lastUpdateId());
+}
+
+// /adduser 999 where mutator returns false (permission denied): error forwarded to user.
+void test_TelegramPoller_adduser_mutator_denied_sends_reason()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    MutatorRecord rec;
+    rec.returnValue = false;
+    rec.reasonToSet = "Permission denied. Only compile-time users may manage the user list.";
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr,
+                          makeMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(403, kAllowedFromId, 0, "/adduser 999", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(rec.called);
+
+    bool sawDenied = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Permission denied")) >= 0)
+        {
+            sawDenied = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawDenied);
+    TEST_ASSERT_EQUAL(403, poller.lastUpdateId());
+}
+
+// /adduser with no argument: usage error, mutator NOT called.
+void test_TelegramPoller_adduser_no_arg_sends_usage_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    MutatorRecord rec;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr,
+                          makeMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(404, kAllowedFromId, 0, "/adduser", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_FALSE(rec.called);
+
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Usage:")) >= 0)
+        {
+            sawUsage = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawUsage);
+    TEST_ASSERT_EQUAL(404, poller.lastUpdateId());
+}
+
+// /adduser abc (non-numeric): invalid id error, mutator NOT called.
+void test_TelegramPoller_adduser_nonnumeric_arg_sends_invalid_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    MutatorRecord rec;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr,
+                          makeMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(405, kAllowedFromId, 0, "/adduser abc", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_FALSE(rec.called);
+
+    bool sawInvalid = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Invalid user ID")) >= 0)
+        {
+            sawInvalid = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawInvalid);
+    TEST_ASSERT_EQUAL(405, poller.lastUpdateId());
+}
+
+// /adduser 0 (zero id): invalid id error, mutator NOT called.
+void test_TelegramPoller_adduser_zero_id_sends_invalid_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    MutatorRecord rec;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr,
+                          makeMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(406, kAllowedFromId, 0, "/adduser 0", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_FALSE(rec.called);
+
+    bool sawInvalid = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Invalid user ID")) >= 0)
+        {
+            sawInvalid = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawInvalid);
+}
+
+// /removeuser 999 from admin: mutator called with cmd="remove".
+void test_TelegramPoller_removeuser_from_admin_calls_mutator()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    MutatorRecord rec;
+    rec.returnValue = true;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr,
+                          makeMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(407, kAllowedFromId, 0, "/removeuser 999", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(rec.called);
+    TEST_ASSERT_EQUAL_INT64(kAllowedFromId, rec.callerIdSeen);
+    TEST_ASSERT_TRUE(rec.cmdSeen == String("remove"));
+    TEST_ASSERT_EQUAL_INT64(999, rec.targetIdSeen);
+
+    bool sawRemoved = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("removed")) >= 0)
+        {
+            sawRemoved = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawRemoved);
+    TEST_ASSERT_EQUAL(407, poller.lastUpdateId());
+}
+
+// /removeuser with no argument: usage error, mutator NOT called.
+void test_TelegramPoller_removeuser_no_arg_sends_usage_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    MutatorRecord rec;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr,
+                          makeMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(408, kAllowedFromId, 0, "/removeuser", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_FALSE(rec.called);
+
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Usage:")) >= 0)
+        {
+            sawUsage = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+// /adduser when mutator returns false with "full" reason: error forwarded.
+void test_TelegramPoller_adduser_full_list_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    MutatorRecord rec;
+    rec.returnValue = false;
+    rec.reasonToSet = "Runtime user list is full (maximum 10). Remove a user first.";
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr,
+                          makeMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(409, kAllowedFromId, 0, "/adduser 777", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(rec.called);
+
+    bool sawFull = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("full")) >= 0)
+        {
+            sawFull = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawFull);
+    TEST_ASSERT_EQUAL(409, poller.lastUpdateId());
+}
+
+// ---------- RFC-0021: /blocklist, /block, /unblock command tests ----------
+
+namespace {
+
+struct BlockMutatorRecord
+{
+    bool called = false;
+    int64_t callerIdSeen = 0;
+    String cmdSeen;
+    String numberSeen;
+    bool returnValue = true;
+    String reasonToSet;
+};
+
+TelegramPoller::SmsBlockMutatorFn makeBlockMutator(BlockMutatorRecord &rec)
+{
+    return [&rec](int64_t callerId, const String &cmd, const String &number, String &reason) -> bool {
+        rec.called = true;
+        rec.callerIdSeen = callerId;
+        rec.cmdSeen = cmd;
+        rec.numberSeen = number;
+        reason = rec.reasonToSet;
+        return rec.returnValue;
+    };
+}
+
+} // namespace
+
+void test_TelegramPoller_blocklist_dispatches_to_mutator()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    BlockMutatorRecord rec;
+    rec.returnValue = true;
+    rec.reasonToSet = "Compile-time block list (0):\n\nRuntime block list (1):\n  10086\n";
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr, nullptr, makeBlockMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(500, kAllowedFromId, 0, "/blocklist", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(rec.called);
+    TEST_ASSERT_EQUAL_INT64(kAllowedFromId, rec.callerIdSeen);
+    TEST_ASSERT_TRUE(rec.cmdSeen == String("list"));
+    // number should be empty for "list"
+    TEST_ASSERT_EQUAL(0, (int)rec.numberSeen.length());
+    TEST_ASSERT_EQUAL(500, poller.lastUpdateId());
+}
+
+void test_TelegramPoller_block_dispatches_to_mutator()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    BlockMutatorRecord rec;
+    rec.returnValue = true;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr, nullptr, makeBlockMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(501, kAllowedFromId, 0, "/block 10086", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(rec.called);
+    TEST_ASSERT_TRUE(rec.cmdSeen == String("block"));
+    TEST_ASSERT_TRUE(rec.numberSeen == String("10086"));
+    TEST_ASSERT_EQUAL(501, poller.lastUpdateId());
+}
+
+void test_TelegramPoller_block_no_arg_sends_usage_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    BlockMutatorRecord rec;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr, nullptr, makeBlockMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(502, kAllowedFromId, 0, "/block", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_FALSE(rec.called);
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Usage: /block")) >= 0) { sawUsage = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+void test_TelegramPoller_unblock_dispatches_to_mutator()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    BlockMutatorRecord rec;
+    rec.returnValue = true;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr, nullptr, makeBlockMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(503, kAllowedFromId, 0, "/unblock 10086", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_TRUE(rec.called);
+    TEST_ASSERT_TRUE(rec.cmdSeen == String("unblock"));
+    TEST_ASSERT_TRUE(rec.numberSeen == String("10086"));
+    TEST_ASSERT_EQUAL(503, poller.lastUpdateId());
+}
+
+void test_TelegramPoller_unblock_no_arg_sends_usage_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    BlockMutatorRecord rec;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr, nullptr, makeBlockMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(504, kAllowedFromId, 0, "/unblock", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_FALSE(rec.called);
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Usage: /unblock")) >= 0) { sawUsage = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+// /blocklist must NOT be dispatched as /block with arg="list".
+void test_TelegramPoller_blocklist_not_matched_as_block()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    BlockMutatorRecord rec;
+    rec.returnValue = true;
+    rec.reasonToSet = "(No numbers blocked)";
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth,
+                          nullptr, nullptr, makeBlockMutator(rec));
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(505, kAllowedFromId, 0, "/blocklist", kAllowedFromId)});
+    poller.tick();
+
+    // Must be called with cmd=="list", NOT cmd=="block" with number=="list"
+    TEST_ASSERT_TRUE(rec.called);
+    TEST_ASSERT_TRUE(rec.cmdSeen == String("list"));
+    TEST_ASSERT_EQUAL(505, poller.lastUpdateId());
+}
+
+void test_TelegramPoller_block_mutator_nullptr_replies_not_configured()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    // No smsBlockMutator passed.
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    const char *cmds[] = {"/blocklist", "/block 10086", "/unblock 10086"};
+    int32_t uid = 506;
+    for (const char *cmd : cmds)
+    {
+        bot.clearMessages();
+        bot.queueUpdateBatch({makeUpdate(uid++, kAllowedFromId, 0, cmd, kAllowedFromId)});
+        clk.nowMs += TelegramPoller::kPollIntervalMs; // advance past rate limiter
+        poller.tick();
+        bool sawNotConfigured = false;
+        for (const auto &m : bot.sentMessages())
+        {
+            if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+        }
+        TEST_ASSERT_TRUE(sawNotConfigured);
+    }
 }
 
 void run_telegram_poller_tests()
@@ -455,7 +1481,7 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
     RUN_TEST(test_TelegramPoller_unauthorized_drops_and_advances);
     RUN_TEST(test_TelegramPoller_stale_slot_rejects_with_error_reply);
-    RUN_TEST(test_TelegramPoller_non_ascii_body_bails_with_error_reply);
+    RUN_TEST(test_TelegramPoller_unicode_body_sends_via_ucs2);
     RUN_TEST(test_TelegramPoller_invalid_update_advances_watermark);
     RUN_TEST(test_TelegramPoller_no_reply_to_message_id_drops_with_help);
     RUN_TEST(test_TelegramPoller_rate_limit_one_poll_per_interval);
@@ -463,4 +1489,36 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_persistence_across_restart_does_not_replay);
     RUN_TEST(test_TelegramPoller_offset_passed_to_bot_uses_watermark);
     RUN_TEST(test_TelegramPoller_multiple_updates_in_one_batch);
+    RUN_TEST(test_TelegramPoller_status_command_calls_status_fn);
+    RUN_TEST(test_TelegramPoller_status_command_nullptr_fallback);
+    RUN_TEST(test_TelegramPoller_help_message_mentions_status);
+    // RFC-0016: per-requester command reply
+    RUN_TEST(test_TelegramPoller_status_reply_goes_to_requester_chat);
+    RUN_TEST(test_TelegramPoller_debug_reply_goes_to_requester_chat);
+    RUN_TEST(test_TelegramPoller_error_reply_goes_to_requester_chat);
+    RUN_TEST(test_TelegramPoller_group_chat_reply_goes_to_group);
+    RUN_TEST(test_TelegramPoller_sms_forward_uses_admin_sentinel);
+    RUN_TEST(test_TelegramPoller_admin_status_reply_goes_to_admin_chat);
+    RUN_TEST(test_TelegramPoller_enqueue_confirmation_goes_to_requester_chat);
+    RUN_TEST(test_TelegramPoller_expired_target_error_goes_to_requester_chat);
+    // RFC-0019: user management commands
+    RUN_TEST(test_TelegramPoller_listusers_calls_mutator_with_list);
+
+    RUN_TEST(test_TelegramPoller_listusers_no_mutator_replies_not_configured);
+    RUN_TEST(test_TelegramPoller_adduser_from_admin_calls_mutator);
+    RUN_TEST(test_TelegramPoller_adduser_mutator_denied_sends_reason);
+    RUN_TEST(test_TelegramPoller_adduser_no_arg_sends_usage_error);
+    RUN_TEST(test_TelegramPoller_adduser_nonnumeric_arg_sends_invalid_error);
+    RUN_TEST(test_TelegramPoller_adduser_zero_id_sends_invalid_error);
+    RUN_TEST(test_TelegramPoller_removeuser_from_admin_calls_mutator);
+    RUN_TEST(test_TelegramPoller_removeuser_no_arg_sends_usage_error);
+    RUN_TEST(test_TelegramPoller_adduser_full_list_sends_error);
+    // RFC-0021: SMS block list commands
+    RUN_TEST(test_TelegramPoller_blocklist_dispatches_to_mutator);
+    RUN_TEST(test_TelegramPoller_block_dispatches_to_mutator);
+    RUN_TEST(test_TelegramPoller_block_no_arg_sends_usage_error);
+    RUN_TEST(test_TelegramPoller_unblock_dispatches_to_mutator);
+    RUN_TEST(test_TelegramPoller_unblock_no_arg_sends_usage_error);
+    RUN_TEST(test_TelegramPoller_blocklist_not_matched_as_block);
+    RUN_TEST(test_TelegramPoller_block_mutator_nullptr_replies_not_configured);
 }

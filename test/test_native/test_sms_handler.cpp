@@ -216,6 +216,232 @@ void test_sweepExistingSms_drains_multiple_slots()
     TEST_ASSERT_EQUAL(2, (int)bot.callCount());
 }
 
+// ---------- smsForwarded / smsFailed counters (RFC-0010) ----------
+
+void test_smsForwarded_increments_on_success()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    int rebootCalls = 0;
+    SmsHandler handler(modem, bot, [&]() { rebootCalls++; });
+
+    TEST_ASSERT_EQUAL(0, handler.smsForwarded());
+    TEST_ASSERT_EQUAL(0, handler.smsFailed());
+
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty();
+    handler.handleSmsIndex(1);
+
+    TEST_ASSERT_EQUAL(1, handler.smsForwarded());
+    TEST_ASSERT_EQUAL(0, handler.smsFailed());
+
+    // Second success increments again.
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty();
+    handler.handleSmsIndex(2);
+
+    TEST_ASSERT_EQUAL(2, handler.smsForwarded());
+    TEST_ASSERT_EQUAL(0, handler.smsFailed());
+}
+
+void test_smsFailed_increments_on_telegram_failure()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    int rebootCalls = 0;
+    SmsHandler handler(modem, bot, [&]() { rebootCalls++; });
+
+    bot.queueResult(false);
+    modem.queueOk(makeCmgrResponse());
+    handler.handleSmsIndex(3);
+
+    TEST_ASSERT_EQUAL(0, handler.smsForwarded());
+    TEST_ASSERT_EQUAL(1, handler.smsFailed());
+}
+
+void test_smsFailed_does_not_increment_on_modem_timeout()
+{
+    // A CMGR timeout is not a Telegram failure — the failure counter
+    // should NOT change.
+    FakeModem modem;
+    FakeBotClient bot;
+    int rebootCalls = 0;
+    SmsHandler handler(modem, bot, [&]() { rebootCalls++; });
+
+    modem.queueResponse(-1, String());
+    handler.handleSmsIndex(4);
+
+    TEST_ASSERT_EQUAL(0, handler.smsForwarded());
+    TEST_ASSERT_EQUAL(0, handler.smsFailed());
+}
+
+void test_smsFailed_and_smsForwarded_independent()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    int rebootCalls = 0;
+    SmsHandler handler(modem, bot, [&]() { rebootCalls++; });
+
+    // One success.
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty();
+    handler.handleSmsIndex(1);
+
+    // One failure.
+    bot.queueResult(false);
+    modem.queueOk(makeCmgrResponse());
+    handler.handleSmsIndex(2);
+
+    // Another success.
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty();
+    handler.handleSmsIndex(3);
+
+    TEST_ASSERT_EQUAL(2, handler.smsForwarded());
+    TEST_ASSERT_EQUAL(1, handler.smsFailed());
+}
+
+// ---------- RFC-0018: block list ----------
+
+// Helper: build a concat fragment CMGR response.
+static String makeBlockedConcatCmgr(const char *sender)
+{
+    PduBuildOpts opts;
+    opts.sender = sender;
+    opts.dcs = 0x00;
+    opts.bodyBytes = gsm7FromAscii("Part1");
+    opts.addConcatUdh = true;
+    opts.concatRef = 0x42;
+    opts.concatTotal = 2;
+    opts.concatPart = 1;
+    return wrapInCmgrResponse(buildPduHex(opts));
+}
+
+void test_blocked_single_part_not_forwarded_sim_slot_deleted()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    int rebootCalls = 0;
+    SmsHandler handler(modem, bot, [&]() { rebootCalls++; });
+
+    // Set up a block list containing the sender in makeCmgrResponse().
+    // makeCmgrResponse() uses sender "13800138000" (international, 0x91),
+    // which the PDU decoder returns as "+13800138000".
+    static char blockList[1][kSmsBlockListMaxNumberLen + 1];
+    strncpy(blockList[0], "+13800138000", kSmsBlockListMaxNumberLen + 1);
+    handler.setBlockList(blockList, 1);
+
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty(); // for the CMGD
+
+    handler.handleSmsIndex(7);
+
+    // Bot must NOT have been called.
+    TEST_ASSERT_EQUAL(0, (int)bot.callCount());
+
+    // Commands: CMGR=7, then CMGD=7
+    const auto &sent = modem.sentCommands();
+    TEST_ASSERT_EQUAL(2, (int)sent.size());
+    TEST_ASSERT_EQUAL_STRING("+CMGR=7", sent[0].c_str());
+    TEST_ASSERT_EQUAL_STRING("+CMGD=7", sent[1].c_str());
+
+    // Failure counter must NOT be bumped.
+    TEST_ASSERT_EQUAL(0, handler.consecutiveFailures());
+    TEST_ASSERT_EQUAL(0, rebootCalls);
+}
+
+void test_blocked_concat_fragment_not_buffered_sim_slot_deleted()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    int rebootCalls = 0;
+    SmsHandler handler(modem, bot, [&]() { rebootCalls++; });
+
+    // Use sender "13800138000" (international 0x91) → decoded "+13800138000".
+    static char blockList[1][kSmsBlockListMaxNumberLen + 1];
+    strncpy(blockList[0], "+13800138000", kSmsBlockListMaxNumberLen + 1);
+    handler.setBlockList(blockList, 1);
+
+    modem.queueOk(makeBlockedConcatCmgr("13800138000"));
+    modem.queueOkEmpty(); // for the CMGD
+
+    handler.handleSmsIndex(5);
+
+    // Bot must NOT have been called.
+    TEST_ASSERT_EQUAL(0, (int)bot.callCount());
+
+    // Fragment must NOT have entered the reassembly buffer.
+    TEST_ASSERT_EQUAL(0, (int)handler.concatKeyCount());
+
+    // Commands: CMGR=5, then CMGD=5
+    const auto &sent = modem.sentCommands();
+    TEST_ASSERT_EQUAL(2, (int)sent.size());
+    TEST_ASSERT_EQUAL_STRING("+CMGR=5", sent[0].c_str());
+    TEST_ASSERT_EQUAL_STRING("+CMGD=5", sent[1].c_str());
+
+    // Failure counter must NOT be bumped.
+    TEST_ASSERT_EQUAL(0, handler.consecutiveFailures());
+    TEST_ASSERT_EQUAL(0, rebootCalls);
+}
+
+// ---------- RFC-0021: runtime block list ----------
+
+void test_runtime_blocked_single_part_not_forwarded_sim_slot_deleted()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    int rebootCalls = 0;
+    SmsHandler handler(modem, bot, [&]() { rebootCalls++; });
+
+    // Sender in makeCmgrResponse() is "+13800138000".
+    static char runtimeList[1][kSmsBlockListMaxNumberLen + 1];
+    strncpy(runtimeList[0], "+13800138000", kSmsBlockListMaxNumberLen + 1);
+    handler.setRuntimeBlockList(runtimeList, 1);
+
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty(); // for the CMGD
+
+    handler.handleSmsIndex(7);
+
+    TEST_ASSERT_EQUAL(0, (int)bot.callCount());
+
+    const auto &sent = modem.sentCommands();
+    TEST_ASSERT_EQUAL(2, (int)sent.size());
+    TEST_ASSERT_EQUAL_STRING("+CMGR=7", sent[0].c_str());
+    TEST_ASSERT_EQUAL_STRING("+CMGD=7", sent[1].c_str());
+
+    TEST_ASSERT_EQUAL(0, handler.consecutiveFailures());
+    TEST_ASSERT_EQUAL(0, rebootCalls);
+}
+
+void test_runtime_blocked_concat_fragment_not_buffered_sim_slot_deleted()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    int rebootCalls = 0;
+    SmsHandler handler(modem, bot, [&]() { rebootCalls++; });
+
+    static char runtimeList[1][kSmsBlockListMaxNumberLen + 1];
+    strncpy(runtimeList[0], "+13800138000", kSmsBlockListMaxNumberLen + 1);
+    handler.setRuntimeBlockList(runtimeList, 1);
+
+    modem.queueOk(makeBlockedConcatCmgr("13800138000"));
+    modem.queueOkEmpty(); // for the CMGD
+
+    handler.handleSmsIndex(5);
+
+    TEST_ASSERT_EQUAL(0, (int)bot.callCount());
+    TEST_ASSERT_EQUAL(0, (int)handler.concatKeyCount());
+
+    const auto &sent = modem.sentCommands();
+    TEST_ASSERT_EQUAL(2, (int)sent.size());
+    TEST_ASSERT_EQUAL_STRING("+CMGR=5", sent[0].c_str());
+    TEST_ASSERT_EQUAL_STRING("+CMGD=5", sent[1].c_str());
+
+    TEST_ASSERT_EQUAL(0, handler.consecutiveFailures());
+    TEST_ASSERT_EQUAL(0, rebootCalls);
+}
+
 // ---------- Unity plumbing ----------
 
 void run_sms_handler_tests()
@@ -227,4 +453,13 @@ void run_sms_handler_tests()
     RUN_TEST(test_handleSmsIndex_unparseable_body_deletes_slot);
     RUN_TEST(test_handleSmsIndex_malformed_pdu_deletes_slot);
     RUN_TEST(test_sweepExistingSms_drains_multiple_slots);
+    RUN_TEST(test_smsForwarded_increments_on_success);
+    RUN_TEST(test_smsFailed_increments_on_telegram_failure);
+    RUN_TEST(test_smsFailed_does_not_increment_on_modem_timeout);
+    RUN_TEST(test_smsFailed_and_smsForwarded_independent);
+    RUN_TEST(test_blocked_single_part_not_forwarded_sim_slot_deleted);
+    RUN_TEST(test_blocked_concat_fragment_not_buffered_sim_slot_deleted);
+    // RFC-0021: runtime block list
+    RUN_TEST(test_runtime_blocked_single_part_not_forwarded_sim_slot_deleted);
+    RUN_TEST(test_runtime_blocked_concat_fragment_not_buffered_sim_slot_deleted);
 }

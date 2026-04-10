@@ -4,8 +4,21 @@
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
 
+// utilities.h sets TINY_GSM_MODEM_xxx based on the LILYGO_T_* build flag —
+// it must be included before TinyGsmClient.h to satisfy its modem-model guard.
+// telegram.cpp is excluded from the native test env via platformio.ini
+// build_src_filter, so TinyGsmClient.h is safe to include here.
+#include "utilities.h"
+#include <TinyGsmClient.h>
+#ifdef TINY_GSM_MODEM_A76XXSSL
+// Forward-declared in main.cpp; telegram.cpp borrows a reference via
+// extern so we don't duplicate the modem instance.
+extern TinyGsm modem;
+#endif
+
 static const char *botToken = TELEGRAM_BOT_TOKEN;
-static const char *chatID = TELEGRAM_CHAT_ID;
+// chatID was removed in RFC-0014. The outbound destination is now held in
+// RealBotClient::adminChatId_ and set via setAdminChatId() in setup().
 
 // CA trust bundle embedded into flash by platformio.ini:
 //
@@ -21,18 +34,36 @@ static const char *chatID = TELEGRAM_CHAT_ID;
 extern const uint8_t rootca_crt_bundle_start[]
     asm("_binary_data_cert_x509_crt_bundle_bin_start");
 
-static WiFiClientSecure telegramClient;
+// WiFi TLS transport (primary).
+static WiFiClientSecure telegramWifiClient;
 
-static bool keepTelegramClientAlive()
+// Note: the modem TLS client (TinyGsmClientSecure / GsmClientSecureA76xxSSL)
+// is a function-local static inside setupCellularClient() rather than a
+// file-scope static here. Reason: its constructor takes `modem` (defined in
+// main.cpp) as an argument, and C++ provides no cross-TU initialization order
+// guarantee for file-scope statics — constructing it here would be UB if
+// `modem` hasn't been constructed yet. A function-local static is guaranteed
+// to initialize on first call, which happens inside setup() after `modem` is
+// live. See rfc/0004-cellular-fallback.md §Code Review.
+
+// keepTransportAlive() reconnects the active transport if the connection was
+// dropped. Works for both WiFiClientSecure and GsmClientSecureA76xxSSL
+// because both implement the Arduino Client interface.
+static bool keepTransportAlive(Client *transport)
 {
-    if (telegramClient.connected())
+    if (!transport)
+    {
+        Serial.println("keepTransportAlive: no transport set");
+        return false;
+    }
+    if (transport->connected())
     {
         return true;
     }
 
     Serial.println("Reconnecting to Telegram API server...");
-    telegramClient.stop();
-    bool ok = telegramClient.connect("api.telegram.org", 443);
+    transport->stop();
+    bool ok = transport->connect("api.telegram.org", 443);
     if (ok)
     {
         Serial.println("Reconnected to Telegram API server!");
@@ -44,7 +75,7 @@ static bool keepTelegramClientAlive()
     return ok;
 }
 
-bool setupTelegramClient()
+bool setupTelegramClient(RealBotClient &bot)
 {
 #ifdef ALLOW_INSECURE_TLS
     // Opt-in escape hatch for deployment networks that MITM HTTPS or serve a
@@ -53,42 +84,172 @@ bool setupTelegramClient()
     // capture that the firmware is running without TLS verification — do not
     // remove it. See rfc/0001-tls-cert-pinning.md.
     Serial.println("[SECURITY WARNING] TLS verification disabled via -DALLOW_INSECURE_TLS");
-    telegramClient.setInsecure();
+    telegramWifiClient.setInsecure();
 #else
-    telegramClient.setCACertBundle(rootca_crt_bundle_start);
+    telegramWifiClient.setCACertBundle(rootca_crt_bundle_start);
 #endif
-    telegramClient.setTimeout(15000);
-    return keepTelegramClientAlive();
+    telegramWifiClient.setTimeout(15000);
+    bot.setTransport(telegramWifiClient);
+    return keepTransportAlive(&telegramWifiClient);
 }
 
-int32_t RealBotClient::doSendMessage(const String &text)
+bool setupCellularClient(RealBotClient &bot)
 {
+#ifdef TINY_GSM_MODEM_A76XXSSL
+    // Function-local static: guaranteed to initialize on first call, after
+    // `modem` (main.cpp file-scope static) is already live. Avoids the
+    // cross-TU static-initialization-order UB that a file-scope static would
+    // cause. See the comment above this function for details.
+    static TinyGsmClientSecure telegramModemClient(modem, 0);
+
+    // CELLULAR TLS WARNING: Certificate verification is NOT active on the
+    // modem path. The A76xx modem's TLS stack (AT+CSSLCFG) requires certs
+    // to be pre-uploaded to modem flash via AT+CCERTDOWN — there is no
+    // equivalent of WiFiClientSecure::setCACertBundle(). Without a cert,
+    // authmode stays 0 (no server authentication). This means the cellular
+    // path is susceptible to MITM attacks. The warning below is the
+    // canonical serial-log signal that the firmware is using an unverified
+    // cellular TLS connection. See rfc/0004-cellular-fallback.md.
+    Serial.println("[CELLULAR TLS] Certificate verification not available on modem path — connection is unverified");
+    telegramModemClient.setTimeout(15000);
+    bot.setTransport(telegramModemClient);
+    return keepTransportAlive(&telegramModemClient);
+#else
+    Serial.println("setupCellularClient: modem SSL not compiled (no TINY_GSM_MODEM_A76XXSSL)");
+    return false;
+#endif
+}
+
+bool registerBotCommands(RealBotClient &bot)
+{
+    // Use the transport that was already set up by setup[Telegram|Cellular]Client.
+    Client *active = bot.getTransport();
+    if (!active)
+    {
+        Serial.println("registerBotCommands: no transport set, skipping");
+        return false;
+    }
+    if (!keepTransportAlive(active))
+    {
+        Serial.println("registerBotCommands: connection failed");
+        return false;
+    }
+
+    String url = String("/bot") + botToken + "/setMyCommands";
+
+    // [{"command":"debug","description":"Show SMS diagnostic log"},
+    //  {"command":"status","description":"Show device health and stats"}]
+    DynamicJsonDocument doc(384);
+    JsonArray cmds = doc.createNestedArray("commands");
+    JsonObject cmd = cmds.createNestedObject();
+    cmd["command"] = "debug";
+    cmd["description"] = "Show SMS diagnostic log";
+    JsonObject cmd2 = cmds.createNestedObject();
+    cmd2["command"] = "status";
+    cmd2["description"] = "Show device health and stats";
+
+    String payload;
+    serializeJson(doc, payload);
+
+    active->print(String("POST ") + url + " HTTP/1.1\r\n");
+    active->print("Host: api.telegram.org\r\n");
+    active->print("Connection: keep-alive\r\n");
+    active->print("Content-Type: application/json\r\n");
+    active->print("Content-Length: ");
+    active->print(payload.length());
+    active->print("\r\n\r\n");
+    active->print(payload);
+
+    String statusLine = active->readStringUntil('\n');
+    statusLine.trim();
+    Serial.print("setMyCommands status: ");
+    Serial.println(statusLine);
+    bool httpOk = statusLine.indexOf(" 200") != -1;
+
+    int contentLength = -1;
+    while (active->connected() || active->available())
+    {
+        String line = active->readStringUntil('\n');
+        if (line == "\r" || line.length() == 0)
+            break;
+        line.toLowerCase();
+        if (line.startsWith("content-length:"))
+        {
+            contentLength = line.substring(15).toInt();
+        }
+    }
+
+    // Drain the full response body (keep-alive safety).
+    String body;
+    unsigned long deadline = millis() + 8000;
+    size_t target = contentLength > 0 ? (size_t)contentLength : 8192;
+    while (body.length() < target && millis() < deadline)
+    {
+        if (active->available())
+        {
+            body += (char)active->read();
+        }
+        else if (contentLength <= 0 && !active->connected())
+        {
+            break;
+        }
+        else
+        {
+            delay(2);
+        }
+    }
+
+    bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
+    if (ok)
+    {
+        Serial.println("Bot commands registered: /debug, /status");
+    }
+    else
+    {
+        Serial.println("registerBotCommands: failed");
+    }
+    return ok;
+}
+
+int32_t RealBotClient::doSendMessage(const String &text, int64_t chatId)
+{
+    if (chatId == 0)
+    {
+        Serial.println("doSendMessage: chatId is 0, skipping send");
+        return -1;
+    }
+    if (!transport_)
+    {
+        Serial.println("doSendMessage: no transport set");
+        return 0;
+    }
+
     String url = String("/bot") + botToken + "/sendMessage";
 
     size_t size = JSON_OBJECT_SIZE(2) + text.length() + 256;
     DynamicJsonDocument doc(size);
-    doc["chat_id"] = chatID;
+    doc["chat_id"] = chatId;   // int64_t; ArduinoJson v6 serialises as JSON number
     doc["text"] = text;
 
     String payload;
     serializeJson(doc, payload);
 
-    if (!keepTelegramClientAlive())
+    if (!keepTransportAlive(transport_))
     {
         return 0;
     }
 
-    telegramClient.print(String("POST ") + url + " HTTP/1.1\r\n");
-    telegramClient.print("Host: api.telegram.org\r\n");
-    telegramClient.print("Connection: keep-alive\r\n");
-    telegramClient.print("Content-Type: application/json\r\n");
-    telegramClient.print("Content-Length: ");
-    telegramClient.print(payload.length());
-    telegramClient.print("\r\n\r\n");
-    telegramClient.print(payload);
+    transport_->print(String("POST ") + url + " HTTP/1.1\r\n");
+    transport_->print("Host: api.telegram.org\r\n");
+    transport_->print("Connection: keep-alive\r\n");
+    transport_->print("Content-Type: application/json\r\n");
+    transport_->print("Content-Length: ");
+    transport_->print(payload.length());
+    transport_->print("\r\n\r\n");
+    transport_->print(payload);
 
     // Parse status line: "HTTP/1.1 200 OK"
-    String statusLine = telegramClient.readStringUntil('\n');
+    String statusLine = transport_->readStringUntil('\n');
     statusLine.trim();
     Serial.print("Telegram status: ");
     Serial.println(statusLine);
@@ -97,9 +258,9 @@ int32_t RealBotClient::doSendMessage(const String &text)
 
     // Drain headers until blank line
     int contentLength = -1;
-    while (telegramClient.connected() || telegramClient.available())
+    while (transport_->connected() || transport_->available())
     {
-        String line = telegramClient.readStringUntil('\n');
+        String line = transport_->readStringUntil('\n');
         if (line == "\r" || line.length() == 0)
             break;
         line.toLowerCase();
@@ -118,11 +279,11 @@ int32_t RealBotClient::doSendMessage(const String &text)
     size_t target = contentLength > 0 ? (size_t)contentLength : 8192;
     while (body.length() < target && millis() < deadline)
     {
-        if (telegramClient.available())
+        if (transport_->available())
         {
-            body += (char)telegramClient.read();
+            body += (char)transport_->read();
         }
-        else if (contentLength <= 0 && !telegramClient.connected())
+        else if (contentLength <= 0 && !transport_->connected())
         {
             break; // server closed and no Content-Length to wait for
         }
@@ -170,12 +331,17 @@ int32_t RealBotClient::doSendMessage(const String &text)
 
 bool RealBotClient::sendMessage(const String &text)
 {
-    return doSendMessage(text) > 0;
+    return doSendMessage(text, adminChatId_) > 0;
 }
 
 int32_t RealBotClient::sendMessageReturningId(const String &text)
 {
-    return doSendMessage(text);
+    return doSendMessage(text, adminChatId_);
+}
+
+bool RealBotClient::sendMessageTo(int64_t chatId, const String &text)
+{
+    return doSendMessage(text, chatId) > 0;
 }
 
 // ---------- pollUpdates (RFC-0003) ----------
@@ -184,6 +350,12 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
                                 std::vector<TelegramUpdate> &out)
 {
     out.clear();
+
+    if (!transport_)
+    {
+        Serial.println("pollUpdates: no transport set");
+        return false;
+    }
 
     // Build URL: /bot<token>/getUpdates?timeout=<n>[&offset=<m>]
     // Telegram interprets `offset = sinceUpdateId + 1` as "give me
@@ -199,36 +371,36 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
     // Limit the response size — we only need a few entries per poll.
     url += "&limit=10";
 
-    if (!keepTelegramClientAlive())
+    if (!keepTransportAlive(transport_))
     {
         return false;
     }
 
-    telegramClient.print(String("GET ") + url + " HTTP/1.1\r\n");
-    telegramClient.print("Host: api.telegram.org\r\n");
-    telegramClient.print("Connection: keep-alive\r\n");
-    telegramClient.print("\r\n");
+    transport_->print(String("GET ") + url + " HTTP/1.1\r\n");
+    transport_->print("Host: api.telegram.org\r\n");
+    transport_->print("Connection: keep-alive\r\n");
+    transport_->print("\r\n");
 
     // Allow at least timeoutSec + a generous slack to read the
     // response. Telegram parks the request on its side until either
     // an update arrives or the timeout fires.
     unsigned long readDeadline = millis() + (unsigned long)(timeoutSec * 1000) + 8000;
 
-    String statusLine = telegramClient.readStringUntil('\n');
+    String statusLine = transport_->readStringUntil('\n');
     statusLine.trim();
     Serial.print("Telegram getUpdates status: ");
     Serial.println(statusLine);
     bool httpOk = statusLine.indexOf(" 200") != -1;
 
     int contentLength = -1;
-    while (telegramClient.connected() || telegramClient.available())
+    while (transport_->connected() || transport_->available())
     {
         if (millis() > readDeadline)
         {
             Serial.println("getUpdates: header read timeout");
             return false;
         }
-        String line = telegramClient.readStringUntil('\n');
+        String line = transport_->readStringUntil('\n');
         if (line == "\r" || line.length() == 0)
             break;
         line.toLowerCase();
@@ -243,11 +415,11 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
     size_t target = contentLength > 0 ? (size_t)contentLength : 16384;
     while (body.length() < target && millis() < readDeadline)
     {
-        if (telegramClient.available())
+        if (transport_->available())
         {
-            body += (char)telegramClient.read();
+            body += (char)transport_->read();
         }
-        else if (contentLength <= 0 && !telegramClient.connected())
+        else if (contentLength <= 0 && !transport_->connected())
         {
             break;
         }
@@ -332,8 +504,16 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
             out.push_back(u);
             continue;
         }
+        // chatId: always the message's chat.id (DM or group). Used as the
+        // reply target by processUpdate so responses go back to the originating
+        // context (DM or group), not to the admin chat.
+        if (!msg["chat"]["id"].isNull())
+        {
+            u.chatId = msg["chat"]["id"].as<int64_t>();
+        }
+
         // Prefer from.id, fall back to chat.id (for unusual update
-        // shapes where from is missing).
+        // shapes where from is missing). fromId is used for the auth gate.
         int64_t fid = 0;
         if (!msg["from"]["id"].isNull())
         {

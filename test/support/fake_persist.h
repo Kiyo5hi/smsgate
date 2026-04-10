@@ -2,6 +2,8 @@
 
 #include <Arduino.h>
 #include <cstring>
+#include <map>
+#include <string>
 #include <vector>
 
 #include "ipersist.h"
@@ -47,6 +49,22 @@ public:
         saveReplyTargetsCalls_++;
     }
 
+    size_t loadBlob(const char *key, void *buf, size_t bufSize) override
+    {
+        auto it = blobs_.find(key);
+        if (it == blobs_.end()) return 0;
+        size_t n = std::min(bufSize, it->second.size());
+        std::memcpy(buf, it->second.data(), n);
+        return n;
+    }
+
+    void saveBlob(const char *key, const void *buf, size_t bufSize) override
+    {
+        blobs_[key] = std::vector<uint8_t>(
+            static_cast<const uint8_t *>(buf),
+            static_cast<const uint8_t *>(buf) + bufSize);
+    }
+
     // Test introspection
     int saveLastUpdateIdCalls() const { return saveLastUpdateIdCalls_; }
     int saveReplyTargetsCalls() const { return saveReplyTargetsCalls_; }
@@ -54,6 +72,7 @@ public:
 private:
     int32_t lastUpdateId_ = 0;
     std::vector<uint8_t> replyTargets_;
+    std::map<std::string, std::vector<uint8_t>> blobs_;
     int saveLastUpdateIdCalls_ = 0;
     int saveReplyTargetsCalls_ = 0;
 };

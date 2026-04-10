@@ -39,4 +39,9 @@ public:
     // value has ever been stored).
     virtual size_t loadReplyTargets(void *buf, size_t bufSize) = 0;
     virtual void saveReplyTargets(const void *buf, size_t bufSize) = 0;
+
+    // Generic NVS blob load/save by key name (max 15 chars).
+    // loadBlob returns bytes actually read (0 if key absent).
+    virtual size_t loadBlob(const char *key, void *buf, size_t bufSize) = 0;
+    virtual void   saveBlob(const char *key, const void *buf, size_t bufSize) = 0;
 };

@@ -18,6 +18,15 @@
 class FakeBotClient : public IBotClient
 {
 public:
+    // Per-send metadata so tests can assert both content and the target chat.
+    // chatId == 0 is the sentinel for admin-targeted sends (sendMessage /
+    // sendMessageReturningId), which don't carry an explicit chat id.
+    struct SentMessage
+    {
+        int64_t chatId; // 0 = admin-targeted sentinel
+        String text;
+    };
+
     // Queue the return value for the next sendMessage() call. If the
     // queue is empty when sendMessage() is called, `defaultReturn` is
     // used (initialized to true).
@@ -28,7 +37,7 @@ public:
 
     bool sendMessage(const String &text) override
     {
-        sent_.push_back(text);
+        sent_.push_back({0, text}); // 0 = admin-targeted sentinel
         if (!results_.empty())
         {
             bool r = results_.front();
@@ -40,7 +49,7 @@ public:
 
     int32_t sendMessageReturningId(const String &text) override
     {
-        sent_.push_back(text);
+        sent_.push_back({0, text}); // 0 = admin-targeted sentinel
         bool ok;
         if (!results_.empty())
         {
@@ -56,6 +65,18 @@ public:
             return 0;
         }
         return ++lastFakeMsgId_;
+    }
+
+    bool sendMessageTo(int64_t chatId, const String &text) override
+    {
+        sent_.push_back({chatId, text});
+        if (!results_.empty())
+        {
+            bool r = results_.front();
+            results_.erase(results_.begin());
+            return r;
+        }
+        return defaultReturn_;
     }
 
     // ---- pollUpdates (RFC-0003) ----
@@ -105,16 +126,36 @@ public:
     int pollCallCount() const { return pollCallCount_; }
     int32_t lastPollOffset() const { return lastPollOffset_; }
 
-    const std::vector<String> &sentMessages() const { return sent_; }
+    // Returns the text of all sent messages (regardless of target chat).
+    // Kept returning std::vector<String> to avoid breaking the 13+ existing
+    // call sites in test files that iterate over plain String values.
+    std::vector<String> sentMessages() const
+    {
+        std::vector<String> texts;
+        texts.reserve(sent_.size());
+        for (const auto &m : sent_)
+        {
+            texts.push_back(m.text);
+        }
+        return texts;
+    }
 
+    // Returns all sent messages with their target chat IDs. Use this in
+    // new tests that need to assert routing (RFC-0016).
+    const std::vector<SentMessage> &sentMessagesWithTarget() const { return sent_; }
+
+    // Returns the total number of send calls across all three send methods.
     size_t callCount() const { return sent_.size(); }
+
+    // Clear accumulated sent messages. Useful in loop-driven tests.
+    void clearMessages() { sent_.clear(); }
 
     int32_t lastIssuedMessageId() const { return lastFakeMsgId_; }
 
 private:
     std::vector<bool> results_;
     bool defaultReturn_ = true;
-    std::vector<String> sent_;
+    std::vector<SentMessage> sent_;
     int32_t lastFakeMsgId_ = 1000;
     std::vector<PollResult> pollResults_;
     int pollCallCount_ = 0;

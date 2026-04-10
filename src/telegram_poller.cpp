@@ -1,15 +1,32 @@
 #include "telegram_poller.h"
+#include "sms_debug_log.h"
 
 #include <vector>
 
+// File-static helper: strips the given prefix from `lower` and returns
+// the trimmed remainder. Returns an empty String if lower does not start
+// with prefix.
+static String extractArg(const String &lower, const char *prefix)
+{
+    if (!lower.startsWith(prefix)) return String();
+    String arg = lower.substring(strlen(prefix));
+    arg.trim();
+    return arg;
+}
+
 TelegramPoller::TelegramPoller(IBotClient &bot,
-                               ISmsSender &smsSender,
+                               SmsSender &smsSender,
                                ReplyTargetMap &replyTargets,
                                IPersist &persist,
                                TelegramPoller::ClockFn clock,
-                               TelegramPoller::AuthFn auth)
+                               TelegramPoller::AuthFn auth,
+                               TelegramPoller::StatusFn status,
+                               TelegramPoller::ListMutatorFn mutator,
+                               TelegramPoller::SmsBlockMutatorFn smsBlockMutator)
     : bot_(bot), smsSender_(smsSender), replyTargets_(replyTargets),
-      persist_(persist), clock_(std::move(clock)), auth_(std::move(auth))
+      persist_(persist), clock_(std::move(clock)), auth_(std::move(auth)),
+      statusFn_(std::move(status)), mutator_(std::move(mutator)),
+      smsBlockMutator_(std::move(smsBlockMutator))
 {
 }
 
@@ -20,10 +37,10 @@ void TelegramPoller::begin()
     Serial.println(lastUpdateId_);
 }
 
-void TelegramPoller::sendErrorReply(const String &reason)
+void TelegramPoller::sendErrorReply(int64_t chatId, const String &reason)
 {
     String msg = String("\xE2\x9D\x8C ") + reason; // U+274C cross mark
-    bot_.sendMessage(msg);
+    bot_.sendMessageTo(chatId, msg);
 }
 
 void TelegramPoller::processUpdate(const TelegramUpdate &u)
@@ -49,12 +66,204 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         return;
     }
 
-    // 2. Look up the reply target.
+    // 2. Check for debug commands (non-reply messages).
     if (u.replyToMessageId == 0)
     {
+        String lower;
+        for (unsigned int i = 0; i < u.text.length(); ++i)
+        {
+            char c = u.text[i];
+            if (c >= 'A' && c <= 'Z')
+                c = (char)(c + 32);
+            lower += c;
+        }
+        lower.trim();
+
+        if (lower == "/debug")
+        {
+            if (debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, debugLog_->dump());
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+            }
+            return;
+        }
+
+        if (lower == "/status")
+        {
+            if (statusFn_)
+            {
+                bot_.sendMessageTo(u.chatId, statusFn_());
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("(status not configured)"));
+            }
+            return;
+        }
+
+        // /listusers — any authorized user (auth already passed above).
+        if (lower == "/listusers")
+        {
+            if (!mutator_)
+            {
+                bot_.sendMessageTo(u.chatId, String("User management is not configured."));
+                return;
+            }
+            String reason;
+            if (mutator_(u.fromId, String("list"), 0, reason))
+            {
+                bot_.sendMessageTo(u.chatId, reason);
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, reason);
+            }
+            return;
+        }
+
+        // /adduser <id> — admin only (enforced inside mutator_).
+        // Use trailing-space guard to avoid matching /addusers, /adduser_etc.
+        if (lower == "/adduser" || lower.startsWith("/adduser "))
+        {
+            String arg = extractArg(lower, "/adduser ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /adduser <telegram_user_id>"));
+                return;
+            }
+            char *end = nullptr;
+            int64_t targetId = (int64_t)strtoll(arg.c_str(), &end, 10);
+            if (!end || *end != '\0' || targetId <= 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Invalid user ID. Must be a positive integer."));
+                return;
+            }
+            if (!mutator_)
+            {
+                bot_.sendMessageTo(u.chatId, String("User management is not configured."));
+                return;
+            }
+            String reason;
+            if (!mutator_(u.fromId, String("add"), targetId, reason))
+            {
+                bot_.sendMessageTo(u.chatId, reason);
+                return;
+            }
+            bot_.sendMessageTo(u.chatId,
+                String("User ") + String((long long)targetId) +
+                " added. They can now use /status, /debug, /listusers, and send SMS replies.");
+            return;
+        }
+
+        // /removeuser <id> — admin only (enforced inside mutator_).
+        if (lower == "/removeuser" || lower.startsWith("/removeuser "))
+        {
+            String arg = extractArg(lower, "/removeuser ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /removeuser <telegram_user_id>"));
+                return;
+            }
+            char *end = nullptr;
+            int64_t targetId = (int64_t)strtoll(arg.c_str(), &end, 10);
+            if (!end || *end != '\0' || targetId <= 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Invalid user ID. Must be a positive integer."));
+                return;
+            }
+            if (!mutator_)
+            {
+                bot_.sendMessageTo(u.chatId, String("User management is not configured."));
+                return;
+            }
+            String reason;
+            if (!mutator_(u.fromId, String("remove"), targetId, reason))
+            {
+                bot_.sendMessageTo(u.chatId, reason);
+                return;
+            }
+            bot_.sendMessageTo(u.chatId,
+                String("User ") + String((long long)targetId) + " removed.");
+            return;
+        }
+
+        // RFC-0021: /blocklist, /block <number>, /unblock <number>.
+        // IMPORTANT: /blocklist must be checked BEFORE /block to prevent
+        // "/blocklist" being partially matched by the /block prefix check.
+
+        if (lower == "/blocklist")
+        {
+            if (!smsBlockMutator_)
+            {
+                bot_.sendMessageTo(u.chatId, String("SMS block list management not configured."));
+                return;
+            }
+            String reason;
+            smsBlockMutator_(u.fromId, String("list"), String(), reason);
+            bot_.sendMessageTo(u.chatId, reason);
+            return;
+        }
+
+        if (lower == "/block" || lower.startsWith("/block "))
+        {
+            String arg = extractArg(lower, "/block ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /block <number>"));
+                return;
+            }
+            if (!smsBlockMutator_)
+            {
+                bot_.sendMessageTo(u.chatId, String("SMS block list management not configured."));
+                return;
+            }
+            String reason;
+            if (!smsBlockMutator_(u.fromId, String("block"), arg, reason))
+            {
+                bot_.sendMessageTo(u.chatId, reason);
+                return;
+            }
+            bot_.sendMessageTo(u.chatId,
+                String("Blocked: ") + arg +
+                String(". Note: matching is exact — check the serial log to confirm the format your carrier sends."));
+            return;
+        }
+
+        if (lower == "/unblock" || lower.startsWith("/unblock "))
+        {
+            String arg = extractArg(lower, "/unblock ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /unblock <number>"));
+                return;
+            }
+            if (!smsBlockMutator_)
+            {
+                bot_.sendMessageTo(u.chatId, String("SMS block list management not configured."));
+                return;
+            }
+            String reason;
+            if (!smsBlockMutator_(u.fromId, String("unblock"), arg, reason))
+            {
+                bot_.sendMessageTo(u.chatId, reason);
+                return;
+            }
+            bot_.sendMessageTo(u.chatId, String("Unblocked: ") + arg);
+            return;
+        }
+
         Serial.println("TelegramPoller: no reply_to_message_id, dropping");
-        sendErrorReply(String("Reply to a forwarded SMS to send a response. ") +
-                       "Plain messages aren't routed.");
+        {
+            String help = "Reply to a forwarded SMS to send a response. ";
+            help += "Commands: /debug, /status, /listusers";
+            if (smsBlockMutator_)
+                help += ", /blocklist, /block <num>, /unblock <num>";
+            sendErrorReply(u.chatId, help);
+        }
         return;
     }
 
@@ -63,31 +272,37 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
     {
         Serial.print("TelegramPoller: reply target slot stale or missing for msg_id=");
         Serial.println(u.replyToMessageId);
-        sendErrorReply(String("Reply target expired (the original SMS is too ") +
+        sendErrorReply(u.chatId,
+                       String("Reply target expired (the original SMS is too ") +
                        "old; only the last " + String((int)ReplyTargetMap::kSlotCount) +
                        " forwards are routable).");
         return;
     }
 
-    // 3. Send via SmsSender.
+    // 3. Enqueue via SmsSender (RFC-0012). Delivery is decoupled: the
+    // message is accepted here and sent (with exponential-backoff retry)
+    // by SmsSender::drainQueue() in the next loop() iteration.
+    // On final failure after kMaxAttempts retries, the onFinalFailure
+    // lambda fires from inside drainQueue() on the loop() task — safe
+    // to call bot_.sendMessage() from it (same thread as here).
+    // NOTE: 'this' capture is safe — TelegramPoller and SmsSender are
+    // both process-lifetime objects in main.cpp (RFC-0012 §3).
     if (u.text.length() == 0)
     {
-        sendErrorReply(String("Empty reply body — nothing to send."));
+        sendErrorReply(u.chatId, String("Empty reply body — nothing to send."));
         return;
     }
 
-    if (!smsSender_.send(phone, u.text))
-    {
-        const String &err = smsSender_.lastError();
-        Serial.print("TelegramPoller: SMS send failed: ");
-        Serial.println(err);
-        sendErrorReply(String("SMS send failed: ") + err);
-        return;
-    }
+    String capturedPhone = phone; // copy for lambda capture
+    int64_t requesterChatId = u.chatId; // copy for lambda capture (u is a local, lambda may fire later)
+    smsSender_.enqueue(phone, u.text, [this, capturedPhone, requesterChatId]() {
+        sendErrorReply(requesterChatId, String("SMS to ") + capturedPhone + " failed after retries.");
+    });
 
-    // 4. Confirm.
-    bot_.sendMessage(String("\xE2\x9C\x85 Reply sent to ") + phone); // U+2705 check mark
-    Serial.print("TelegramPoller: SMS reply sent to ");
+    // 4. Confirm enqueueing immediately (delivery confirmation comes
+    // asynchronously via the queue; we tell the user the reply is queued).
+    bot_.sendMessageTo(u.chatId, String("\xE2\x9C\x85 Queued reply to ") + phone); // U+2705 check mark
+    Serial.print("TelegramPoller: SMS reply queued to ");
     Serial.println(phone);
 }
 

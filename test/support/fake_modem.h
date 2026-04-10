@@ -108,6 +108,38 @@ public:
     void setSmsSendDefault(bool ok) { smsSendDefault_ = ok; }
     const std::vector<SmsSendCall> &smsSendCalls() const { return smsSendCalls_; }
 
+    // ---- IModem::sendPduSms (Unicode TX) ----
+
+    struct PduSendCall
+    {
+        String pduHex;
+        int tpduLen;
+    };
+
+    // Returns the queued MR (>= 0 on success, -1 on failure).
+    // Queue with queuePduSendResult(mr) where mr >= 0 means success,
+    // mr == -1 means failure. Default is 0 (success, MR=0).
+    int sendPduSms(const String &pduHex, int tpduLen) override
+    {
+        PduSendCall c;
+        c.pduHex = pduHex;
+        c.tpduLen = tpduLen;
+        pduSendCalls_.push_back(c);
+        if (!pduSendResults_.empty())
+        {
+            int mr = pduSendResults_.front();
+            pduSendResults_.erase(pduSendResults_.begin());
+            return mr;
+        }
+        return pduSendDefault_;
+    }
+
+    // Queue an MR result: pass >= 0 for success (MR value), -1 for failure.
+    void queuePduSendResult(int mr) { pduSendResults_.push_back(mr); }
+    // Set the default MR for calls with no queued result. Default is 0 (success).
+    void setPduSendDefault(int mr) { pduSendDefault_ = mr; }
+    const std::vector<PduSendCall> &pduSendCalls() const { return pduSendCalls_; }
+
     // ---- Inspection helpers for tests ----
 
     const std::vector<String> &sentCommands() const { return sent_; }
@@ -125,4 +157,7 @@ private:
     std::vector<SmsSendCall> smsSendCalls_;
     std::vector<bool> smsSendResults_;
     bool smsSendDefault_ = true;
+    std::vector<PduSendCall> pduSendCalls_;
+    std::vector<int> pduSendResults_;
+    int pduSendDefault_ = 0; // default: success, MR=0
 };

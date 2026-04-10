@@ -27,16 +27,20 @@ What works today (verified on real T-A7670X hardware):
 - Reply to a forwarded SMS in Telegram, the bot sends the reply back
   over SMS to the original sender. Reply targeting is by Telegram
   `reply_to_message_id` looked up in a 200-slot ring buffer persisted
-  in NVS. Single-user allow list (`TELEGRAM_CHAT_ID`). ASCII bodies
-  only in the first cut (Unicode reply support waits on RFC-0002
-  encoder reuse). See "TG -> SMS" under Architecture and `rfc/0003`.
+  in NVS. Single-user allow list (`TELEGRAM_CHAT_ID`). Supports full
+  Unicode: auto-selects GSM-7 (160 chars single-part / 153 chars per
+  concat part) for ASCII/European text or UCS-2 (70 / 67 chars per
+  part, with surrogate pairs for emoji) for everything else. Long
+  replies are split automatically into up to 10 concatenated parts
+  (1,530 GSM-7 / 670 Unicode chars maximum). Sends via raw SMS-SUBMIT
+  PDU with concat UDH so the modem stays in PDU mode — no text-mode
+  flip, no post-send restoration needed. See "TG -> SMS" under
+  Architecture and `rfc/0003`, `rfc/0009`.
 - Reboots itself after 8 consecutive Telegram POST failures to escape
   stuck TLS / WiFi states.
 
 What does **not** work yet:
 
-- Unicode SMS replies (Telegram -> SMS path is ASCII-only for now).
-  Receiving Unicode SMS already works.
 - Hard dependency on WiFi. The SIM's data path is unused. See `rfc/0004`.
 
 TLS verification against `api.telegram.org` is now active — see the
@@ -171,10 +175,13 @@ already reset the board). The `pio.exe` python is at
   stores both the message_id and the phone, so a stale lookup
   (slot has been overwritten by a newer message) returns false.
   Persisted via `IPersist` as a versioned binary blob.
-- `src/sms_sender.{h,cpp}` — outbound SMS path (RFC-0003). Wraps
-  `IModem::sendSMS` with an ASCII gate (bails on non-ASCII bodies
-  in the first cut) and the `+CMGF=0` PDU-mode restoration that
-  TinyGSM's text-mode send breaks. Implements `ISmsSender` so
+- `src/sms_sender.{h,cpp}` — outbound SMS path. Calls
+  `sms_codec::buildSmsSubmitPduMulti` (auto-selects GSM-7 or UCS-2,
+  splits into up to 10 concat parts with UDH) and sends each PDU
+  through `IModem::sendPduSms` in a loop. Stays in PDU mode — no
+  text-mode flip, no post-send restoration needed. On partial failure
+  (part N of M rejected by modem), sets `lastError_` with part info
+  and returns false immediately. Implements `ISmsSender` so
   TelegramPoller can host-test against a fake.
 - `src/telegram_poller.{h,cpp}` — TG -> SMS pipeline as a class.
   Constructor takes `IBotClient&`, `ISmsSender&`, `ReplyTargetMap&`,
@@ -185,7 +192,9 @@ already reset the board). The `pio.exe` python is at
   authorization gate / reply-target lookup / SmsSender pipeline,
   and persists the watermark fail-closed. See "TG -> SMS" below.
 - `src/real_modem.h` — header-only `RealModem` class, thin delegate to
-  `TinyGsm`. Only included from `main.cpp`.
+  `TinyGsm`. Takes `TinyGsm&` and `Stream&` (the raw serial port)
+  because `sendPduSms` needs to write PDU hex + Ctrl-Z directly after
+  the `AT+CMGS` prompt. Only included from `main.cpp`.
 - `src/telegram.{h,cpp}` — `setupTelegramClient()` + `RealBotClient`.
   Still has the ISRG Root X1 cert constant staged for RFC-0001.
 - `src/utilities.h` — board pin definitions, copied verbatim from
@@ -326,12 +335,14 @@ TUs never hit the host compiler. See
      and the ring buffer slot for that id must hold the matching
      stored message_id. On miss / stale slot, the user gets a
      "reply target expired" error reply; watermark advances.
-   - **`SmsSender::send`.** ASCII bodies only in the first cut.
-     Non-ASCII bodies bail with a "needs RFC-0002" error reply
-     to the user. SmsSender re-enters PDU mode (`+CMGF=0`) after
-     every send attempt, success or failure — TinyGSM's `sendSMS`
-     internally flips the modem to text mode, which would silently
-     break the next +CMTI parse if not restored.
+   - **`SmsSender::send`.** Calls `sms_codec::buildSmsSubmitPduMulti`
+     — auto-selects GSM-7 (160 single-part / 153 per concat part)
+     when the body is GSM-7 compatible, otherwise falls back to
+     UCS-2 / UTF-16BE (70 / 67 code units per part, with surrogate
+     pairs for emoji). Splits into up to 10 concat parts (cap:
+     ~1,530 GSM-7 / ~670 Unicode chars). Sends each part via
+     `IModem::sendPduSms` in a loop; stays in PDU mode — no
+     text-mode flip needed. See `rfc/0009`.
    - **Confirmation.** On success the user gets a "✅ Reply sent
      to <phone>" message. Watermark advances.
 5. The `update_id` watermark is **persisted only after** all updates

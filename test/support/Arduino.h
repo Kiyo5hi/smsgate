@@ -69,8 +69,10 @@ public:
     String(const std::string &s) : s_(s) {}
     String(int v) : s_(std::to_string(v)) {}
     String(long v) : s_(std::to_string(v)) {}
+    String(long long v) : s_(std::to_string(v)) {}
     String(unsigned v) : s_(std::to_string(v)) {}
     String(unsigned long v) : s_(std::to_string(v)) {}
+    String(unsigned long long v) : s_(std::to_string(v)) {}
     String(const String &) = default;
     String(String &&) = default;
     String &operator=(const String &) = default;

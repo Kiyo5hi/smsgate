@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include <ctype.h>
+#include <stdio.h>
 
 #include <vector>
 
@@ -746,6 +747,645 @@ bool parseSmsPdu(const String &hexPdu, SmsPdu &out)
             content += (char)buf[i];
         out.content = content;
     }
+
+    return true;
+}
+
+// ---------- PDU mode encoder (Unicode SMS TX) ----------
+
+// Pack an array of 7-bit septets into bytes (GSM-7 packing).
+// bitOffset: number of bits to skip at the start of the output buffer
+// before writing the first septet.  For normal single-part PDUs this
+// is 0.  For concat parts with a 6-byte UDH (48 bits), bitOffset=49
+// aligns the first user-data septet to the next 7-bit boundary after
+// the fill bit at bit 48.
+//
+// The first bitOffset bits of the output are zero-filled (the caller
+// overwrites bytes 0..(UDHL) with the actual UDH bytes after calling
+// this function).
+//
+// The guard `if (byteIdx + 1 < numBytes)` is unchanged from the
+// original; with bitOffset=49 the high-byte write for septet 0 lands
+// at out[7], which is always < numBytes for any non-empty septet list,
+// so the guard fires correctly.
+std::vector<uint8_t> packSeptets(const std::vector<uint8_t> &septets,
+                                 int bitOffset)
+{
+    size_t bo = (bitOffset < 0) ? 0 : (size_t)bitOffset;
+    size_t numBytes = (bo + septets.size() * 7 + 7) / 8;
+    std::vector<uint8_t> out(numBytes, 0);
+    for (size_t i = 0; i < septets.size(); ++i)
+    {
+        uint16_t val = (uint16_t)(septets[i] & 0x7F);
+        size_t bitPos = bo + i * 7;
+        size_t byteIdx = bitPos / 8;
+        size_t bitOff = bitPos % 8;
+        val <<= bitOff;
+        out[byteIdx] |= (uint8_t)(val & 0xFF);
+        if (byteIdx + 1 < numBytes)
+            out[byteIdx + 1] |= (uint8_t)((val >> 8) & 0xFF);
+    }
+    return out;
+}
+
+namespace {
+
+// Decode a UTF-8 String to a sequence of Unicode code points.
+std::vector<uint32_t> utf8ToCodePoints(const String &s)
+{
+    std::vector<uint32_t> out;
+    unsigned int i = 0;
+    while (i < s.length())
+    {
+        uint8_t b = (uint8_t)s[i];
+        uint32_t cp;
+        int extra;
+        if (b < 0x80)       { cp = b;          extra = 0; }
+        else if (b < 0xC0)  { ++i; continue; }  // stray continuation byte
+        else if (b < 0xE0)  { cp = b & 0x1F;   extra = 1; }
+        else if (b < 0xF0)  { cp = b & 0x0F;   extra = 2; }
+        else                { cp = b & 0x07;   extra = 3; }
+        ++i;
+        for (int j = 0; j < extra && i < s.length(); ++j, ++i)
+            cp = (cp << 6) | ((uint8_t)s[i] & 0x3F);
+        out.push_back(cp);
+    }
+    return out;
+}
+
+// Try to encode a single Unicode code point as GSM-7 septet(s).
+// Writes into `out` (caller must provide space for at least 2 bytes).
+// Returns the number of septets written (1 or 2), or 0 if the code
+// point has no representation in the GSM 7-bit alphabet.
+int encodeGsm7Char(uint32_t cp, uint8_t *out)
+{
+    // Fast path: printable ASCII 0x20-0x7E (most map directly)
+    if (cp >= 0x20 && cp <= 0x7E)
+    {
+        switch (cp)
+        {
+        // Characters that DO NOT share their ASCII position in GSM-7
+        case 0x24: out[0] = 0x02; return 1; // $ (GSM septet 0x02)
+        case 0x40: out[0] = 0x00; return 1; // @ (GSM septet 0x00)
+        case 0x5F: out[0] = 0x11; return 1; // _ (GSM septet 0x11)
+        case 0x60: return 0;                 // ` not in GSM-7
+        // Extension table characters (2 septets: ESC + code)
+        case 0x5B: out[0] = 0x1B; out[1] = 0x3C; return 2; // [
+        case 0x5C: out[0] = 0x1B; out[1] = 0x2F; return 2; // backslash
+        case 0x5D: out[0] = 0x1B; out[1] = 0x3E; return 2; // ]
+        case 0x5E: out[0] = 0x1B; out[1] = 0x14; return 2; // ^
+        case 0x7B: out[0] = 0x1B; out[1] = 0x28; return 2; // {
+        case 0x7C: out[0] = 0x1B; out[1] = 0x40; return 2; // |
+        case 0x7D: out[0] = 0x1B; out[1] = 0x29; return 2; // }
+        case 0x7E: out[0] = 0x1B; out[1] = 0x3D; return 2; // ~
+        default:
+            out[0] = (uint8_t)cp;            // direct mapping
+            return 1;
+        }
+    }
+    // Control characters
+    if (cp == 0x0A) { out[0] = 0x0A; return 1; } // LF
+    if (cp == 0x0D) { out[0] = 0x0D; return 1; } // CR
+    if (cp == 0x0C) { out[0] = 0x1B; out[1] = 0x0A; return 2; } // form feed
+    // Non-ASCII characters in the GSM-7 basic table
+    switch (cp)
+    {
+    case 0x00A1: out[0] = 0x40; return 1; // ¡
+    case 0x00A3: out[0] = 0x01; return 1; // £
+    case 0x00A4: out[0] = 0x24; return 1; // ¤
+    case 0x00A5: out[0] = 0x03; return 1; // ¥
+    case 0x00A7: out[0] = 0x5F; return 1; // §
+    case 0x00BF: out[0] = 0x60; return 1; // ¿
+    case 0x00C4: out[0] = 0x5B; return 1; // Ä
+    case 0x00C5: out[0] = 0x0E; return 1; // Å
+    case 0x00C6: out[0] = 0x1C; return 1; // Æ
+    case 0x00C7: out[0] = 0x09; return 1; // Ç
+    case 0x00C9: out[0] = 0x1F; return 1; // É
+    case 0x00D1: out[0] = 0x5D; return 1; // Ñ
+    case 0x00D6: out[0] = 0x5C; return 1; // Ö
+    case 0x00D8: out[0] = 0x0B; return 1; // Ø
+    case 0x00DC: out[0] = 0x5E; return 1; // Ü
+    case 0x00DF: out[0] = 0x1E; return 1; // ß
+    case 0x00E0: out[0] = 0x7F; return 1; // à
+    case 0x00E4: out[0] = 0x7B; return 1; // ä
+    case 0x00E5: out[0] = 0x0F; return 1; // å
+    case 0x00E6: out[0] = 0x1D; return 1; // æ
+    case 0x00E8: out[0] = 0x04; return 1; // è
+    case 0x00E9: out[0] = 0x05; return 1; // é
+    case 0x00EC: out[0] = 0x07; return 1; // ì
+    case 0x00F1: out[0] = 0x7D; return 1; // ñ
+    case 0x00F2: out[0] = 0x08; return 1; // ò
+    case 0x00F6: out[0] = 0x7C; return 1; // ö
+    case 0x00F8: out[0] = 0x0C; return 1; // ø
+    case 0x00F9: out[0] = 0x06; return 1; // ù
+    case 0x00FC: out[0] = 0x7E; return 1; // ü
+    // Greek letters in GSM-7 basic table
+    case 0x0393: out[0] = 0x13; return 1; // Γ
+    case 0x0394: out[0] = 0x10; return 1; // Δ
+    case 0x0398: out[0] = 0x19; return 1; // Θ
+    case 0x039B: out[0] = 0x14; return 1; // Λ
+    case 0x039E: out[0] = 0x1A; return 1; // Ξ
+    case 0x03A0: out[0] = 0x16; return 1; // Π
+    case 0x03A3: out[0] = 0x18; return 1; // Σ
+    case 0x03A6: out[0] = 0x12; return 1; // Φ
+    case 0x03A8: out[0] = 0x17; return 1; // Ψ
+    case 0x03A9: out[0] = 0x15; return 1; // Ω
+    // Euro sign (extension table)
+    case 0x20AC: out[0] = 0x1B; out[1] = 0x65; return 2; // €
+    default: return 0;
+    }
+}
+
+// Encode Unicode code points to UTF-16BE (UCS-2 with surrogate pair
+// support for supplementary characters).
+std::vector<uint8_t> codePointsToUtf16BE(const std::vector<uint32_t> &cps)
+{
+    std::vector<uint8_t> out;
+    out.reserve(cps.size() * 2);
+    for (uint32_t cp : cps)
+    {
+        if (cp <= 0xFFFF)
+        {
+            out.push_back((uint8_t)(cp >> 8));
+            out.push_back((uint8_t)(cp & 0xFF));
+        }
+        else if (cp <= 0x10FFFF)
+        {
+            uint32_t adj = cp - 0x10000;
+            uint16_t hi = (uint16_t)(0xD800 + (adj >> 10));
+            uint16_t lo = (uint16_t)(0xDC00 + (adj & 0x3FF));
+            out.push_back((uint8_t)(hi >> 8));
+            out.push_back((uint8_t)(hi & 0xFF));
+            out.push_back((uint8_t)(lo >> 8));
+            out.push_back((uint8_t)(lo & 0xFF));
+        }
+    }
+    return out;
+}
+
+// Encode a phone number as a TP-DA (destination address) field:
+//   [digit-count] [type-of-address] [BCD digits, semi-octet swapped]
+void encodeBcdPhone(const String &phone, std::vector<uint8_t> &out)
+{
+    String digits;
+    bool international = false;
+    for (unsigned int i = 0; i < phone.length(); ++i)
+    {
+        char c = phone[i];
+        if (c == '+')
+            international = true;
+        else if (c >= '0' && c <= '9')
+            digits += c;
+    }
+    out.push_back((uint8_t)digits.length());
+    out.push_back(international ? (uint8_t)0x91 : (uint8_t)0x81);
+    for (unsigned int i = 0; i < digits.length(); i += 2)
+    {
+        uint8_t lo = (uint8_t)(digits[i] - '0');
+        uint8_t hi = (i + 1 < digits.length())
+                         ? (uint8_t)(digits[i + 1] - '0')
+                         : (uint8_t)0x0F;
+        out.push_back((uint8_t)((hi << 4) | lo));
+    }
+}
+
+static const char kHexChars[] = "0123456789ABCDEF";
+
+String bytesToHex(const std::vector<uint8_t> &data)
+{
+    String out;
+    for (uint8_t b : data)
+    {
+        out += kHexChars[(b >> 4) & 0x0F];
+        out += kHexChars[b & 0x0F];
+    }
+    return out;
+}
+
+} // anonymous namespace
+
+bool isGsm7Compatible(const String &s)
+{
+    auto cps = utf8ToCodePoints(s);
+    uint8_t buf[2];
+    for (uint32_t cp : cps)
+    {
+        if (encodeGsm7Char(cp, buf) == 0)
+            return false;
+    }
+    return true;
+}
+
+std::vector<SmsSubmitPdu> buildSmsSubmitPduMulti(const String &phone,
+                                                  const String &body,
+                                                  int maxParts,
+                                                  bool requestStatusReport)
+{
+    std::vector<SmsSubmitPdu> result;
+
+    if (phone.length() == 0 || body.length() == 0)
+        return result; // empty = error
+
+    auto cps = utf8ToCodePoints(body);
+
+    // --- Try GSM-7 first ---
+    std::vector<uint8_t> gsm7Septets;
+    bool canGsm7 = true;
+    for (uint32_t cp : cps)
+    {
+        uint8_t buf[2];
+        int n = encodeGsm7Char(cp, buf);
+        if (n == 0) { canGsm7 = false; break; }
+        for (int j = 0; j < n; ++j)
+            gsm7Septets.push_back(buf[j]);
+    }
+
+    if (canGsm7)
+    {
+        // Single-part: body fits in one non-concatenated SMS (no UDH).
+        if (gsm7Septets.size() <= 160)
+        {
+            auto packed = packSeptets(gsm7Septets);
+
+            std::vector<uint8_t> pdu;
+            pdu.push_back(0x00); // SCA: use default SMSC
+            // SMS-SUBMIT first octet: 0x01 = basic; 0x21 = with TP-SRR
+            pdu.push_back(requestStatusReport ? (uint8_t)0x21 : (uint8_t)0x01);
+            pdu.push_back(0x00); // TP-MR: modem assigns
+            encodeBcdPhone(phone, pdu);
+            pdu.push_back(0x00); // TP-PID
+            pdu.push_back(0x00); // TP-DCS: GSM 7-bit
+            pdu.push_back((uint8_t)gsm7Septets.size()); // TP-UDL (septets)
+            pdu.insert(pdu.end(), packed.begin(), packed.end());
+
+            SmsSubmitPdu p;
+            p.tpduLen = (int)pdu.size() - 1;
+            p.hex = bytesToHex(pdu);
+            result.push_back(p);
+            return result;
+        }
+
+        // Multi-part GSM-7: split into 153-septet chunks with ESC-safe
+        // boundary check.  UDH = 6 bytes = 48 bits; 1 fill bit brings
+        // the first septet to bit offset 49 (7 header septets total).
+        //
+        // Static counter for concat reference number; incremented only
+        // when multi-part is actually needed so single-part messages
+        // do not consume reference numbers.
+        static uint8_t s_concatRef = 0;
+
+        // Build the list of per-part septet slices first so we know
+        // the total part count before constructing PDU headers.
+        std::vector<std::vector<uint8_t>> parts;
+        size_t pos = 0;
+        while (pos < gsm7Septets.size())
+        {
+            size_t remaining = gsm7Septets.size() - pos;
+            size_t chunkSize = (remaining <= 153) ? remaining : 153;
+
+            // ESC-safe split: if the last septet of the proposed chunk
+            // is 0x1B (ESC), the extension char would be orphaned in
+            // the next part -- trim.  If the second-to-last is 0x1B,
+            // the lone ESC would be the last septet of this part --
+            // also trim.  Both checks apply to the boundaries of the
+            // proposed chunk (not the full array).
+            if (chunkSize == 153 && remaining > 153)
+            {
+                if (gsm7Septets[pos + 152] == 0x1B)
+                    chunkSize = 152;
+                else if (gsm7Septets[pos + 151] == 0x1B)
+                    chunkSize = 151;
+            }
+
+            parts.push_back(std::vector<uint8_t>(
+                gsm7Septets.begin() + pos,
+                gsm7Septets.begin() + pos + chunkSize));
+            pos += chunkSize;
+        }
+
+        int totalParts = (int)parts.size();
+        if (totalParts > maxParts)
+            return result; // empty = error (too long)
+
+        uint8_t ref = s_concatRef++;
+
+        for (int partNum = 1; partNum <= totalParts; ++partNum)
+        {
+            const auto &chunk = parts[partNum - 1];
+
+            // UDH: UDHL=05 IEI=00 IEDL=03 ref total seq (6 bytes)
+            // Pack septets with bitOffset=49 so the first user-data
+            // septet starts at bit 49 (after 48 UDH bits + 1 fill bit).
+            // packSeptets returns a buffer whose first 6 bytes are
+            // zero-filled; we overwrite them with the actual UDH bytes.
+            auto packed = packSeptets(chunk, 49);
+            // Ensure the buffer is large enough for the UDH bytes.
+            // With bitOffset=49 the buffer already starts at byte 0,
+            // so indices 0-5 are zero and safe to overwrite.
+            packed[0] = 0x05; // UDHL
+            packed[1] = 0x00; // IEI (concat, 8-bit ref)
+            packed[2] = 0x03; // IEDL
+            packed[3] = ref;
+            packed[4] = (uint8_t)totalParts;
+            packed[5] = (uint8_t)partNum;
+
+            // TP-UDL for GSM-7 with UDH = header septets + payload septets.
+            // 6 UDH bytes = 48 bits; fill 1 bit to reach 49-bit boundary;
+            // total header = 49 bits = 7 septets.
+            uint8_t udl = (uint8_t)(7 + chunk.size());
+
+            std::vector<uint8_t> pdu;
+            pdu.push_back(0x00); // SCA
+            // SMS-SUBMIT | UDHI: 0x41 = basic concat; 0x61 = concat + TP-SRR
+            pdu.push_back(requestStatusReport ? (uint8_t)0x61 : (uint8_t)0x41);
+            pdu.push_back(0x00); // TP-MR
+            encodeBcdPhone(phone, pdu);
+            pdu.push_back(0x00); // TP-PID
+            pdu.push_back(0x00); // TP-DCS: GSM 7-bit
+            pdu.push_back(udl);
+            pdu.insert(pdu.end(), packed.begin(), packed.end());
+
+            SmsSubmitPdu p;
+            p.tpduLen = (int)pdu.size() - 1;
+            p.hex = bytesToHex(pdu);
+            result.push_back(p);
+        }
+        return result;
+    }
+
+    // --- Fall back to UCS-2 / UTF-16BE ---
+    auto ucs2 = codePointsToUtf16BE(cps);
+
+    // Single-part UCS-2: fits in 140 octets (70 code units).
+    if (ucs2.size() <= 140)
+    {
+        std::vector<uint8_t> pdu;
+        pdu.push_back(0x00); // SCA
+        // SMS-SUBMIT first octet: 0x01 = basic; 0x21 = with TP-SRR
+        pdu.push_back(requestStatusReport ? (uint8_t)0x21 : (uint8_t)0x01);
+        pdu.push_back(0x00); // TP-MR
+        encodeBcdPhone(phone, pdu);
+        pdu.push_back(0x00); // TP-PID
+        pdu.push_back(0x08); // TP-DCS: UCS-2
+        pdu.push_back((uint8_t)ucs2.size()); // TP-UDL (octets)
+        pdu.insert(pdu.end(), ucs2.begin(), ucs2.end());
+
+        SmsSubmitPdu p;
+        p.tpduLen = (int)pdu.size() - 1;
+        p.hex = bytesToHex(pdu);
+        result.push_back(p);
+        return result;
+    }
+
+    // Multi-part UCS-2: split into 134-octet (67 code-unit) chunks.
+    // No bit-alignment needed; UDH is simply prepended (6 bytes).
+    // Split must not land between surrogate pairs.
+    static uint8_t s_concatRefUcs2 = 0;
+
+    std::vector<std::vector<uint8_t>> ucs2Parts;
+    size_t pos = 0;
+    while (pos < ucs2.size())
+    {
+        size_t remaining = ucs2.size() - pos;
+        size_t chunkBytes = (remaining <= 134) ? remaining : 134;
+
+        // Surrogate-safe split: if the 67th UTF-16BE code unit would
+        // be a high surrogate (0xD800-0xDBFF), trim to 66 code units
+        // so the surrogate pair is not split across parts.
+        if (chunkBytes == 134 && remaining > 134)
+        {
+            uint8_t hiHi = ucs2[pos + 132];
+            uint8_t hiLo = ucs2[pos + 133];
+            uint16_t cu = (uint16_t)((hiHi << 8) | hiLo);
+            if (cu >= 0xD800 && cu <= 0xDBFF)
+                chunkBytes = 132; // drop the high surrogate to next part
+        }
+
+        ucs2Parts.push_back(std::vector<uint8_t>(
+            ucs2.begin() + pos, ucs2.begin() + pos + chunkBytes));
+        pos += chunkBytes;
+    }
+
+    int totalParts = (int)ucs2Parts.size();
+    if (totalParts > maxParts)
+        return result; // empty = error (too long)
+
+    uint8_t ref = s_concatRefUcs2++;
+
+    for (int partNum = 1; partNum <= totalParts; ++partNum)
+    {
+        const auto &chunk = ucs2Parts[partNum - 1];
+
+        // UDH: 6 bytes prepended to UTF-16BE payload.
+        // TP-UDL = 6 (UDH bytes) + payload bytes.
+        std::vector<uint8_t> ud;
+        ud.push_back(0x05); // UDHL
+        ud.push_back(0x00); // IEI
+        ud.push_back(0x03); // IEDL
+        ud.push_back(ref);
+        ud.push_back((uint8_t)totalParts);
+        ud.push_back((uint8_t)partNum);
+        ud.insert(ud.end(), chunk.begin(), chunk.end());
+
+        uint8_t udl = (uint8_t)(6 + chunk.size()); // UDH bytes + payload bytes
+
+        std::vector<uint8_t> pdu;
+        pdu.push_back(0x00); // SCA
+        // SMS-SUBMIT | UDHI: 0x41 = basic concat; 0x61 = concat + TP-SRR
+        pdu.push_back(requestStatusReport ? (uint8_t)0x61 : (uint8_t)0x41);
+        pdu.push_back(0x00); // TP-MR
+        encodeBcdPhone(phone, pdu);
+        pdu.push_back(0x00); // TP-PID
+        pdu.push_back(0x08); // TP-DCS: UCS-2
+        pdu.push_back(udl);
+        pdu.insert(pdu.end(), ud.begin(), ud.end());
+
+        SmsSubmitPdu p;
+        p.tpduLen = (int)pdu.size() - 1;
+        p.hex = bytesToHex(pdu);
+        result.push_back(p);
+    }
+    return result;
+}
+
+// Backward-compatible single-PDU overload.  Delegates to
+// buildSmsSubmitPduMulti and returns false if the result has more than
+// one part (body too long for a single non-concatenated SMS) or if the
+// multi function returns an empty vector (error).  Production callers
+// should use buildSmsSubmitPduMulti directly.
+bool buildSmsSubmitPdu(const String &phone, const String &body,
+                       SmsSubmitPdu &out)
+{
+    auto pdus = buildSmsSubmitPduMulti(phone, body);
+    if (pdus.empty() || pdus.size() > 1)
+        return false;
+    out = pdus[0];
+    return true;
+}
+
+// ---------- SMS-STATUS-REPORT PDU parser (RFC-0011) ----------
+
+// Helper: convert a BCD semi-octet timestamp (7 bytes) to a human-readable
+// string "YY/MM/DD,HH:MM:SS+TZ". This is the same SCTS format used in
+// SMS-DELIVER PDUs; we reuse it here for both TP-SCTS and TP-DT fields.
+static String parseScts(const std::vector<uint8_t> &raw, size_t offset)
+{
+    if (offset + 7 > raw.size())
+        return String();
+
+    // Each byte is a pair of semi-octets in reversed nibble order.
+    auto swapNibbles = [](uint8_t b) -> uint8_t {
+        return (uint8_t)(((b & 0x0F) * 10) + ((b >> 4) & 0x0F));
+    };
+
+    char buf[24];
+    snprintf(buf, sizeof(buf), "%02d/%02d/%02d,%02d:%02d:%02d+%02d",
+             swapNibbles(raw[offset + 0]), swapNibbles(raw[offset + 1]),
+             swapNibbles(raw[offset + 2]), swapNibbles(raw[offset + 3]),
+             swapNibbles(raw[offset + 4]), swapNibbles(raw[offset + 5]),
+             swapNibbles(raw[offset + 6]) & 0x7F); // mask sign bit for TZ
+    return String(buf);
+}
+
+// Map TP-ST value to a human-readable string (3GPP TS 23.040 §9.2.3.15).
+static String statusText(uint8_t st)
+{
+    // Helper: format one byte as two hex digits without using Arduino's
+    // radix String constructor (which is absent from the native test stub).
+    auto hexByte = [](uint8_t v) -> String {
+        char buf[3];
+        snprintf(buf, sizeof(buf), "%02X", (unsigned)v);
+        return String(buf);
+    };
+
+    if (st == 0x00) return String("delivered");
+    if (st == 0x01) return String("forwarded, unconfirmed");
+    if (st == 0x02) return String("replaced");
+    // 0x20-0x2F: temporary, SC still trying
+    if (st >= 0x20 && st <= 0x2F)
+    {
+        switch (st)
+        {
+        case 0x20: return String("temporary failure, still trying (congestion)");
+        case 0x21: return String("temporary failure, still trying (SME busy)");
+        case 0x22: return String("temporary failure, still trying (no response from SME)");
+        case 0x23: return String("temporary failure, still trying (service rejected)");
+        default:   break;
+        }
+        return String("temporary failure, still trying (0x") + hexByte(st) + ")";
+    }
+    // 0x40-0x4F: permanent error, SC stopped trying
+    if (st >= 0x40 && st <= 0x4F)
+    {
+        switch (st)
+        {
+        case 0x40: return String("permanent failure (remote procedure error)");
+        case 0x41: return String("permanent failure (incompatible destination)");
+        case 0x42: return String("permanent failure (connection rejected by SME)");
+        case 0x43: return String("permanent failure (not obtainable)");
+        case 0x44: return String("permanent failure (quality unavailable)");
+        case 0x45: return String("permanent failure (no interworking available)");
+        default:   break;
+        }
+        return String("permanent failure (0x") + hexByte(st) + ")";
+    }
+    // 0x60-0x6F: temporary error, SC stopped trying
+    if (st >= 0x60 && st <= 0x6F)
+    {
+        switch (st)
+        {
+        case 0x60: return String("temporary failure, stopped trying (congestion)");
+        case 0x61: return String("temporary failure, stopped trying (SME busy)");
+        default:   break;
+        }
+        return String("temporary failure, stopped trying (0x") + hexByte(st) + ")";
+    }
+    return String("unknown status 0x") + hexByte(st);
+}
+
+bool parseStatusReportPdu(const String &hexPdu, StatusReport &out)
+{
+    // Convert hex string to raw bytes.
+    if (hexPdu.length() < 2 || (hexPdu.length() % 2) != 0)
+        return false;
+
+    std::vector<uint8_t> raw;
+    raw.reserve(hexPdu.length() / 2);
+    for (unsigned int i = 0; i < hexPdu.length(); i += 2)
+    {
+        uint8_t hi = hexNibble(hexPdu[i]);
+        uint8_t lo = hexNibble(hexPdu[i + 1]);
+        raw.push_back((uint8_t)((hi << 4) | lo));
+    }
+
+    size_t pos = 0;
+
+    // SCA (Service Centre Address): first byte is length (in octets).
+    if (pos >= raw.size())
+        return false;
+    uint8_t scaLen = raw[pos++];
+    pos += scaLen; // skip SCA bytes
+
+    // First octet (TP-MTI + flags).
+    if (pos >= raw.size())
+        return false;
+    uint8_t firstOctet = raw[pos++];
+
+    // TP-MTI must be 0b10 (binary 10 = decimal 2) for SMS-STATUS-REPORT.
+    if ((firstOctet & 0x03) != 0x02)
+        return false;
+
+    // TP-MR: Message Reference (1 byte).
+    if (pos >= raw.size())
+        return false;
+    out.messageRef = raw[pos++];
+
+    // TP-RA: Recipient Address (same BCD encoding as TP-OA).
+    if (pos >= raw.size())
+        return false;
+    uint8_t raDigits = raw[pos++]; // digit count
+    if (pos >= raw.size())
+        return false;
+    uint8_t raToa = raw[pos++]; // type-of-address
+    uint8_t raBytes = (raDigits + 1) / 2;
+    if (pos + raBytes > raw.size())
+        return false;
+
+    // Decode BCD phone digits.
+    String phone;
+    bool international = (raToa & 0x70) == 0x10;
+    if (international)
+        phone += "+";
+    for (uint8_t b = 0; b < raBytes; ++b)
+    {
+        uint8_t byte = raw[pos + b];
+        uint8_t d1 = byte & 0x0F;
+        uint8_t d2 = (byte >> 4) & 0x0F;
+        phone += (char)('0' + d1);
+        if (b * 2 + 1 < raDigits)
+            phone += (char)('0' + d2);
+    }
+    out.recipient = phone;
+    pos += raBytes;
+
+    // TP-SCTS: Service Centre Time Stamp (7 bytes).
+    if (pos + 7 > raw.size())
+        return false;
+    out.scTimestamp = parseScts(raw, pos);
+    pos += 7;
+
+    // TP-DT: Discharge Time (7 bytes).
+    if (pos + 7 > raw.size())
+        return false;
+    out.dischargeTime = parseScts(raw, pos);
+    pos += 7;
+
+    // TP-ST: Status (1 byte).
+    if (pos >= raw.size())
+        return false;
+    out.status    = raw[pos++];
+    out.delivered = (out.status == 0x00);
+    out.statusText = statusText(out.status);
 
     return true;
 }
