@@ -7445,6 +7445,53 @@ void test_TelegramPoller_queueinfo_out_of_range()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0215: /schedclone duplicates a scheduled slot.
+void test_TelegramPoller_schedclone_copies_slot()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // Pre-populate slot 1.
+    auto sq = poller.getSchedQueue();
+    sq[0].sendAtMs = clk.nowMs + 60000;
+    sq[0].phone    = String("+7777");
+    sq[0].body     = String("clone me");
+    poller.setSchedQueue(sq);
+
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(18001, kAllowedFromId, 0,
+        "/schedclone 1 30", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(18001, poller.lastUpdateId());
+
+    // Slot 1 still occupied (source not cancelled).
+    TEST_ASSERT_NOT_EQUAL(0, (int)poller.getSchedQueue()[0].sendAtMs);
+    // Slot 2 now occupied with same phone and body.
+    const auto &dst = poller.getSchedQueue()[1];
+    TEST_ASSERT_NOT_EQUAL(0, (int)dst.sendAtMs);
+    TEST_ASSERT_TRUE(dst.phone == String("+7777"));
+    TEST_ASSERT_TRUE(dst.body == String("clone me"));
+
+    bool sawClone = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("cloned") >= 0)
+        { sawClone = true; break; }
+    TEST_ASSERT_TRUE(sawClone);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -8117,6 +8164,8 @@ void run_telegram_poller_tests()
     // RFC-0214: /queueinfo command
     RUN_TEST(test_TelegramPoller_queueinfo_shows_details);
     RUN_TEST(test_TelegramPoller_queueinfo_out_of_range);
+    // RFC-0215: /schedclone command
+    RUN_TEST(test_TelegramPoller_schedclone_copies_slot);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);

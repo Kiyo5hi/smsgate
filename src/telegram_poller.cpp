@@ -220,6 +220,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/schedinfo <N> \xe2\x80\x94 Show full body and ETA of scheduled slot N\n"; // RFC-0198
             help += "/schedrename <N> <phone> \xe2\x80\x94 Change destination phone of scheduled slot N\n"; // RFC-0197
             help += "/schedbody <N> <text> \xe2\x80\x94 Edit the body of scheduled slot N\n"; // RFC-0207
+            help += "/schedclone <N> <min> \xe2\x80\x94 Duplicate a scheduled slot with a new delay\n"; // RFC-0215
             help += "/pending \xe2\x80\x94 Terse snapshot of all pending work (queue/sched/concat)\n"; // RFC-0209
             help += "/setquiethours <start>-<end> \xe2\x80\x94 Defer sched SMS during UTC window (e.g. 22-08)\n"; // RFC-0211
             help += "/clearquiethours \xe2\x80\x94 Disable quiet hours\n"; // RFC-0211
@@ -3078,6 +3079,60 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Slot ") + String(n) // ✅
                 + String(" body updated: ") + preview);
+            return;
+        }
+
+        // RFC-0215: /schedclone <N> <delay_min> — duplicate a scheduled slot.
+        if (lower == "/schedclone" || lower.startsWith("/schedclone "))
+        {
+            String arg = extractArg(u.text, "/schedclone ");
+            arg.trim();
+            int sp = arg.indexOf(' ');
+            if (sp <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /schedclone <slot> <delay_min>\n"
+                           "Example: /schedclone 1 60"));
+                return;
+            }
+            int srcN = (int)arg.substring(0, sp).toInt();
+            long delayMin2 = arg.substring(sp + 1).toInt();
+            if (srcN < 1 || srcN > (int)kScheduledQueueSize
+                || scheduledQueue_[srcN - 1].sendAtMs == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Slot ") + String(srcN) // ❌
+                    + String(" is empty or out of range."));
+                return;
+            }
+            if (delayMin2 < 1 || delayMin2 > 1440)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Delay must be 1\xe2\x80\x931440 minutes.")); // ❌ –
+                return;
+            }
+            // Find a free slot.
+            int dstIdx = -1;
+            for (int i = 0; i < (int)kScheduledQueueSize; i++)
+                if (scheduledQueue_[i].sendAtMs == 0) { dstIdx = i; break; }
+            if (dstIdx < 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Scheduled queue full (5 slots).")); // ❌
+                return;
+            }
+            uint32_t nowMsClone = clock_ ? clock_() : 0;
+            uint32_t sendAtClone = nowMsClone + (uint32_t)delayMin2 * 60000UL;
+            scheduledQueue_[dstIdx].sendAtMs = sendAtClone;
+            scheduledQueue_[dstIdx].phone    = scheduledQueue_[srcN - 1].phone;
+            scheduledQueue_[dstIdx].body     = scheduledQueue_[srcN - 1].body;
+            if (persistSchedFn_) persistSchedFn_(); // RFC-0200
+            String eta = schedEtaStr(sendAtClone, nowMsClone, wallTimeFn_); // RFC-0202
+            String reply = String("\xe2\x9c\x85 Slot ") + String(srcN) // ✅
+                         + String(" cloned \xe2\x86\x92 slot ") + String(dstIdx + 1) // →
+                         + String(" (fires ") + eta + String(")")
+                         + quietHoursWarning(sendAtClone, nowMsClone, quietStart_, quietEnd_, wallTimeFn_); // RFC-0212
+            bot_.sendMessageTo(u.chatId, reply);
             return;
         }
 
