@@ -7,6 +7,7 @@
 #include "ibot_client.h"
 #include "ipersist.h"
 #include "reply_target_map.h"
+#include "sms_alias_store.h"
 #include "sms_sender.h"
 
 class SmsDebugLog;
@@ -154,6 +155,11 @@ public:
     // __DATE__ + __TIME__. Returned verbatim by the /version command.
     void setVersionStr(const String &v) { versionStr_ = v; }
 
+    // RFC-0088: Optional phone alias store. When set, /addalias, /rmalias,
+    // and /aliases commands are enabled, and @name expansion works in /send
+    // and /test.
+    void setAliasStore(SmsAliasStore *store) { aliasStore_ = store; }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -185,6 +191,7 @@ private:
     std::function<void()> wifiReconnectFn_;   // RFC-0071
     std::function<String()> heapFn_;          // RFC-0072
     String versionStr_ = "(unknown build)";   // RFC-0074
+    SmsAliasStore *aliasStore_ = nullptr;     // RFC-0088
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

@@ -253,6 +253,21 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "cancel";
         c["description"] = "Cancel a queued outbound SMS: /cancel <N>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "aliases";
+        c["description"] = "List phone number aliases";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "addalias";
+        c["description"] = "Add/replace alias: /addalias <name> <number>";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "rmalias";
+        c["description"] = "Remove an alias: /rmalias <name>";
+    }
 
     String payload;
     serializeJson(doc, payload);
@@ -308,7 +323,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /heap /version /restart /send /test /queue /flushqueue /cancel");
+        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /heap /version /restart /send /test /queue /flushqueue /cancel /aliases /addalias /rmalias");
     }
     else
     {

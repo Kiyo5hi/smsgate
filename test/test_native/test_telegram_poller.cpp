@@ -1358,6 +1358,211 @@ void test_TelegramPoller_send_delivery_notification()
     TEST_ASSERT_TRUE(sawSent);
 }
 
+// ---------- RFC-0088: /addalias, /rmalias, /aliases, @name expansion ----------
+
+void test_TelegramPoller_addalias_adds_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    poller.setAliasStore(&store);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(600, kAllowedFromId, 0, "/addalias alice +447911123456", kAllowedFromId)});
+    poller.tick();
+
+    // Should have stored the alias.
+    TEST_ASSERT_EQUAL_STRING("+447911123456", store.lookup(String("alice")).c_str());
+    // Should reply with confirmation containing "@alice".
+    bool sawReply = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("alice")) >= 0)
+        {
+            sawReply = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawReply);
+    TEST_ASSERT_EQUAL(600, poller.lastUpdateId());
+}
+
+void test_TelegramPoller_rmalias_removes_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    store.set(String("bob"), String("+441234567890"));
+    poller.setAliasStore(&store);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(601, kAllowedFromId, 0, "/rmalias bob", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(0, store.count());
+    bool sawRemoved = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("bob")) >= 0 && m.text.indexOf(String("removed")) >= 0)
+        {
+            sawRemoved = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawRemoved);
+}
+
+void test_TelegramPoller_rmalias_not_found_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    poller.setAliasStore(&store);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(602, kAllowedFromId, 0, "/rmalias nobody", kAllowedFromId)});
+    poller.tick();
+
+    bool sawError = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("not found")) >= 0)
+        {
+            sawError = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawError);
+}
+
+void test_TelegramPoller_aliases_lists_entries()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    store.set(String("carol"), String("+447900000001"));
+    poller.setAliasStore(&store);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(603, kAllowedFromId, 0, "/aliases", kAllowedFromId)});
+    poller.tick();
+
+    bool sawCarol = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("carol")) >= 0)
+        {
+            sawCarol = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawCarol);
+}
+
+void test_TelegramPoller_send_expands_at_alias()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    store.set(String("dave"), String("+441234567890"));
+    poller.setAliasStore(&store);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(604, kAllowedFromId, 0, "/send @dave Hello alias!", kAllowedFromId)});
+    poller.tick();
+
+    // SmsSender queue should have one entry for the resolved phone.
+    auto entries = sender.getQueueSnapshot();
+    TEST_ASSERT_EQUAL(1, (int)entries.size());
+    TEST_ASSERT_EQUAL_STRING("+441234567890", entries[0].phone.c_str());
+}
+
+void test_TelegramPoller_send_unknown_alias_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    poller.setAliasStore(&store);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(605, kAllowedFromId, 0, "/send @nobody Hello!", kAllowedFromId)});
+    poller.tick();
+
+    // Queue should be empty — no send attempted.
+    TEST_ASSERT_EQUAL(0, (int)sender.getQueueSnapshot().size());
+    // Error reply should mention the unknown alias.
+    bool sawError = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("nobody")) >= 0)
+        {
+            sawError = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -1405,4 +1610,11 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_queue_command_shows_pending);
     // RFC-0037: part count in /send confirmation
     RUN_TEST(test_TelegramPoller_send_multipart_shows_part_count);
+    // RFC-0088: phone aliases
+    RUN_TEST(test_TelegramPoller_addalias_adds_and_replies);
+    RUN_TEST(test_TelegramPoller_rmalias_removes_and_replies);
+    RUN_TEST(test_TelegramPoller_rmalias_not_found_sends_error);
+    RUN_TEST(test_TelegramPoller_aliases_lists_entries);
+    RUN_TEST(test_TelegramPoller_send_expands_at_alias);
+    RUN_TEST(test_TelegramPoller_send_unknown_alias_sends_error);
 }

@@ -106,6 +106,7 @@ static RealModem realModem(modem, SerialAT);
 static RealBotClient realBot;
 static SmsDebugLog smsDebugLog;
 static RealPersist realPersist;
+static SmsAliasStore smsAliasStore(realPersist); // RFC-0088
 static ReplyTargetMap replyTargets(realPersist);
 static SmsSender smsSender(realModem);
 #ifdef ENABLE_DELIVERY_REPORTS
@@ -977,6 +978,7 @@ void setup()
         }
 
         replyTargets.load();
+        smsAliasStore.load(); // RFC-0088
         smsHandler.setReplyTargetMap(&replyTargets);
         smsHandler.setDebugLog(&smsDebugLog);
         // RFC-0070: Forward SMS to all allow-list users; admin (index 0) already
@@ -1003,6 +1005,7 @@ void setup()
             return s;
         });
         smsSender.setDebugLog(&smsDebugLog); // RFC-0035: log outbound failures
+        telegramPoller->setAliasStore(&smsAliasStore); // RFC-0088
         telegramPoller->begin();
         Serial.print("TG->SMS poller online; reply-target slots in use: ");
         Serial.println((unsigned long)replyTargets.occupiedSlots());

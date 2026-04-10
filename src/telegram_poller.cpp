@@ -108,6 +108,11 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 help += "/block <num|prefix*> \xe2\x80\x94 Block sender\n";
                 help += "/unblock <num|prefix*> \xe2\x80\x94 Unblock sender\n";
             }
+            if (aliasStore_) {
+                help += "/aliases \xe2\x80\x94 List phone aliases\n";
+                help += "/addalias <name> <num> \xe2\x80\x94 Add/replace alias\n";
+                help += "/rmalias <name> \xe2\x80\x94 Remove alias\n";
+            }
             help += "\nReply to a forwarded SMS to send a response.";
             bot_.sendMessageTo(u.chatId, help);
             return;
@@ -371,6 +376,67 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0088: /aliases — list all defined phone aliases.
+        if (lower == "/aliases")
+        {
+            bot_.sendMessageTo(u.chatId,
+                aliasStore_ ? aliasStore_->list() : String("(aliases not configured)"));
+            return;
+        }
+
+        // RFC-0088: /addalias <name> <number> — add or replace a phone alias.
+        if (lower == "/addalias" || lower.startsWith("/addalias "))
+        {
+            String arg = extractArg(lower, "/addalias ");
+            int spacePos = arg.indexOf(' ');
+            if (arg.length() == 0 || spacePos <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /addalias <name> <number>\nExample: /addalias alice +447911123456"));
+                return;
+            }
+            if (!aliasStore_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(aliases not configured)"));
+                return;
+            }
+            String aName  = arg.substring(0, spacePos);
+            String aPhone = sms_codec::normalizePhoneNumber(arg.substring(spacePos + 1));
+            if (!aliasStore_->set(aName, aPhone))
+            {
+                sendErrorReply(u.chatId,
+                    String("Failed: name/number too long, or store full (max 10 aliases)."));
+                return;
+            }
+            bot_.sendMessageTo(u.chatId,
+                String("\xE2\x9C\x85 @") + aName + String(" \xe2\x86\x92 ") + aPhone); // ✅ @name → phone
+            return;
+        }
+
+        // RFC-0088: /rmalias <name> — remove a phone alias.
+        if (lower == "/rmalias" || lower.startsWith("/rmalias "))
+        {
+            String arg = extractArg(lower, "/rmalias ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /rmalias <name>"));
+                return;
+            }
+            if (!aliasStore_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(aliases not configured)"));
+                return;
+            }
+            if (!aliasStore_->remove(arg))
+            {
+                sendErrorReply(u.chatId, String("Alias @") + arg + String(" not found."));
+                return;
+            }
+            bot_.sendMessageTo(u.chatId,
+                String("\xE2\x9C\x85 Alias @") + arg + String(" removed.")); // ✅
+            return;
+        }
+
         // RFC-0026: /send <number> <body> — one-shot outbound SMS that
         // doesn't require a prior incoming SMS to reply to.
         if (lower == "/send" || lower.startsWith("/send "))
@@ -386,7 +452,27 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("Usage: /send <number> <message>\nExample: /send +8613800138000 Hello!"));
                 return;
             }
-            String phone = sms_codec::normalizePhoneNumber(arg.substring(0, spacePos)); // RFC-0078
+            String rawPhone = arg.substring(0, spacePos);
+            String phone;
+            if (rawPhone.length() > 0 && rawPhone[0] == '@')
+            {
+                // RFC-0088: @name alias expansion.
+                if (!aliasStore_)
+                {
+                    bot_.sendMessageTo(u.chatId, String("(aliases not configured)"));
+                    return;
+                }
+                phone = aliasStore_->lookup(rawPhone.substring(1));
+                if (phone.length() == 0)
+                {
+                    sendErrorReply(u.chatId, String("Unknown alias: ") + rawPhone);
+                    return;
+                }
+            }
+            else
+            {
+                phone = sms_codec::normalizePhoneNumber(rawPhone); // RFC-0078
+            }
             String body  = arg.substring(spacePos + 1);
             body.trim();
             if (body.length() == 0)
@@ -451,7 +537,26 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 return;
             }
             // arg is the phone number (one word, no body).
-            String phone = sms_codec::normalizePhoneNumber(arg);
+            String phone;
+            if (arg.length() > 0 && arg[0] == '@')
+            {
+                // RFC-0088: @name alias expansion.
+                if (!aliasStore_)
+                {
+                    bot_.sendMessageTo(u.chatId, String("(aliases not configured)"));
+                    return;
+                }
+                phone = aliasStore_->lookup(arg.substring(1));
+                if (phone.length() == 0)
+                {
+                    sendErrorReply(u.chatId, String("Unknown alias: ") + arg);
+                    return;
+                }
+            }
+            else
+            {
+                phone = sms_codec::normalizePhoneNumber(arg);
+            }
             // Build body with current UTC time if clock is valid.
             String body = String("Bridge test OK");
             time_t nowT = time(nullptr);
