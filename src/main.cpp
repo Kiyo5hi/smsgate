@@ -926,6 +926,10 @@ void setup()
         replyTargets.load();
         smsHandler.setReplyTargetMap(&replyTargets);
         smsHandler.setDebugLog(&smsDebugLog);
+        // RFC-0070: Forward SMS to all allow-list users; admin (index 0) already
+        // receives via sendMessageReturningId, so only pass indices 1..n-1.
+        if (allowedIdCount > 1)
+            smsHandler.setExtraRecipients(allowedIds + 1, allowedIdCount - 1);
         smsHandler.setOnForwarded([]() {                                        // RFC-0041/0044/0060
             s_lastSmsTimestamp = time(nullptr);
             uint32_t ts = (uint32_t)s_lastSmsTimestamp;                         // RFC-0044: persist

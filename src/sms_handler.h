@@ -83,6 +83,17 @@ public:
     // that records time(nullptr) so /status can show the last-received time.
     void setOnForwarded(std::function<void()> cb) { onForwarded_ = std::move(cb); }
 
+    // RFC-0070: Set extra Telegram recipients for forwarded SMS. When set,
+    // each successfully forwarded SMS (single-part or assembled concat) is
+    // also sent to each extra chat ID via sendMessageTo (no reply-routing).
+    // Only the admin (sendMessageReturningId) can reply-route back.
+    // The array must remain valid for the lifetime of SmsHandler.
+    void setExtraRecipients(const int64_t *ids, int count)
+    {
+        extraRecipients_ = ids;
+        extraRecipientCount_ = count;
+    }
+
     // Optional: set an SMS sender block list (RFC-0018). When set,
     // any incoming SMS whose sender exactly matches an entry in the
     // list is silently deleted from the SIM without forwarding to
@@ -229,6 +240,8 @@ private:
     ReplyTargetMap *replyTargets_ = nullptr;
     SmsDebugLog *debugLog_ = nullptr;
     std::function<void()> onForwarded_;
+    const int64_t *extraRecipients_ = nullptr; // RFC-0070
+    int extraRecipientCount_ = 0;             // RFC-0070
     const char (*blockList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;
     int blockListCount_ = 0;
     const char (*runtimeList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;

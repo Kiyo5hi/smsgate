@@ -542,6 +542,39 @@ void test_dedup_different_sender_not_suppressed()
     TEST_ASSERT_EQUAL(2, (int)bot.callCount());
 }
 
+// ---------- RFC-0070: multi-user SMS forwarding ----------
+
+void test_extra_recipients_receive_forwarded_sms()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    SmsHandler handler(modem, bot, [&]() {});
+
+    static const int64_t extras[2] = {111, 222};
+    handler.setExtraRecipients(extras, 2);
+
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty(); // CMGD
+
+    handler.handleSmsIndex(1);
+
+    // Total sends: 1 (admin via sendMessageReturningId) + 2 (extras via sendMessageTo)
+    TEST_ASSERT_EQUAL(3, (int)bot.callCount());
+    // smsForwarded should still be 1 (each unique SMS counts once).
+    TEST_ASSERT_EQUAL(1, handler.smsForwarded());
+
+    // Verify chatIds: admin send has chatId=0 (sentinel), extras have their ids.
+    const auto &msgs = bot.sentMessagesWithTarget();
+    TEST_ASSERT_EQUAL(3, (int)msgs.size());
+    TEST_ASSERT_EQUAL(0,   (int)msgs[0].chatId); // admin sentinel
+    TEST_ASSERT_EQUAL(111, (int)msgs[1].chatId);
+    TEST_ASSERT_EQUAL(222, (int)msgs[2].chatId);
+    // All three should contain "Hello" (the body).
+    TEST_ASSERT_TRUE(msgs[0].text.indexOf("Hello") >= 0);
+    TEST_ASSERT_TRUE(msgs[1].text.indexOf("Hello") >= 0);
+    TEST_ASSERT_TRUE(msgs[2].text.indexOf("Hello") >= 0);
+}
+
 // ---------- Unity plumbing ----------
 
 void run_sms_handler_tests()
@@ -566,4 +599,6 @@ void run_sms_handler_tests()
     RUN_TEST(test_dedup_single_suppresses_duplicate);
     RUN_TEST(test_dedup_single_allows_after_window_expires);
     RUN_TEST(test_dedup_different_sender_not_suppressed);
+    // RFC-0070: multi-user forwarding
+    RUN_TEST(test_extra_recipients_receive_forwarded_sms);
 }

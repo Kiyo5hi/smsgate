@@ -103,6 +103,9 @@ bool SmsHandler::forwardSingle(const sms_codec::SmsPdu &pdu, int /*simIndex*/)
     {
         replyTargets_->put(mid, pdu.sender);
     }
+    // RFC-0070: Fan out to extra recipients (no reply-routing for them).
+    for (int i = 0; i < extraRecipientCount_; i++)
+        bot_.sendMessageTo(extraRecipients_[i], formatted);
     smsForwarded_++;
     if (onForwarded_) onForwarded_();
     return true;
@@ -314,6 +317,9 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
     {
         replyTargets_->put(mid, group->sender);
     }
+    // RFC-0070: Fan out to extra recipients (no reply-routing for them).
+    for (int i = 0; i < extraRecipientCount_; i++)
+        bot_.sendMessageTo(extraRecipients_[i], formatted);
     recordDedup(group->sender, assembled); // RFC-0061: record after success
     smsForwarded_++;
     if (onForwarded_) onForwarded_();
