@@ -404,6 +404,11 @@ bool RealBotClient::sendMessageTo(int64_t chatId, const String &text)
     return doSendMessage(text, chatId) > 0;
 }
 
+int32_t RealBotClient::sendMessageToReturningId(int64_t chatId, const String &text)
+{
+    return doSendMessage(text, chatId);
+}
+
 // ---------- pollUpdates (RFC-0003) ----------
 
 bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,

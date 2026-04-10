@@ -32,6 +32,7 @@ public:
     bool sendMessage(const String &text) override;
     int32_t sendMessageReturningId(const String &text) override;
     bool sendMessageTo(int64_t chatId, const String &text) override;
+    int32_t sendMessageToReturningId(int64_t chatId, const String &text) override;
     bool pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
                      std::vector<TelegramUpdate> &out) override;
 

@@ -79,6 +79,23 @@ public:
         return defaultReturn_;
     }
 
+    // RFC-0054: same as sendMessageTo but returns message_id.
+    int32_t sendMessageToReturningId(int64_t chatId, const String &text) override
+    {
+        sent_.push_back({chatId, text});
+        if (!results_.empty())
+        {
+            bool r = results_.front();
+            results_.erase(results_.begin());
+            if (!r) return 0;
+        }
+        else if (!defaultReturn_)
+        {
+            return 0;
+        }
+        return ++lastFakeMsgId_;
+    }
+
     // ---- pollUpdates (RFC-0003) ----
 
     struct PollResult

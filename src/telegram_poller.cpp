@@ -278,9 +278,12 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                         String("SMS to ") + capturedPhone + " failed after retries.");
                 },
                 [this, requesterChatId, capturedPhone]() {
-                    // RFC-0032: delivery confirmation.
-                    bot_.sendMessageTo(requesterChatId,
+                    // RFC-0032 / RFC-0054: delivery confirmation. Store the
+                    // message_id so replying to it also routes to capturedPhone.
+                    int32_t delivId = bot_.sendMessageToReturningId(requesterChatId,
                         String("\xF0\x9F\x93\xA8 Sent to ") + capturedPhone); // U+1F4E8
+                    if (delivId > 0)
+                        replyTargets_.put(delivId, capturedPhone);
                 });
             // RFC-0029: Include a body preview so the user can catch typos.
             String preview = body.substring(0, 30);
@@ -410,9 +413,12 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             sendErrorReply(requesterChatId, String("SMS to ") + capturedPhone + " failed after retries.");
         },
         [this, capturedPhone, requesterChatId]() {
-            // RFC-0032: delivery confirmation fires from drainQueue on success.
-            bot_.sendMessageTo(requesterChatId,
+            // RFC-0032 / RFC-0054: delivery confirmation. Store the
+            // message_id so replying to it also routes to capturedPhone.
+            int32_t delivId = bot_.sendMessageToReturningId(requesterChatId,
                 String("\xF0\x9F\x93\xA8 Sent to ") + capturedPhone); // U+1F4E8 envelope
+            if (delivId > 0)
+                replyTargets_.put(delivId, capturedPhone);
         });
 
     // 4. Confirm enqueueing immediately (delivery confirmation comes

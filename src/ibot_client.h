@@ -56,6 +56,12 @@ public:
     // sendMessageReturningId(), which always target adminChatId_.
     virtual bool sendMessageTo(int64_t chatId, const String &text) = 0;
 
+    // Like sendMessageTo but returns the new Telegram message_id (> 0 on
+    // success, 0 on failure). Use when you need to store the id in the
+    // reply-target map so a future user reply can be routed back.
+    // RFC-0054: delivery confirmation tracking.
+    virtual int32_t sendMessageToReturningId(int64_t chatId, const String &text) = 0;
+
     // Long-poll the Telegram getUpdates endpoint. Sends `offset =
     // sinceUpdateId + 1` if sinceUpdateId > 0, otherwise no offset.
     // `timeoutSec` is forwarded to Telegram as the `timeout` query
