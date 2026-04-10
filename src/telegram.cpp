@@ -398,7 +398,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "setinterval";
         c["description"] = "Set heartbeat interval: /setinterval <seconds> (0=off)";
     }
-
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setmaxfail";
+        c["description"] = "Set failure reboot threshold: /setmaxfail <N> (0=never)";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "flushsim";
+        c["description"] = "Delete all SMS from SIM: /flushsim yes";
+    }
     String payload;
     serializeJson(doc, payload);
 

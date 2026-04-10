@@ -1305,6 +1305,66 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0138: /setmaxfail <N> — change consecutive-failure reboot threshold.
+        if (lower == "/setmaxfail" || lower.startsWith("/setmaxfail "))
+        {
+            if (!maxFailFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setmaxfail not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/setmaxfail ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setmaxfail <N>\n0 = never reboot on failures, max 99"));
+                return;
+            }
+            long val = arg.toInt();
+            if (val < 0 || val > 99)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid value (0\xe2\x80\x93 99).")); // ❌
+                return;
+            }
+            maxFailFn_((int)val);
+            if (val == 0)
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 Auto-reboot on failure disabled.")); // ✅
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 Reboot threshold set to ") // ✅
+                    + String((int)val) + String(" consecutive failures."));
+            return;
+        }
+
+        // RFC-0139: /flushsim yes — delete all SMS from SIM.
+        if (lower == "/flushsim" || lower.startsWith("/flushsim "))
+        {
+            if (!flushSimFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(flushsim not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/flushsim ");
+            if (arg != "yes")
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /flushsim yes\n"
+                           "\xe2\x9a\xa0\xef\xb8\x8f This deletes ALL SMS from the SIM. " // ⚠️
+                           "Type /flushsim yes to confirm."));
+                return;
+            }
+            int n = flushSimFn_();
+            if (n < 0)
+                bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 SIM flushed.")); // ✅
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 SIM flushed: ") + String(n) // ✅
+                    + String(n == 1 ? " SMS deleted." : " SMS deleted."));
+            return;
+        }
+
         // RFC-0131: /note — show current device note.
         if (lower == "/note")
         {

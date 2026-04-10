@@ -1316,6 +1316,20 @@ void setup()
             s_heartbeatIntervalSec = secs;
             realPersist.saveBlob("hb_interval", &secs, sizeof(secs));
         });
+        telegramPoller->setMaxFailFn([&smsHandler](int n) { // RFC-0138
+            smsHandler.setMaxConsecutiveFailures(n);
+        });
+        telegramPoller->setFlushSimFn([]() -> int { // RFC-0139
+            // AT+CMGDA="DEL ALL" — A76xx/SIM7xxx extension to delete all SMS.
+            realModem.sendAT(String("+CMGDA=\"DEL ALL\""));
+            bool ok = realModem.waitResponseOk(10000);
+            if (!ok) {
+                Serial.println("[flushsim] CMGDA failed, trying CMGDA=6");
+                realModem.sendAT(String("+CMGDA=6")); // numeric variant
+                realModem.waitResponseOk(10000);
+            }
+            return -1; // count unknown
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])

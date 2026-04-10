@@ -4106,6 +4106,151 @@ void test_TelegramPoller_send_duplicate_gets_already_queued_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0138: /setmaxfail <N> calls fn with N.
+void test_TelegramPoller_setmaxfail_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    int captured = -1;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setMaxFailFn([&captured](int n) { captured = n; });
+
+    bot.queueUpdateBatch({makeUpdate(990, kAllowedFromId, 0, "/setmaxfail 5", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(990, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(5, captured);
+    bool sawOk = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("5")) >= 0 && m.indexOf(String("failures")) >= 0) { sawOk = true; break; }
+    TEST_ASSERT_TRUE(sawOk);
+}
+
+// RFC-0138: /setmaxfail 0 disables reboot.
+void test_TelegramPoller_setmaxfail_zero_disables()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    int captured = -1;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setMaxFailFn([&captured](int n) { captured = n; });
+
+    bot.queueUpdateBatch({makeUpdate(991, kAllowedFromId, 0, "/setmaxfail 0", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(991, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(0, captured);
+    bool sawDisabled = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("disabled")) >= 0) { sawDisabled = true; break; }
+    TEST_ASSERT_TRUE(sawDisabled);
+}
+
+// RFC-0138: /setmaxfail 100 → validation error.
+void test_TelegramPoller_setmaxfail_too_large_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setMaxFailFn([&fnCalled](int) { fnCalled = true; });
+
+    bot.queueUpdateBatch({makeUpdate(992, kAllowedFromId, 0, "/setmaxfail 100", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(992, poller.lastUpdateId());
+    TEST_ASSERT_FALSE(fnCalled);
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Invalid")) >= 0) { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+}
+
+// RFC-0139: /flushsim yes calls fn and confirms.
+void test_TelegramPoller_flushsim_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setFlushSimFn([&fnCalled]() -> int { fnCalled = true; return 7; });
+
+    bot.queueUpdateBatch({makeUpdate(993, kAllowedFromId, 0, "/flushsim yes", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(993, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(fnCalled);
+    bool sawOk = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("flushed")) >= 0) { sawOk = true; break; }
+    TEST_ASSERT_TRUE(sawOk);
+}
+
+// RFC-0139: /flushsim without "yes" → usage error.
+void test_TelegramPoller_flushsim_without_yes_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setFlushSimFn([&fnCalled]() -> int { fnCalled = true; return 0; });
+
+    bot.queueUpdateBatch({makeUpdate(994, kAllowedFromId, 0, "/flushsim", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(994, poller.lastUpdateId());
+    TEST_ASSERT_FALSE(fnCalled);
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("yes")) >= 0) { sawUsage = true; break; }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -4269,6 +4414,13 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setinterval_calls_fn);
     RUN_TEST(test_TelegramPoller_setinterval_zero_disables);
     RUN_TEST(test_TelegramPoller_setinterval_too_large_sends_error);
+    // RFC-0138: /setmaxfail command
+    RUN_TEST(test_TelegramPoller_setmaxfail_calls_fn);
+    RUN_TEST(test_TelegramPoller_setmaxfail_zero_disables);
+    RUN_TEST(test_TelegramPoller_setmaxfail_too_large_sends_error);
+    // RFC-0139: /flushsim command
+    RUN_TEST(test_TelegramPoller_flushsim_calls_fn);
+    RUN_TEST(test_TelegramPoller_flushsim_without_yes_sends_usage);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

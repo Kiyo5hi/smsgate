@@ -48,6 +48,7 @@ public:
     // After this many consecutive Telegram send failures, the handler
     // calls the injected RebootFn to escape stuck TLS / WiFi / DNS /
     // TinyGSM states. Public so tests can reference it by name.
+    // RFC-0138: also settable at runtime via setMaxConsecutiveFailures().
     static constexpr int MAX_CONSECUTIVE_FAILURES = 8;
 
     // Reassembly buffer caps (RFC-0002). Public so tests can reference
@@ -132,6 +133,16 @@ public:
     // to catch up on messages that arrived while the bridge was offline.
     // Returns the count of SIM indices dispatched to handleSmsIndex.
     int sweepExistingSms();
+
+    // RFC-0138: Set the consecutive-failure reboot threshold. 0 = never
+    // reboot on failures (useful for debugging). Max 99.
+    void setMaxConsecutiveFailures(int n)
+    {
+        if (n < 0) n = 0;
+        if (n > 99) n = 99;
+        maxConsecutiveFailures_ = n;
+    }
+    int maxConsecutiveFailures() const { return maxConsecutiveFailures_; }
 
     // Test-only accessor — no runtime caller.
     int consecutiveFailures() const { return consecutiveFailures_; }
@@ -258,6 +269,7 @@ private:
     int blockListCount_ = 0;
     const char (*runtimeList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;
     int runtimeListCount_ = 0;
+    int maxConsecutiveFailures_ = MAX_CONSECUTIVE_FAILURES; // RFC-0138
     int consecutiveFailures_ = 0;
     int smsForwarded_ = 0;
     int telegramSendFailures_ = 0;

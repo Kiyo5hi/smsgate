@@ -264,6 +264,14 @@ public:
     void setNoteGetFn(std::function<String()> fn) { noteGetFn_ = std::move(fn); }
     void setNoteSetFn(std::function<void(const String &)> fn) { noteSetFn_ = std::move(fn); }
 
+    // RFC-0138: Optional max-consecutive-failures setter. When set,
+    // /setmaxfail <N> updates the threshold (0 = never reboot, max 99).
+    void setMaxFailFn(std::function<void(int)> fn) { maxFailFn_ = std::move(fn); }
+
+    // RFC-0139: Optional SIM flush fn. The fn deletes all SMS and returns
+    // the count of deleted slots (-1 if unknown). /flushsim yes invokes it.
+    void setFlushSimFn(std::function<int()> fn) { flushSimFn_ = std::move(fn); }
+
     // RFC-0121: Optional network info callback. When set, /network calls this
     // fn and replies with the result (e.g. "📶 Operator: T-Mobile | Reg: home | CSQ 18 (good)").
     // When not set, replies "(network info not configured)".
@@ -325,6 +333,8 @@ private:
     std::function<void(uint32_t)> intervalFn_; // RFC-0137
     std::function<String()> noteGetFn_;   // RFC-0131
     std::function<void(const String &)> noteSetFn_; // RFC-0131
+    std::function<void(int)> maxFailFn_;  // RFC-0138
+    std::function<int()> flushSimFn_;     // RFC-0139
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;
