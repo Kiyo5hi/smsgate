@@ -1537,6 +1537,17 @@ void loop()
                 hb += String(" | fwd "); hb += String(smsHandler.smsForwarded());
                 hb += String(" | q "); hb += String(smsSender.queueSize());
                 hb += String("/"); hb += String(SmsSender::kQueueSize);
+#ifdef USSD_BALANCE_CODE
+                // RFC-0106: Append USSD balance check to heartbeat.
+                {
+                    String bal = realModem.ussdQuery(String(USSD_BALANCE_CODE), 10000UL);
+                    if (bal.length() > 0)
+                    {
+                        if (bal.length() > 40) bal = bal.substring(0, 40) + "\xE2\x80\xA6"; // …
+                        hb += String(" | Bal: "); hb += bal;
+                    }
+                }
+#endif
                 if (!realBot.sendMessage(hb))
                     Serial.println("Heartbeat: sendMessage failed (connectivity issue)");
             }
