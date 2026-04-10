@@ -178,6 +178,8 @@ static RegStatus cachedRegStatus = REG_NO_RESULT;
 static String cachedOperatorName;
 // RFC-0045: Modem firmware version (AT+CGMR), queried once at boot.
 static String cachedModemFirmware;
+// RFC-0076: Modem IMEI (AT+GSN), queried once at boot.
+static String cachedImei;
 // RFC-0031: CSQ trend — last 6 readings (one per 30s refresh = 3 min window).
 static int csqHistory[6] = {0, 0, 0, 0, 0, 0};
 static int csqHistoryIdx = 0;
@@ -662,6 +664,7 @@ void setup()
         msg += "  Modem: CSQ "; msg += String(cachedCsq); msg += " ("; msg += csqLabel; msg += ")  "; msg += regStr;
         if (cachedOperatorName.length() > 0) { msg += " ("; msg += cachedOperatorName; msg += ")"; }
         if (cachedModemFirmware.length() > 0) { msg += "\n  FW: "; msg += cachedModemFirmware; } // RFC-0045
+        if (cachedImei.length() > 0) { msg += "\n  IMEI: "; msg += cachedImei; }                 // RFC-0076
         // RFC-0031: Append CSQ trend (oldest→newest, only if we have history).
         if (csqHistoryFull || csqHistoryIdx > 0)
         {
@@ -1000,6 +1003,11 @@ void setup()
         if (cachedModemFirmware.startsWith("+CGMR: "))
             cachedModemFirmware = cachedModemFirmware.substring(7);
         cachedModemFirmware.trim();
+    }
+    // RFC-0076: Query IMEI once at boot (doesn't change).
+    {
+        cachedImei = modem.getIMEI();
+        cachedImei.trim();
     }
     // RFC-0036: Prime SIM slot usage at boot.
     {
