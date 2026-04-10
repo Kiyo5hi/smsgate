@@ -424,6 +424,32 @@ void test_SmsSender_nullptr_on_final_failure_no_crash()
     TEST_ASSERT_EQUAL(0, sender.queueSize());
 }
 
+// RFC-0033: getQueueSnapshot returns empty when queue is empty.
+void test_SmsSender_snapshot_empty_queue()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    TEST_ASSERT_EQUAL(0, (int)sender.getQueueSnapshot().size());
+}
+
+// RFC-0033: getQueueSnapshot captures phone, bodyPreview, and attempts.
+void test_SmsSender_snapshot_captures_entry()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1); // keep in queue
+
+    sender.enqueue(String("+1"), String("Hello world this is longer than twenty chars"));
+    sender.drainQueue(0); // fail → attempts becomes 1
+
+    auto snap = sender.getQueueSnapshot();
+    TEST_ASSERT_EQUAL(1, (int)snap.size());
+    TEST_ASSERT_EQUAL_STRING("+1", snap[0].phone.c_str());
+    // bodyPreview is first 20 chars
+    TEST_ASSERT_EQUAL_STRING("Hello world this is ", snap[0].bodyPreview.c_str());
+    TEST_ASSERT_EQUAL(1, snap[0].attempts);
+}
+
 void run_sms_sender_tests()
 {
     RUN_TEST(test_SmsSender_ascii_builds_gsm7_pdu);
@@ -445,4 +471,6 @@ void run_sms_sender_tests()
     RUN_TEST(test_SmsSender_nullptr_on_final_failure_no_crash);
     RUN_TEST(test_SmsSender_on_success_called_after_delivery);
     RUN_TEST(test_SmsSender_on_success_not_called_on_failure);
+    RUN_TEST(test_SmsSender_snapshot_empty_queue);
+    RUN_TEST(test_SmsSender_snapshot_captures_entry);
 }

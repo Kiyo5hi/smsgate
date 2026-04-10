@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include <functional>
 #include <array>
+#include <vector>
 
 #include "imodem.h"
 #include "delivery_report_map.h"
@@ -84,6 +85,16 @@ public:
 
     // Number of entries currently in the queue. For testing / introspection.
     int queueSize() const;
+
+    // Snapshot of occupied queue entries (RFC-0033: /queue command).
+    // Each entry carries phone, a body preview (up to 20 chars), and
+    // the attempt count (0 = first attempt not yet made).
+    struct QueueSnapshot {
+        String phone;
+        String bodyPreview; // first ≤20 chars of body
+        int attempts;
+    };
+    std::vector<QueueSnapshot> getQueueSnapshot() const;
 
     // Attach a DeliveryReportMap so single-part sends store the MR for
     // correlation with +CDS URCs (RFC-0011). Pass nullptr to disable.

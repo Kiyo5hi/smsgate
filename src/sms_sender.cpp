@@ -191,3 +191,19 @@ int SmsSender::queueSize() const
             ++count;
     return count;
 }
+
+std::vector<SmsSender::QueueSnapshot> SmsSender::getQueueSnapshot() const
+{
+    std::vector<QueueSnapshot> result;
+    for (const auto &e : queue_)
+    {
+        if (!e.occupied)
+            continue;
+        QueueSnapshot s;
+        s.phone       = e.phone;
+        s.bodyPreview = e.body.substring(0, 20);
+        s.attempts    = e.attempts;
+        result.push_back(s);
+    }
+    return result;
+}

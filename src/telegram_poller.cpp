@@ -237,10 +237,38 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0033: /queue — show pending outbound SMS queue.
+        if (lower == "/queue")
+        {
+            auto entries = smsSender_.getQueueSnapshot();
+            String msg;
+            if (entries.empty())
+            {
+                msg = String("\xF0\x9F\x93\xA4 Queue empty"); // U+1F4E4 outbox
+            }
+            else
+            {
+                msg = String("\xF0\x9F\x93\xA4 Queue: ") + String((int)entries.size()) + String(" pending\n");
+                int n = 1;
+                for (const auto &e : entries)
+                {
+                    msg += String(n++) + String(". ") + e.phone + String(" \xe2\x80\x9c"); // "
+                    msg += e.bodyPreview;
+                    if (e.bodyPreview.length() == 20)
+                        msg += String("\xE2\x80\xA6"); // U+2026 ellipsis
+                    msg += String("\xe2\x80\x9d"); // "
+                    msg += String(" (attempt ") + String(e.attempts + 1)
+                        + String("/") + String(SmsSender::kMaxAttempts) + String(")\n");
+                }
+            }
+            bot_.sendMessageTo(u.chatId, msg);
+            return;
+        }
+
         Serial.println("TelegramPoller: no reply_to_message_id, dropping");
         {
             String help = "Reply to a forwarded SMS to send a response. ";
-            help += "Commands: /debug, /status, /restart, /send <num> <msg>";
+            help += "Commands: /debug, /status, /restart, /send <num> <msg>, /queue";
             if (smsBlockMutator_)
                 help += ", /blocklist, /block <num>, /unblock <num>";
             sendErrorReply(u.chatId, help);

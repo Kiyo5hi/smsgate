@@ -1181,6 +1181,70 @@ void test_TelegramPoller_send_preserves_body_case()
     TEST_ASSERT_EQUAL(1, sender.queueSize());
 }
 
+// ---------- RFC-0033: /queue command ----------
+
+void test_TelegramPoller_queue_command_empty()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(700, kAllowedFromId, 0, "/queue", kAllowedFromId)});
+    poller.tick();
+
+    bool sawEmpty = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Queue empty")) >= 0) { sawEmpty = true; break; }
+    TEST_ASSERT_TRUE(sawEmpty);
+}
+
+void test_TelegramPoller_queue_command_shows_pending()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+    rtm.put(42, String("+8613800138000"));
+
+    // Make the modem fail so the SMS stays in the queue.
+    modem.setPduSendDefault(-1);
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // Enqueue an SMS reply via the normal reply path.
+    bot.queueUpdateBatch({makeUpdate(701, kAllowedFromId, 42, "hi there", kAllowedFromId)});
+    poller.tick();
+    sender.drainQueue(0); // attempt fails; stays in queue
+
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    // Now issue /queue — must mention the phone number.
+    clk.nowMs += TelegramPoller::kPollIntervalMs;
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(702, kAllowedFromId, 0, "/queue", kAllowedFromId)});
+    poller.tick();
+
+    bool sawPhone = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("+8613800138000")) >= 0) { sawPhone = true; break; }
+    TEST_ASSERT_TRUE(sawPhone);
+}
+
 // ---------- RFC-0032: delivery confirmation on successful SMS send ----------
 
 // Reply to a forwarded SMS: after drainQueue succeeds, "📨 Sent to" is delivered.
@@ -1306,4 +1370,7 @@ void run_telegram_poller_tests()
     // RFC-0032: delivery confirmation
     RUN_TEST(test_TelegramPoller_reply_delivery_notification);
     RUN_TEST(test_TelegramPoller_send_delivery_notification);
+    // RFC-0033: /queue command
+    RUN_TEST(test_TelegramPoller_queue_command_empty);
+    RUN_TEST(test_TelegramPoller_queue_command_shows_pending);
 }
