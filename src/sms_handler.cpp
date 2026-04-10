@@ -525,8 +525,9 @@ void SmsHandler::handleSmsIndex(int idx)
     // the normal path where deletion is conditional on a successful
     // Telegram POST. Omitting the CMGD would cause infinite boot-loop
     // replays of blocked fragments via sweepExistingSms.
-    if ((blockList_   && isBlocked(pdu.sender.c_str(), blockList_,   blockListCount_))  ||
-        (runtimeList_ && isBlocked(pdu.sender.c_str(), runtimeList_, runtimeListCount_)))
+    if (blockingEnabled_ &&  // RFC-0162: check only when enforcement is on
+        ((blockList_   && isBlocked(pdu.sender.c_str(), blockList_,   blockListCount_))  ||
+         (runtimeList_ && isBlocked(pdu.sender.c_str(), runtimeList_, runtimeListCount_))))
     {
         Serial.print("SMS from blocked sender ");
         Serial.print(pdu.sender);

@@ -144,6 +144,11 @@ public:
     void setForwardingEnabled(bool enabled) { forwardingEnabled_ = enabled; }
     bool forwardingEnabled() const { return forwardingEnabled_; }
 
+    // RFC-0162: Toggle SMS block list enforcement. When false, both compile-time
+    // and runtime block lists are bypassed (entries remain but are not checked).
+    void setBlockingEnabled(bool enabled) { blockingEnabled_ = enabled; }
+    bool blockingEnabled() const { return blockingEnabled_; }
+
     // RFC-0144: Set the dedup window. 0 = disable dedup entirely.
     void setDedupWindowMs(unsigned long ms) { dedupWindowMs_ = ms; }
     unsigned long dedupWindowMs() const { return dedupWindowMs_; }
@@ -301,6 +306,7 @@ private:
     const char (*runtimeList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;
     int runtimeListCount_ = 0;
     bool forwardingEnabled_ = true;                   // RFC-0153
+    bool blockingEnabled_   = true;                   // RFC-0162
     unsigned long concatTtlMs_   = CONCAT_TTL_MS;    // RFC-0142
     unsigned long dedupWindowMs_ = kDedupWindowMs;   // RFC-0144
     int maxConsecutiveFailures_ = MAX_CONSECUTIVE_FAILURES; // RFC-0138

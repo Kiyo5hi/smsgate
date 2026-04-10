@@ -523,6 +523,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "smscount";
         c["description"] = "SIM SMS storage capacity (used/total) via AT+CPMS?";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setblockmode";
+        c["description"] = "Toggle block list enforcement: /setblockmode on|off";
+    }
     String payload;
     serializeJson(doc, payload);
 

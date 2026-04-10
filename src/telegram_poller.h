@@ -312,6 +312,10 @@ public:
     // and replies with used/total storage counts from AT+CPMS?.
     void setSmsCntFn(std::function<String()> fn) { smsCntFn_ = std::move(fn); }
 
+    // RFC-0162: Optional block-mode toggle fn. When set, /setblockmode on|off
+    // calls this fn with true/false to enable/disable block list enforcement.
+    void setBlockingEnabledFn(std::function<void(bool)> fn) { blockingEnabledFn_ = std::move(fn); }
+
     // RFC-0146: Optional SMS forward fn. When set, /forwardsim <idx> calls
     // this fn with the SIM index and replies success/failure.
     void setSmsForwardFn(std::function<bool(int)> fn) { smsForwardFn_ = std::move(fn); }
@@ -422,6 +426,7 @@ private:
     std::function<String()> wifiScanFn_;           // RFC-0158
     std::function<void(int)> maxPartsFn_;          // RFC-0160
     std::function<String()> smsCntFn_;             // RFC-0161
+    std::function<void(bool)> blockingEnabledFn_;  // RFC-0162
     std::function<bool(int)> smsForwardFn_;        // RFC-0146
     uint32_t pollIntervalMs_ = kPollIntervalMs;    // RFC-0147
     std::function<void(uint32_t)> dedupWindowFn_;  // RFC-0144

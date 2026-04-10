@@ -5531,6 +5531,61 @@ void test_TelegramPoller_smscount_not_configured_replies_placeholder()
     TEST_ASSERT_TRUE(sawPlaceholder);
 }
 
+// RFC-0162: /setblockmode off calls fn with false.
+void test_TelegramPoller_setblockmode_off_calls_fn_false()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool captured = true;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setBlockingEnabledFn([&captured](bool v) { captured = v; });
+
+    bot.queueUpdateBatch({makeUpdate(1079, kAllowedFromId, 0, "/setblockmode off", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1079, poller.lastUpdateId());
+    TEST_ASSERT_FALSE(captured);
+    bool sawSuspend = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("SUSPENDED")) >= 0 || m.indexOf(String("pass through")) >= 0)
+            { sawSuspend = true; break; }
+    TEST_ASSERT_TRUE(sawSuspend);
+}
+
+// RFC-0162: /setblockmode on calls fn with true.
+void test_TelegramPoller_setblockmode_on_calls_fn_true()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool captured = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setBlockingEnabledFn([&captured](bool v) { captured = v; });
+
+    bot.queueUpdateBatch({makeUpdate(1080, kAllowedFromId, 0, "/setblockmode on", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1080, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(captured);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5764,6 +5819,9 @@ void run_telegram_poller_tests()
     // RFC-0161: /smscount command
     RUN_TEST(test_TelegramPoller_smscount_calls_fn);
     RUN_TEST(test_TelegramPoller_smscount_not_configured_replies_placeholder);
+    // RFC-0162: /setblockmode command
+    RUN_TEST(test_TelegramPoller_setblockmode_off_calls_fn_false);
+    RUN_TEST(test_TelegramPoller_setblockmode_on_calls_fn_true);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

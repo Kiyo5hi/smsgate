@@ -148,6 +148,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/ip \xe2\x80\x94 WiFi IP address, SSID, and RSSI\n";
             help += "/smsslots \xe2\x80\x94 SIM SMS slot usage\n";
             help += "/smscount \xe2\x80\x94 SIM SMS storage capacity (used/total) via AT+CPMS?\n";
+            help += "/setblockmode on|off \xe2\x80\x94 Enable/suspend SMS block list enforcement\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
             help += "/announce <msg> \xe2\x80\x94 Broadcast message to all authorized users\n";
             help += "/digest \xe2\x80\x94 Show on-demand stats digest\n";
@@ -1411,6 +1412,28 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         if (lower == "/setforward")
         {
             bot_.sendMessageTo(u.chatId, String("Usage: /setforward on\n/setforward off"));
+            return;
+        }
+
+        // RFC-0162: /setblockmode on|off — toggle block list enforcement.
+        if (lower == "/setblockmode on" || lower == "/setblockmode off")
+        {
+            if (!blockingEnabledFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setblockmode not configured)"));
+                return;
+            }
+            bool enable = (lower == "/setblockmode on");
+            blockingEnabledFn_(enable);
+            bot_.sendMessageTo(u.chatId,
+                enable
+                    ? String("\xe2\x9c\x85 Block list enforcement ENABLED.")  // ✅
+                    : String("\xe2\x9a\xa0\xef\xb8\x8f Block list SUSPENDED. All senders pass through.")); // ⚠️
+            return;
+        }
+        if (lower == "/setblockmode")
+        {
+            bot_.sendMessageTo(u.chatId, String("Usage: /setblockmode on\n/setblockmode off"));
             return;
         }
 

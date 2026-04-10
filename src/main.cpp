@@ -1390,6 +1390,9 @@ void setup()
         telegramPoller->setMaxPartsFn([&smsSender](int n) { // RFC-0160
             smsSender.setMaxParts(n);
         });
+        telegramPoller->setBlockingEnabledFn([&smsHandler](bool enable) { // RFC-0162
+            smsHandler.setBlockingEnabled(enable);
+        });
         telegramPoller->setSmsCntFn([]() -> String { // RFC-0161
             String raw;
             realModem.sendAT(String("+CPMS?"));
