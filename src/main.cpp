@@ -2858,9 +2858,14 @@ void loop()
                     if (comma > 0) {
                         int idx = line.substring(comma + 1).toInt();
                         if (idx > 0) {
-                            Serial.printf("[RFC-0236] Piggybacked +CMTI idx=%d — dispatching\n", idx);
-                            esp_task_wdt_reset();
-                            smsHandler.handleSmsIndex(idx);
+                            if (activeTransport == ActiveTransport::kNone) {
+                                // RFC-0244: no transport — skip, sweep on reconnect
+                                Serial.printf("[RFC-0236] Piggybacked +CMTI idx=%d skipped (no transport)\n", idx);
+                            } else {
+                                Serial.printf("[RFC-0236] Piggybacked +CMTI idx=%d — dispatching\n", idx);
+                                esp_task_wdt_reset();
+                                smsHandler.handleSmsIndex(idx);
+                            }
                         }
                     }
                 } else if (line.startsWith("RING") || line.startsWith("+CLIP:")) {
@@ -3052,9 +3057,14 @@ void loop()
                     if (cm239 > 0) {
                         int idx239 = l239.substring(cm239 + 1).toInt();
                         if (idx239 > 0) {
-                            Serial.printf("[RFC-0239] Piggybacked +CMTI idx=%d — dispatching\n", idx239);
-                            esp_task_wdt_reset();
-                            smsHandler.handleSmsIndex(idx239);
+                            if (activeTransport == ActiveTransport::kNone) {
+                                // RFC-0244: no transport — skip, sweep on reconnect
+                                Serial.printf("[RFC-0239] Piggybacked +CMTI idx=%d skipped (no transport)\n", idx239);
+                            } else {
+                                Serial.printf("[RFC-0239] Piggybacked +CMTI idx=%d — dispatching\n", idx239);
+                                esp_task_wdt_reset();
+                                smsHandler.handleSmsIndex(idx239);
+                            }
                         }
                     }
                 } else if (l239.startsWith("RING") || l239.startsWith("+CLIP:")) {
