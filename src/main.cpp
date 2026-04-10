@@ -1074,6 +1074,13 @@ void setup()
         telegramPoller->setUssdFn([](const String &code) -> String { // RFC-0103
             return realModem.ussdQuery(code, 10000UL);
         });
+        telegramPoller->setBalanceCodeFn([]() -> String {            // RFC-0114
+#ifdef USSD_BALANCE_CODE
+            return String(USSD_BALANCE_CODE);
+#else
+            return String();
+#endif
+        });
         telegramPoller->setResetStatsFn([]() {                      // RFC-0110
             smsHandler.resetStats();
             callHandler.resetStats();

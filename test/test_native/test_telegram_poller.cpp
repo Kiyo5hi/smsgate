@@ -2336,6 +2336,134 @@ void test_TelegramPoller_addalias_invalid_name_sends_error()
     TEST_ASSERT_EQUAL(601, poller.lastUpdateId());
 }
 
+// RFC-0114: /balance calls ussdFn with configured code and replies.
+void test_TelegramPoller_balance_calls_ussd_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.setBalanceCodeFn([]() -> String { return String("*100#"); });
+    poller.setUssdFn([](const String &code) -> String {
+        if (code == "*100#") return String("Balance: 25.00");
+        return String();
+    });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(900, kAllowedFromId, 0, "/balance", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(900, poller.lastUpdateId());
+    bool sawBalance = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Balance")) >= 0 || m.indexOf(String("25.00")) >= 0)
+        { sawBalance = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawBalance);
+}
+
+// RFC-0114: /balance with no balance code fn → "not configured" reply.
+void test_TelegramPoller_balance_no_code_fn_replies_not_configured()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    // No balanceCodeFn set.
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(901, kAllowedFromId, 0, "/balance", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(901, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0 ||
+            m.indexOf(String("USSD_BALANCE_CODE")) >= 0)
+        { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
+// RFC-0114: /balance with code fn returning empty → "not configured" reply.
+void test_TelegramPoller_balance_empty_code_replies_not_configured()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.setBalanceCodeFn([]() -> String { return String(); }); // empty code
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(902, kAllowedFromId, 0, "/balance", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(902, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0 ||
+            m.indexOf(String("USSD_BALANCE_CODE")) >= 0)
+        { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
+// RFC-0114: /balance when USSD returns empty → "No response from carrier." error.
+void test_TelegramPoller_balance_ussd_empty_replies_no_response()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.setBalanceCodeFn([]() -> String { return String("*100#"); });
+    poller.setUssdFn([](const String &) -> String { return String(); }); // timeout
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(903, kAllowedFromId, 0, "/balance", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(903, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("No response")) >= 0 ||
+            m.indexOf(String("carrier")) >= 0)
+        { sawError = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 // RFC-0112: /reboot calls rebootFn and replies "Rebooting...".
 void test_TelegramPoller_reboot_calls_fn_and_replies()
 {
@@ -2539,6 +2667,11 @@ void run_telegram_poller_tests()
     RUN_TEST(test_SmsAliasStore_isValidName_rejects_invalid_chars);
     RUN_TEST(test_SmsAliasStore_set_rejects_invalid_name);
     RUN_TEST(test_TelegramPoller_addalias_invalid_name_sends_error);
+    // RFC-0114: /balance command
+    RUN_TEST(test_TelegramPoller_balance_calls_ussd_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_balance_no_code_fn_replies_not_configured);
+    RUN_TEST(test_TelegramPoller_balance_empty_code_replies_not_configured);
+    RUN_TEST(test_TelegramPoller_balance_ussd_empty_replies_no_response);
     // RFC-0112: /reboot command
     RUN_TEST(test_TelegramPoller_reboot_calls_fn_and_replies);
     RUN_TEST(test_TelegramPoller_reboot_not_configured_replies);

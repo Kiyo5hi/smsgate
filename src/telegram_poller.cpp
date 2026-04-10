@@ -110,6 +110,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/csq \xe2\x80\x94 Quick signal strength snapshot\n";
             help += "/sim \xe2\x80\x94 SIM identity (ICCID, IMEI, operator)\n";
             help += "/ussd <code> \xe2\x80\x94 Send USSD code (e.g. *100#) and get response\n";
+            help += "/balance \xe2\x80\x94 Check SIM balance (shortcut for USSD_BALANCE_CODE)\n";
             help += "/version \xe2\x80\x94 Show firmware build timestamp\n";
             help += "/reboot \xe2\x80\x94 Soft reboot\n";
             help += "/at <cmd> \xe2\x80\x94 Admin: raw AT command passthrough\n";
@@ -429,6 +430,35 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             else
             {
                 bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x93\xB1 ") + resp);  // 📱
+            }
+            return;
+        }
+
+        // RFC-0114: /balance — on-demand USSD balance check using configured code.
+        if (lower == "/balance")
+        {
+            String code;
+            if (balanceCodeFn_)
+                code = balanceCodeFn_();
+            if (code.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Balance check not configured (define USSD_BALANCE_CODE)."));
+                return;
+            }
+            if (!ussdFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(USSD not configured)"));
+                return;
+            }
+            String resp = ussdFn_(code);
+            if (resp.length() == 0)
+            {
+                sendErrorReply(u.chatId, String("No response from carrier."));
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x92\xB3 ") + resp);  // 💳
             }
             return;
         }

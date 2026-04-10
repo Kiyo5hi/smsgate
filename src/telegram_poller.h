@@ -190,6 +190,12 @@ public:
     // this to zero all session counters in SmsHandler, CallHandler, SmsSender.
     void setResetStatsFn(std::function<void()> fn) { resetStatsFn_ = std::move(fn); }
 
+    // RFC-0114: Optional balance USSD code provider. Returns the configured
+    // USSD balance code (e.g. "*100#") or an empty string if not set.
+    // /balance calls ussdFn_ with this code. Production wires to a lambda
+    // returning the USSD_BALANCE_CODE compile-time define (or "" if absent).
+    void setBalanceCodeFn(std::function<String()> fn) { balanceCodeFn_ = std::move(fn); }
+
     // RFC-0112: Optional soft-reboot callback. When set, /reboot sends a
     // "Rebooting..." confirmation reply then calls this fn.  The fn receives
     // the caller's fromId so the production lambda can gate on admin status
@@ -235,6 +241,7 @@ private:
     std::function<String()> simInfoFn_;              // RFC-0105
     std::function<String(int64_t, const String &)> atCmdFn_; // RFC-0107
     std::function<void()> resetStatsFn_;  // RFC-0110
+    std::function<String()> balanceCodeFn_; // RFC-0114
     std::function<void(int64_t)> rebootFn_; // RFC-0112
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
