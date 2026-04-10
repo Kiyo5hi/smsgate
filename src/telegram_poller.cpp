@@ -110,6 +110,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/status \xe2\x80\x94 Device health & stats\n";
             help += "/last [N] \xe2\x80\x94 Show last N forwarded SMS (default 5)\n";
             help += "/logs [N] \xe2\x80\x94 Show last N SMS log entries (default 10)\n";
+            help += "/logsince <hours> \xe2\x80\x94 Show log entries from the past N hours (1\xe2\x80\x93168)\n";
             help += "/logstats \xe2\x80\x94 Aggregate outcome statistics from debug log\n";
             help += "/topn [N] \xe2\x80\x94 Top N SMS senders by message count (default 5)\n";
             help += "/logsoutcome <keyword> \xe2\x80\x94 Filter log entries by outcome (fail/fwd/dup/...)\n";
@@ -286,6 +287,36 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     n = (size_t)(parsed > 50 ? 50 : parsed);
             }
             bot_.sendMessageTo(u.chatId, debugLog_->dumpBrief(n));
+            return;
+        }
+
+        // RFC-0159: /logsince <hours> — show log entries from the past N hours.
+        if (lower.startsWith("/logsince"))
+        {
+            if (!debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+                return;
+            }
+            String arg = extractArg(u.text, "/logsince ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /logsince <hours>\nExample: /logsince 2  (shows last 2 hours)"));
+                return;
+            }
+            int hrs = arg.toInt();
+            if (hrs < 1 || hrs > 168)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Error: hours must be 1\xe2\x80\x93" "168"));
+                return;
+            }
+            uint32_t nowUnix = (uint32_t)time(nullptr);
+            uint32_t cutoff  = nowUnix > (uint32_t)(hrs * 3600)
+                               ? nowUnix - (uint32_t)(hrs * 3600)
+                               : 0;
+            bot_.sendMessageTo(u.chatId, debugLog_->dumpBriefSince(cutoff));
             return;
         }
 

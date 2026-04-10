@@ -233,6 +233,57 @@ void test_dumpBriefFiltered_respects_n_limit()
     TEST_ASSERT_EQUAL(2, lines);
 }
 
+// RFC-0159: dumpBriefSince — entries with unixTimestamp >= cutoff.
+void test_dumpBriefSince_returns_entries_after_cutoff()
+{
+    SmsDebugLog log;
+    {
+        SmsDebugLog::Entry e;
+        e.sender = "+1111";
+        e.outcome = "fwd OK";
+        e.unixTimestamp = 1000000; // before cutoff
+        log.push(e);
+    }
+    {
+        SmsDebugLog::Entry e;
+        e.sender = "+2222";
+        e.outcome = "fwd OK";
+        e.unixTimestamp = 2000000; // after cutoff
+        log.push(e);
+    }
+    String result = log.dumpBriefSince(1500000);
+    TEST_ASSERT_TRUE(result.indexOf(String("+2222")) >= 0);
+    TEST_ASSERT_TRUE(result.indexOf(String("+1111")) < 0);
+}
+
+void test_dumpBriefSince_no_match_returns_placeholder()
+{
+    SmsDebugLog log;
+    {
+        SmsDebugLog::Entry e;
+        e.sender = "+1111";
+        e.outcome = "fwd OK";
+        e.unixTimestamp = 100;
+        log.push(e);
+    }
+    String result = log.dumpBriefSince(9999999);
+    TEST_ASSERT_TRUE(result.indexOf(String("no entries")) >= 0);
+}
+
+void test_dumpBriefSince_zero_timestamp_entries_omitted()
+{
+    SmsDebugLog log;
+    {
+        SmsDebugLog::Entry e;
+        e.sender = "+1111";
+        e.outcome = "fwd OK";
+        e.unixTimestamp = 0; // no NTP time — should be omitted
+        log.push(e);
+    }
+    String result = log.dumpBriefSince(0);
+    TEST_ASSERT_TRUE(result.indexOf(String("no entries")) >= 0);
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -248,4 +299,8 @@ void run_sms_debug_log_tests()
     RUN_TEST(test_dumpBriefFiltered_no_match_returns_placeholder);
     RUN_TEST(test_dumpBriefFiltered_empty_log_returns_placeholder);
     RUN_TEST(test_dumpBriefFiltered_respects_n_limit);
+    // RFC-0159: dumpBriefSince
+    RUN_TEST(test_dumpBriefSince_returns_entries_after_cutoff);
+    RUN_TEST(test_dumpBriefSince_no_match_returns_placeholder);
+    RUN_TEST(test_dumpBriefSince_zero_timestamp_entries_omitted);
 }

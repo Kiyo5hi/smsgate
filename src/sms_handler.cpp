@@ -4,6 +4,7 @@
 #include "sms_debug_log.h"
 
 #include <algorithm>
+#include <time.h>  // RFC-0159: time(nullptr) for unixTimestamp in log entries
 
 SmsHandler::SmsHandler(IModem &modem, IBotClient &bot, RebootFn reboot, ClockFn clock)
     : modem_(modem), bot_(bot), reboot_(std::move(reboot)), clock_(std::move(clock))
@@ -556,6 +557,7 @@ void SmsHandler::handleSmsIndex(int idx)
     if (debugLog_)
     {
         logEntry.timestampMs = clock_ ? clock_() : 0;
+        logEntry.unixTimestamp = (uint32_t)time(nullptr); // RFC-0159
         logEntry.sender = pdu.sender;
         logEntry.bodyChars = (uint16_t)pdu.content.length();
         logEntry.isConcat = pdu.isConcatenated;

@@ -78,6 +78,12 @@ public:
     // Returns "(no SMS logged yet)" when the log is empty.
     String topSenders(size_t n) const;
 
+    // RFC-0159: Return entries whose unixTimestamp >= sinceUnix, newest-first,
+    // in the same compact format as dumpBrief. Entries with unixTimestamp == 0
+    // (no NTP time) are omitted. Returns "(no entries since that time)" when
+    // nothing qualifies.
+    String dumpBriefSince(uint32_t sinceUnix) const;
+
     size_t count() const { return count_; }
 
     // RFC-0040: Clear all entries from the ring and (if a sink is set)

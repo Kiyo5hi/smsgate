@@ -508,6 +508,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "wifiscan";
         c["description"] = "Scan nearby WiFi networks (SSID, channel, RSSI)";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "logsince";
+        c["description"] = "Show SMS log from past N hours: /logsince <1-168>";
+    }
     String payload;
     serializeJson(doc, payload);
 

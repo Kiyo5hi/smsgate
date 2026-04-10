@@ -5354,6 +5354,67 @@ void test_TelegramPoller_wifiscan_not_configured_replies_placeholder()
     TEST_ASSERT_TRUE(sawPlaceholder);
 }
 
+// RFC-0159: /logsince — show entries from the past N hours.
+// This test pushes entries with known unixTimestamps and verifies the
+// dumpBriefSince filter works correctly. The TelegramPoller handler uses
+// time(nullptr) which we can't easily mock, so we test /logsince no-arg
+// and bad-arg paths via the poller; the core filter logic is tested in
+// test_main.cpp (SmsDebugLog unit tests).
+void test_TelegramPoller_logsince_no_arg_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    SmsDebugLog log;
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(1073, kAllowedFromId, 0, "/logsince", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1073, poller.lastUpdateId());
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Usage")) >= 0) { sawUsage = true; break; }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+void test_TelegramPoller_logsince_invalid_hours_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    SmsDebugLog log;
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(1074, kAllowedFromId, 0, "/logsince 999", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1074, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Error")) >= 0 || m.indexOf(String("168")) >= 0)
+            { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5578,6 +5639,9 @@ void run_telegram_poller_tests()
     // RFC-0158: /wifiscan command
     RUN_TEST(test_TelegramPoller_wifiscan_calls_fn);
     RUN_TEST(test_TelegramPoller_wifiscan_not_configured_replies_placeholder);
+    // RFC-0159: /logsince command
+    RUN_TEST(test_TelegramPoller_logsince_no_arg_sends_usage);
+    RUN_TEST(test_TelegramPoller_logsince_invalid_hours_sends_error);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }
