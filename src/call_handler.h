@@ -80,6 +80,11 @@ public:
         onCallFn_ = std::move(fn);
     }
 
+    // RFC-0164: Toggle call Telegram notifications. When false, calls are
+    // still auto-rejected but no Telegram notification is posted.
+    void setCallNotifyEnabled(bool enabled) { callNotifyEnabled_ = enabled; }
+    bool callNotifyEnabled() const { return callNotifyEnabled_; }
+
     // Test-only accessors.
     enum class State
     {
@@ -109,5 +114,6 @@ private:
     // Cooldown bookkeeping — when the current suppression window ends.
     uint32_t cooldownUntilMs_ = 0;
     int callsReceived_ = 0;  // RFC-0043
+    bool callNotifyEnabled_ = true;  // RFC-0164
     std::function<void(const String &, int32_t)> onCallFn_; // RFC-0100/0108
 };

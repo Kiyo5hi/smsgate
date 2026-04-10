@@ -150,6 +150,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/smscount \xe2\x80\x94 SIM SMS storage capacity (used/total) via AT+CPMS?\n";
             help += "/setblockmode on|off \xe2\x80\x94 Enable/suspend SMS block list enforcement\n";
             help += "/blockcheck <phone> \xe2\x80\x94 Test if a number would be blocked\n";
+            help += "/setcallnotify on|off \xe2\x80\x94 Enable/mute call Telegram notifications\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
             help += "/announce <msg> \xe2\x80\x94 Broadcast message to all authorized users\n";
             help += "/digest \xe2\x80\x94 Show on-demand stats digest\n";
@@ -1432,6 +1433,28 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         if (lower == "/setforward")
         {
             bot_.sendMessageTo(u.chatId, String("Usage: /setforward on\n/setforward off"));
+            return;
+        }
+
+        // RFC-0164: /setcallnotify on|off — toggle call Telegram notifications.
+        if (lower == "/setcallnotify on" || lower == "/setcallnotify off")
+        {
+            if (!callNotifyFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setcallnotify not configured)"));
+                return;
+            }
+            bool enable = (lower == "/setcallnotify on");
+            callNotifyFn_(enable);
+            bot_.sendMessageTo(u.chatId,
+                enable
+                    ? String("\xe2\x9c\x85 Call notifications ENABLED.")  // ✅
+                    : String("\xF0\x9F\x94\x95 Call notifications MUTED. Calls still auto-rejected.")); // 🔕
+            return;
+        }
+        if (lower == "/setcallnotify")
+        {
+            bot_.sendMessageTo(u.chatId, String("Usage: /setcallnotify on\n/setcallnotify off"));
             return;
         }
 

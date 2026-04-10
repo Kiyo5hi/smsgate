@@ -399,6 +399,25 @@ void test_CallHandler_onCallFn_provides_message_id_for_reply_routing()
     TEST_ASSERT_EQUAL_STRING("13800138000", callbackPhone.c_str());
 }
 
+// RFC-0164: when callNotifyEnabled_ is false, bot receives no message but
+// hangup still fires.
+void test_CallHandler_muted_skips_bot_but_still_hangs_up()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    ClockFixture clk;
+    CallHandler handler(modem, bot, [&]() { return clk.nowMs; });
+    handler.setCallNotifyEnabled(false);
+
+    handler.onUrcLine(String("RING"));
+    handler.onUrcLine(String("+CLIP: \"12345\",129,\"\",,\"\",0"));
+
+    TEST_ASSERT_EQUAL(0u, bot.sentMessages().size());
+    // Hangup should still have fired: fake modem records the AT+CHUP / callHangup call.
+    // FakeModem::callHangup increments a counter.
+    TEST_ASSERT_TRUE(modem.callHangupCalls() > 0);
+}
+
 void run_call_handler_tests()
 {
     RUN_TEST(test_parseClipLine_standard);
@@ -424,4 +443,6 @@ void run_call_handler_tests()
     RUN_TEST(test_CallHandler_onCallFn_fires_with_number);
     RUN_TEST(test_CallHandler_onCallFn_empty_for_unknown);
     RUN_TEST(test_CallHandler_onCallFn_provides_message_id_for_reply_routing);
+    // RFC-0164: muted call handling
+    RUN_TEST(test_CallHandler_muted_skips_bot_but_still_hangs_up);
 }

@@ -123,10 +123,13 @@ void CallHandler::commitRinging()
 
     callsReceived_++;  // RFC-0043: track lifetime call count
 
-    // Best-effort notify. RFC-0108: use sendMessageReturningId so the caller
-    // can register the (messageId, phone) pair in ReplyTargetMap, enabling
-    // the user to reply to the call notification to send an SMS to the caller.
-    int32_t msgId = bot_.sendMessageReturningId(msg);
+    // Best-effort notify — skipped when callNotifyEnabled_ is false (RFC-0164).
+    // RFC-0108: use sendMessageReturningId so the caller can register the
+    // (messageId, phone) pair in ReplyTargetMap, enabling the user to reply
+    // to the call notification to send an SMS to the caller.
+    int32_t msgId = 0;
+    if (callNotifyEnabled_)
+        msgId = bot_.sendMessageReturningId(msg);
 
     // Auto-hangup. Try the TinyGSM path first; fall back to raw
     // AT+CHUP as a belt-and-braces measure if TinyGSM returns false.

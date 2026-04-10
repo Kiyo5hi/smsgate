@@ -533,6 +533,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "blockcheck";
         c["description"] = "Check if a number would be blocked: /blockcheck <phone>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setcallnotify";
+        c["description"] = "Enable/mute call notifications: /setcallnotify on|off";
+    }
     String payload;
     serializeJson(doc, payload);
 

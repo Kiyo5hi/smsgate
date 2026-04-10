@@ -5645,6 +5645,62 @@ void test_TelegramPoller_blockcheck_no_arg_sends_usage()
     TEST_ASSERT_TRUE(sawUsage);
 }
 
+// RFC-0164: /setcallnotify off calls fn with false.
+void test_TelegramPoller_setcallnotify_off_calls_fn_false()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool captured = true;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setCallNotifyFn([&captured](bool v) { captured = v; });
+
+    bot.queueUpdateBatch({makeUpdate(1083, kAllowedFromId, 0, "/setcallnotify off", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1083, poller.lastUpdateId());
+    TEST_ASSERT_FALSE(captured);
+    bool sawMuted = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("MUTED")) >= 0 || m.indexOf(String("muted")) >= 0
+            || m.indexOf(String("auto-rejected")) >= 0)
+            { sawMuted = true; break; }
+    TEST_ASSERT_TRUE(sawMuted);
+}
+
+// RFC-0164: /setcallnotify on calls fn with true.
+void test_TelegramPoller_setcallnotify_on_calls_fn_true()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool captured = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setCallNotifyFn([&captured](bool v) { captured = v; });
+
+    bot.queueUpdateBatch({makeUpdate(1084, kAllowedFromId, 0, "/setcallnotify on", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1084, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(captured);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5884,6 +5940,9 @@ void run_telegram_poller_tests()
     // RFC-0163: /blockcheck command
     RUN_TEST(test_TelegramPoller_blockcheck_calls_fn);
     RUN_TEST(test_TelegramPoller_blockcheck_no_arg_sends_usage);
+    // RFC-0164: /setcallnotify command
+    RUN_TEST(test_TelegramPoller_setcallnotify_off_calls_fn_false);
+    RUN_TEST(test_TelegramPoller_setcallnotify_on_calls_fn_true);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }
