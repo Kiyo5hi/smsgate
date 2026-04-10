@@ -410,6 +410,20 @@ void SmsHandler::handleSmsIndex(int idx)
         Serial.println(", deleting silently.");
         modem_.sendAT("+CMGD=" + String(idx));
         modem_.waitResponseOk(1000UL);
+        // Log the block event so /debug shows it.
+        if (debugLog_)
+        {
+            SmsDebugLog::Entry e;
+            e.timestampMs = clock_ ? clock_() : 0;
+            e.sender      = pdu.sender;
+            e.bodyChars   = (uint16_t)pdu.content.length();
+            e.isConcat    = pdu.isConcatenated;
+            e.concatRef   = pdu.concatRefNumber;
+            e.concatTotal = pdu.concatTotalParts;
+            e.concatPart  = pdu.concatPartNumber;
+            e.outcome     = String("blocked");
+            debugLog_->push(e);
+        }
         return;
     }
 
