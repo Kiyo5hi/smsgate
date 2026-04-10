@@ -215,7 +215,10 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 sendErrorReply(requesterChatId,
                     String("SMS to ") + capturedPhone + " failed after retries.");
             });
-            bot_.sendMessageTo(u.chatId, String("\xE2\x9C\x85 Queued SMS to ") + phone); // U+2705
+            // RFC-0029: Include a body preview so the user can catch typos.
+            String preview = body.substring(0, 30);
+            if (body.length() > 30) preview += "\xE2\x80\xA6"; // U+2026 ellipsis
+            bot_.sendMessageTo(u.chatId, String("\xE2\x9C\x85 Queued to ") + phone + String(": ") + preview);
             Serial.print("TelegramPoller: /send queued to ");
             Serial.println(phone);
             return;

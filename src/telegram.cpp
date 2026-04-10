@@ -3,6 +3,9 @@
 
 #include <WiFiClientSecure.h>
 #include <ArduinoJson.h>
+#ifdef ESP_PLATFORM
+#include <esp_task_wdt.h>
+#endif
 
 // utilities.h sets TINY_GSM_MODEM_xxx based on the LILYGO_T_* build flag —
 // it must be included before TinyGsmClient.h to satisfy its modem-model guard.
@@ -251,6 +254,10 @@ int32_t RealBotClient::doSendMessage(const String &text, int64_t chatId)
         Serial.println("doSendMessage: no transport set");
         return 0;
     }
+
+#ifdef ESP_PLATFORM
+    esp_task_wdt_reset();  // RFC-0028: doSendMessage can block up to 8 s on TLS drain
+#endif
 
     String url = String("/bot") + botToken + "/sendMessage";
 

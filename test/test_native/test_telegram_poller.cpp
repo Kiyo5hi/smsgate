@@ -1083,7 +1083,7 @@ void test_TelegramPoller_send_happy_path_enqueues_and_confirms()
     bool sawQueued = false;
     for (const auto &m : bot.sentMessages())
     {
-        if (m.indexOf(String("Queued SMS to")) >= 0) { sawQueued = true; break; }
+        if (m.indexOf(String("Queued to")) >= 0 && m.indexOf(String("Hello world")) >= 0) { sawQueued = true; break; }
     }
     TEST_ASSERT_TRUE(sawQueued);
 }
