@@ -267,6 +267,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/cancelnum <phone> \xe2\x80\x94 Cancel all queued entries for a phone number\n";
             help += "/schedulesend <min> <phone> <msg> \xe2\x80\x94 Schedule SMS for future delivery (1\xe2\x80\x931440 min)\n";
             help += "/schedqueue \xe2\x80\x94 List pending scheduled SMS (up to 5 slots)\n";
+            help += "/schedexport \xe2\x80\x94 Export scheduled queue as re-entrant commands\n"; // RFC-0226
             help += "/cancelsched <N> \xe2\x80\x94 Cancel a scheduled SMS slot\n";
             help += "/clearschedule \xe2\x80\x94 Cancel all pending scheduled SMS\n"; // RFC-0195
             help += "/scheddelay <N> <min> \xe2\x80\x94 Extend scheduled slot N by extra minutes\n"; // RFC-0196
@@ -3004,6 +3005,59 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 header += String(":\n");
                 bot_.sendMessageTo(u.chatId, header + out);
             }
+            return;
+        }
+
+        // RFC-0226: /schedexport — print each occupied slot as a re-entrant command.
+        if (lower == "/schedexport")
+        {
+            uint32_t expNowMs = clock_ ? clock_() : 0;
+            long expWallNow = wallTimeFn_ ? wallTimeFn_() : 0;
+            int count = 0;
+            String out;
+            for (int i = 0; i < (int)kScheduledQueueSize; i++)
+            {
+                const ScheduledSms &sl = scheduledQueue_[i];
+                if (sl.sendAtMs == 0) continue;
+                count++;
+                if (sl.repeatIntervalMs > 0)
+                {
+                    // Repeating slot: export as /recurring.
+                    uint32_t rMin = sl.repeatIntervalMs / 60000U;
+                    out += String("/recurring ") + String(rMin) + String(" ")
+                         + sl.phone + String(" ") + sl.body + String("\n");
+                }
+                else if (expWallNow > 1000000000L)
+                {
+                    // Absolute timestamp available: export as /scheduleat.
+                    long deltaMs = (long)sl.sendAtMs - (long)expNowMs;
+                    long fireUnix = expWallNow + deltaMs / 1000L;
+                    if (fireUnix < expWallNow) fireUnix = expWallNow + 60L; // overdue: use +1min
+                    time_t ft = (time_t)fireUnix;
+                    struct tm *tmFire = gmtime(&ft);
+                    char dateBuf[20];
+                    snprintf(dateBuf, sizeof(dateBuf), "%04d-%02d-%02d %02d:%02d",
+                             tmFire->tm_year + 1900, tmFire->tm_mon + 1, tmFire->tm_mday,
+                             tmFire->tm_hour, tmFire->tm_min);
+                    out += String("/scheduleat ") + String(dateBuf) + String(" ")
+                         + sl.phone + String(" ") + sl.body + String("\n");
+                }
+                else
+                {
+                    // No wall time: export as relative /schedulesend.
+                    long deltaMs = (long)sl.sendAtMs - (long)expNowMs;
+                    long remMin = deltaMs > 0 ? (deltaMs + 59999L) / 60000L : 1L;
+                    if (remMin < 1) remMin = 1;
+                    out += String("/schedulesend ") + String((int)remMin) + String(" ")
+                         + sl.phone + String(" ") + sl.body + String("\n");
+                }
+            }
+            if (count == 0)
+                bot_.sendMessageTo(u.chatId, String("(no scheduled SMS)"));
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xf0\x9f\x93\x8b Scheduled queue export (") // 📋
+                    + String(count) + String(" slot(s)):\n") + out);
             return;
         }
 

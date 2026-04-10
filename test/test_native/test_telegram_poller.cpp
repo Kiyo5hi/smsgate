@@ -8025,6 +8025,119 @@ void test_TelegramPoller_phoneinfo_with_alias_arg()
     TEST_ASSERT_TRUE(sawPhone);
 }
 
+// RFC-0226: /schedexport with occupied slot shows command line.
+void test_TelegramPoller_schedexport_shows_commands()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 10000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Schedule a one-shot slot.
+    bot.queueUpdateBatch({makeUpdate(27001, kAllowedFromId, 0,
+        "/schedulesend 60 +6661 Export test", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(27001, poller.lastUpdateId());
+    TEST_ASSERT_NOT_EQUAL(0U, poller.getSchedQueue()[0].sendAtMs);
+
+    // Export the queue.
+    bot.queueUpdateBatch({makeUpdate(27002, kAllowedFromId, 0,
+        "/schedexport", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(27002, poller.lastUpdateId());
+
+    bool sawCommand = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if ((m.indexOf("/schedulesend") >= 0 || m.indexOf("/scheduleat") >= 0)
+            && m.indexOf("+6661") >= 0)
+        { sawCommand = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawCommand);
+}
+
+// RFC-0226: /schedexport with empty queue returns placeholder.
+void test_TelegramPoller_schedexport_empty_queue()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(27003, kAllowedFromId, 0,
+        "/schedexport", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(27003, poller.lastUpdateId());
+    bool sawEmpty = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("no scheduled") >= 0) { sawEmpty = true; break; }
+    TEST_ASSERT_TRUE(sawEmpty);
+}
+
+// RFC-0226: /schedexport with repeating slot shows /recurring command.
+void test_TelegramPoller_schedexport_repeating_slot_shows_recurring()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 10000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Create a recurring slot.
+    bot.queueUpdateBatch({makeUpdate(27004, kAllowedFromId, 0,
+        "/recurring 45 +6662 Recurring test", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(27004, poller.lastUpdateId());
+
+    // Export the queue.
+    bot.queueUpdateBatch({makeUpdate(27005, kAllowedFromId, 0,
+        "/schedexport", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(27005, poller.lastUpdateId());
+
+    bool sawRecurring = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("/recurring") >= 0 && m.indexOf("+6662") >= 0)
+        { sawRecurring = true; break; }
+    TEST_ASSERT_TRUE(sawRecurring);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -8829,6 +8942,10 @@ void run_telegram_poller_tests()
     // RFC-0225: /phoneinfo command
     RUN_TEST(test_TelegramPoller_phoneinfo_shows_alias_and_snooze);
     RUN_TEST(test_TelegramPoller_phoneinfo_with_alias_arg);
+    // RFC-0226: /schedexport command
+    RUN_TEST(test_TelegramPoller_schedexport_shows_commands);
+    RUN_TEST(test_TelegramPoller_schedexport_empty_queue);
+    RUN_TEST(test_TelegramPoller_schedexport_repeating_slot_shows_recurring);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);
