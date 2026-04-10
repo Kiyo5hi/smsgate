@@ -86,6 +86,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         {
             String help;
             help += "/ping \xe2\x80\x94 Liveness check\n";
+            help += "/time \xe2\x80\x94 Show current UTC time\n";
             help += "/ntp \xe2\x80\x94 Force NTP time resync\n";
             help += "/status \xe2\x80\x94 Device health & stats\n";
             help += "/last [N] \xe2\x80\x94 Show last N forwarded SMS (default 5)\n";
@@ -138,6 +139,24 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         if (lower == "/ping")
         {
             bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x8F\x93 Pong")); // 🏓
+            return;
+        }
+
+        // RFC-0063: /time — show current UTC time (quick NTP sanity check).
+        if (lower == "/time")
+        {
+            time_t now = time(nullptr);
+            if (now > 8 * 3600 * 2)
+            {
+                char buf[32];
+                struct tm *t2 = gmtime(&now);
+                strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M UTC", t2);
+                bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x95\x90 ") + String(buf)); // 🕐
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x95\x90 (no NTP sync yet)")); // 🕐
+            }
             return;
         }
 

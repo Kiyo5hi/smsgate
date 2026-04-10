@@ -150,6 +150,11 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "time";
+        c["description"] = "Show current UTC time";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "ntp";
         c["description"] = "Force NTP time resync";
     }
@@ -268,7 +273,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /help /ntp /ping /last /debug /cleardebug /status /blocklist /block /unblock /restart /send /queue /cancel");
+        Serial.println("Bot commands registered: /help /time /ntp /ping /last /debug /cleardebug /status /blocklist /block /unblock /restart /send /queue /cancel");
     }
     else
     {
