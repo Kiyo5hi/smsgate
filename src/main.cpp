@@ -188,6 +188,9 @@ static time_t s_lastSmsTimestamp = 0;
 static uint32_t s_bootCount = 0;
 // RFC-0060: Lifetime SMS forward count across all reboots, persisted to NVS.
 static uint32_t s_lifetimeFwdCount = 0;
+// RFC-0064: SIM slot full warning — set when usage crosses ≥80%; cleared when
+// usage drops back below the threshold so the alert can re-fire if needed.
+static bool s_simFullWarnSent = false;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -1117,6 +1120,20 @@ void loop()
                     if (c3 < 0) c3 = cpmsResp.length();
                     cachedSimTotal = cpmsResp.substring(c2 + 1, c3).toInt();
                 }
+            }
+        }
+        // RFC-0064: SIM slot full warning. Alert once when usage crosses ≥80%;
+        // reset when usage drops below threshold so re-fills re-alert.
+        if (cachedSimTotal > 0) {
+            bool nearFull = (cachedSimUsed * 5 >= cachedSimTotal * 4); // ≥80%
+            if (nearFull && !s_simFullWarnSent) {
+                String simMsg = String("\xE2\x9A\xA0\xEF\xB8\x8F SIM storage "); // ⚠️
+                simMsg += String(cachedSimUsed); simMsg += "/"; simMsg += String(cachedSimTotal);
+                simMsg += " slots (\xe2\x89\xa580%). Delete old SMS or SIM may reject new ones."; // ≥
+                realBot.sendMessage(simMsg);
+                s_simFullWarnSent = true;
+            } else if (!nearFull) {
+                s_simFullWarnSent = false;
             }
         }
 #ifdef ENABLE_DELIVERY_REPORTS
