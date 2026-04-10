@@ -158,6 +158,17 @@ void SmsSender::drainQueue(uint32_t nowMs)
         {
             Serial.print("SmsSender: queue entry delivered to ");
             Serial.println(e.phone);
+            // RFC-0086: Log success to debug log.
+            if (debugLog_)
+            {
+                SmsDebugLog::Entry le;
+                le.timestampMs = nowMs;
+                le.sender      = e.phone; // repurposed: recipient for outbound
+                le.bodyChars   = (uint16_t)(e.body.length() > 65535u ? 65535u : e.body.length());
+                le.outcome     = String("out:sent");
+                le.pduPrefix   = e.body.substring(0, 40);
+                debugLog_->push(le);
+            }
             auto cb = e.onSuccess; // copy before clearing slot
             e.occupied = false;
             if (cb)
