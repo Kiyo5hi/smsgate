@@ -205,6 +205,9 @@ static bool s_lowHeapWarnSent = false;
 // RFC-0075: Daily stats digest. Initialised to 0 so the first digest sends
 // 24 h after boot (set on first 30-second tick, fire 24 h later).
 static uint32_t s_lastDailyDigestMs = 0;
+// RFC-0079: NTP retry. Retry every 5 minutes while clock is still invalid.
+static uint32_t s_lastNtpRetryMs = 0;
+static constexpr uint32_t kNtpRetryIntervalMs = 5UL * 60UL * 1000UL;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -1247,6 +1250,19 @@ void loop()
                 s_lowHeapWarnSent = false;
             }
         }
+        // RFC-0079: Periodic NTP retry when clock is still invalid (every 5 min).
+        if (activeTransport == ActiveTransport::kWiFi && time(nullptr) <= 8 * 3600 * 2)
+        {
+            if (millis() - s_lastNtpRetryMs >= kNtpRetryIntervalMs) {
+                s_lastNtpRetryMs = millis();
+                syncTime();
+                if (time(nullptr) > 8 * 3600 * 2) {
+                    realBot.sendMessage(
+                        String("\xF0\x9F\x95\x90 Clock synced via NTP.")); // 🕐
+                }
+            }
+        }
+
         // RFC-0075: Daily stats digest. First tick initialises the timer;
         // subsequent ticks check whether 24 hours have elapsed.
         {
