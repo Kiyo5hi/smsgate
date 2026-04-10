@@ -3266,6 +3266,126 @@ void test_TelegramPoller_me_works_for_unauthorized_user()
     TEST_ASSERT_TRUE(sawIds);
 }
 
+// RFC-0126: /ip with fn set → replies with fn result.
+void test_TelegramPoller_ip_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setIpFn([]() -> String {
+        return String("\xF0\x9F\x8C\x90 192.168.1.42 | SSID: TestNet | RSSI: -65 dBm");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(940, kAllowedFromId, 0, "/ip", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(940, poller.lastUpdateId());
+    bool sawIp = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("192.168.1.42")) >= 0) { sawIp = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawIp);
+}
+
+// RFC-0126: /ip without fn → "(ip info not configured)".
+void test_TelegramPoller_ip_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // ipFn_ NOT set
+
+    bot.queueUpdateBatch({makeUpdate(941, kAllowedFromId, 0, "/ip", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(941, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
+// RFC-0127: /smsslots with fn set → replies with fn result.
+void test_TelegramPoller_smsslots_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSmsSlotssFn([]() -> String {
+        return String("\xF0\x9F\x93\xA8 SIM slots: 5/30 used (16%)");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(942, kAllowedFromId, 0, "/smsslots", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(942, poller.lastUpdateId());
+    bool sawSlots = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("SIM slots")) >= 0) { sawSlots = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawSlots);
+}
+
+// RFC-0127: /smsslots without fn → "(SMS slots info not configured)".
+void test_TelegramPoller_smsslots_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // smsSlotsFn_ NOT set
+
+    bot.queueUpdateBatch({makeUpdate(943, kAllowedFromId, 0, "/smsslots", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(943, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
 // RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
 void test_TelegramPoller_send_duplicate_gets_already_queued_error()
 {
@@ -3442,6 +3562,12 @@ void run_telegram_poller_tests()
     // RFC-0125: /me command
     RUN_TEST(test_TelegramPoller_me_replies_with_ids);
     RUN_TEST(test_TelegramPoller_me_works_for_unauthorized_user);
+    // RFC-0126: /ip command
+    RUN_TEST(test_TelegramPoller_ip_calls_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_ip_not_configured_replies);
+    // RFC-0127: /smsslots command
+    RUN_TEST(test_TelegramPoller_smsslots_calls_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_smsslots_not_configured_replies);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

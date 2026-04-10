@@ -1220,6 +1220,31 @@ void setup()
             msg += String(" | Calls: "); msg += String(callHandler.callsReceived());
             return msg;
         });
+        telegramPoller->setIpFn([]() -> String {                    // RFC-0126
+            // "🌐 192.168.1.42 | SSID: MyWiFi | RSSI: -65 dBm"
+            String msg = String("\xF0\x9F\x8C\x90 "); // 🌐
+            if (WiFi.status() == WL_CONNECTED) {
+                msg += WiFi.localIP().toString();
+                msg += String(" | SSID: "); msg += String(WiFi.SSID());
+                msg += String(" | RSSI: "); msg += String(WiFi.RSSI()); msg += String(" dBm");
+            } else {
+                msg += String("(not connected)");
+            }
+            return msg;
+        });
+        telegramPoller->setSmsSlotssFn([]() -> String {             // RFC-0127
+            // "📨 SIM slots: 5/30 used"
+            if (cachedSimUsed < 0)
+                return String("\xF0\x9F\x93\xA8 SIM slots: (not yet queried)"); // 📨
+            String msg = String("\xF0\x9F\x93\xA8 SIM slots: "); // 📨
+            msg += String(cachedSimUsed); msg += String("/");
+            msg += String(cachedSimTotal); msg += String(" used");
+            if (cachedSimTotal > 0) {
+                int pct = (cachedSimUsed * 100) / cachedSimTotal;
+                msg += String(" ("); msg += String(pct); msg += String("%)");
+            }
+            return msg;
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])

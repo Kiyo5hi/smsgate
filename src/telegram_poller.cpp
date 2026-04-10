@@ -137,6 +137,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/network \xe2\x80\x94 Cellular operator + registration + CSQ\n";
             help += "/boot \xe2\x80\x94 Boot count, reset reason, and boot timestamp\n";
             help += "/count \xe2\x80\x94 Session SMS/call counter summary\n";
+            help += "/ip \xe2\x80\x94 WiFi IP address, SSID, and RSSI\n";
+            help += "/smsslots \xe2\x80\x94 SIM SMS slot usage\n";
             help += "/me \xe2\x80\x94 Show your Telegram fromId and chatId\n";
             help += "/reboot \xe2\x80\x94 Soft reboot\n";
             help += "/at <cmd> \xe2\x80\x94 Admin: raw AT command passthrough\n";
@@ -1134,6 +1136,26 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, countFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(count not configured)"));
+            return;
+        }
+
+        // RFC-0126: /ip — WiFi IP, SSID, and RSSI snapshot.
+        if (lower == "/ip")
+        {
+            if (ipFn_)
+                bot_.sendMessageTo(u.chatId, ipFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(ip info not configured)"));
+            return;
+        }
+
+        // RFC-0127: /smsslots — SIM SMS slot usage one-liner.
+        if (lower == "/smsslots")
+        {
+            if (smsSlotsFn_)
+                bot_.sendMessageTo(u.chatId, smsSlotsFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(SMS slots info not configured)"));
             return;
         }
 

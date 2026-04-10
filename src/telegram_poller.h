@@ -227,6 +227,16 @@ public:
     // When not set, replies "(count not configured)".
     void setCountFn(std::function<String()> fn) { countFn_ = std::move(fn); }
 
+    // RFC-0126: Optional WiFi/IP info callback. When set, /ip calls this fn
+    // and replies with IP address, SSID, and RSSI.
+    // When not set, replies "(ip info not configured)".
+    void setIpFn(std::function<String()> fn) { ipFn_ = std::move(fn); }
+
+    // RFC-0127: Optional SIM slot usage callback. When set, /smsslots calls
+    // this fn and replies with a slot-usage one-liner.
+    // When not set, replies "(SMS slots info not configured)".
+    void setSmsSlotssFn(std::function<String()> fn) { smsSlotsFn_ = std::move(fn); }
+
     // RFC-0121: Optional network info callback. When set, /network calls this
     // fn and replies with the result (e.g. "📶 Operator: T-Mobile | Reg: home | CSQ 18 (good)").
     // When not set, replies "(network info not configured)".
@@ -280,6 +290,8 @@ private:
     std::function<String()> networkFn_;    // RFC-0121
     std::function<String()> bootInfoFn_;   // RFC-0123
     std::function<String()> countFn_;      // RFC-0124
+    std::function<String()> ipFn_;         // RFC-0126
+    std::function<String()> smsSlotsFn_;   // RFC-0127
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

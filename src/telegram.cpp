@@ -338,6 +338,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "me";
         c["description"] = "Show your Telegram fromId and chatId";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "ip";
+        c["description"] = "Show WiFi IP address, SSID, and RSSI";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "smsslots";
+        c["description"] = "Show SIM SMS slot usage";
+    }
 
     String payload;
     serializeJson(doc, payload);
