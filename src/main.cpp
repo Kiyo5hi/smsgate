@@ -292,12 +292,22 @@ void syncTime()
     configTime(0, 0, "pool.ntp.org", "time.nist.gov");
     Serial.print("Syncing time...");
     time_t now = time(nullptr);
-    while (now < 8 * 3600 * 2)
+    // RFC-0249: 30-second deadline. If NTP is unreachable the loop would
+    // otherwise spin forever (with WDT kicks), blocking all URC processing
+    // when called from loop().  After the deadline, return and let RFC-0079
+    // retry on the next iteration.
+    unsigned long ntpDeadline = millis() + 30000UL;
+    while (now < 8 * 3600 * 2 && millis() < ntpDeadline)
     {
         esp_task_wdt_reset();  // RFC-0015: syncTime() is also called from loop()
         delay(500);
         Serial.print(".");
         now = time(nullptr);
+    }
+    if (now < 8 * 3600 * 2)
+    {
+        Serial.println("\nsyncTime: NTP timed out (30 s deadline)");
+        return; // leave s_bootTimestamp / s_lastNtpSyncTime unchanged
     }
     Serial.printf("\nCurrent time: %s\n", ctime(&now));
     // RFC-0038: Record boot timestamp on first NTP sync.
