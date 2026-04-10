@@ -1,6 +1,7 @@
 #include "reply_target_map.h"
 
 #include <cstring>
+#include <memory>
 
 ReplyTargetMap::ReplyTargetMap(IPersist &persist)
     : persist_(persist)
@@ -19,9 +20,12 @@ void ReplyTargetMap::load()
         slots_[i].phone[0] = '\0';
     }
 
-    uint8_t buf[kBlobSize];
-    std::memset(buf, 0, sizeof(buf));
-    size_t got = persist_.loadReplyTargets(buf, sizeof(buf));
+    // RFC-0268: heap-allocate; 5608 bytes would stress the 8192-byte
+    // loop task stack when save() is called from the SMS forward path.
+    auto bufOwn = std::make_unique<uint8_t[]>(kBlobSize);
+    uint8_t *buf = bufOwn.get();
+    std::memset(buf, 0, kBlobSize);
+    size_t got = persist_.loadReplyTargets(buf, kBlobSize);
     if (got == 0)
     {
         // Nothing stored yet — fresh table.
@@ -82,8 +86,11 @@ void ReplyTargetMap::load()
 
 void ReplyTargetMap::save()
 {
-    uint8_t buf[kBlobSize];
-    std::memset(buf, 0, sizeof(buf));
+    // RFC-0268: heap-allocate; 5608 bytes would stress the 8192-byte
+    // loop task stack when save() is called from the SMS forward path.
+    auto bufOwn = std::make_unique<uint8_t[]>(kBlobSize);
+    uint8_t *buf = bufOwn.get();
+    std::memset(buf, 0, kBlobSize);
 
     Header h;
     h.version = kFormatVersion;
@@ -93,7 +100,7 @@ void ReplyTargetMap::save()
     std::memcpy(buf, &h, sizeof(h));
     std::memcpy(buf + sizeof(Header), slots_, sizeof(slots_));
 
-    persist_.saveReplyTargets(buf, sizeof(buf));
+    persist_.saveReplyTargets(buf, kBlobSize);
 }
 
 void ReplyTargetMap::put(int32_t messageId, const String &phone)
