@@ -92,6 +92,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/ntp \xe2\x80\x94 Force NTP time resync\n";
             help += "/status \xe2\x80\x94 Device health & stats\n";
             help += "/last [N] \xe2\x80\x94 Show last N forwarded SMS (default 5)\n";
+            help += "/history <filter> \xe2\x80\x94 Show log entries matching phone substring\n";
             help += "/concat \xe2\x80\x94 Show in-flight concat reassembly groups\n";
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
             help += "/cleardebug \xe2\x80\x94 Clear SMS diagnostic log\n";
@@ -200,6 +201,25 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 else if (parsed > 20) n = 20;
             }
             bot_.sendMessageTo(u.chatId, debugLog_->dumpBrief(n));
+            return;
+        }
+
+        // RFC-0117: /history <filter> — show log entries for a specific contact.
+        if (lower.startsWith("/history"))
+        {
+            if (!debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+                return;
+            }
+            String filter = extractArg(u.text, "/history ");
+            if (filter.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /history <phone>\nExample: /history +8613"));
+                return;
+            }
+            bot_.sendMessageTo(u.chatId, debugLog_->dumpBriefFiltered(10, filter));
             return;
         }
 

@@ -184,6 +184,56 @@ void test_loadFrom_empty_persist_is_noop()
 }
 
 // ---------------------------------------------------------------------------
+// RFC-0117: dumpBriefFiltered tests
+// ---------------------------------------------------------------------------
+void test_dumpBriefFiltered_returns_matching_entries_only()
+{
+    SmsDebugLog log;
+    log.push(makeEntry("+8613800138000", "in:forwarded"));
+    log.push(makeEntry("+447911123456",  "out:sent"));
+    log.push(makeEntry("+8613988776655", "in:forwarded"));
+
+    String result = log.dumpBriefFiltered(10, String("+8613"));
+    // Should include both +8613 entries.
+    TEST_ASSERT_TRUE(result.indexOf(String("+86138")) >= 0);
+    TEST_ASSERT_TRUE(result.indexOf(String("+86139")) >= 0);
+    // Should NOT include the UK number.
+    TEST_ASSERT_EQUAL(-1, result.indexOf(String("+4479")));
+}
+
+void test_dumpBriefFiltered_no_match_returns_placeholder()
+{
+    SmsDebugLog log;
+    log.push(makeEntry("+8613800138000", "in:forwarded"));
+
+    String result = log.dumpBriefFiltered(10, String("+1555"));
+    TEST_ASSERT_TRUE(result.indexOf(String("+1555")) >= 0); // filter in placeholder
+    TEST_ASSERT_TRUE(result.indexOf(String("no entries")) >= 0);
+}
+
+void test_dumpBriefFiltered_empty_log_returns_placeholder()
+{
+    SmsDebugLog log;
+    String result = log.dumpBriefFiltered(10, String("+1"));
+    TEST_ASSERT_TRUE(result.indexOf(String("no entries")) >= 0);
+}
+
+void test_dumpBriefFiltered_respects_n_limit()
+{
+    SmsDebugLog log;
+    for (int i = 0; i < 5; i++)
+        log.push(makeEntry("+8613800138000", "in:forwarded"));
+
+    // Ask for only 2 matches out of 5.
+    String result = log.dumpBriefFiltered(2, String("+8613"));
+    // Count newlines: expect exactly 2 result lines.
+    int lines = 0;
+    for (unsigned int i = 0; i < result.length(); i++)
+        if (result[i] == '\n') lines++;
+    TEST_ASSERT_EQUAL(2, lines);
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 void run_sms_debug_log_tests()
@@ -193,4 +243,9 @@ void run_sms_debug_log_tests()
     RUN_TEST(test_loadFrom_discards_wrong_version);
     RUN_TEST(test_ring_wraparound_round_trips);
     RUN_TEST(test_loadFrom_empty_persist_is_noop);
+    // RFC-0117: dumpBriefFiltered
+    RUN_TEST(test_dumpBriefFiltered_returns_matching_entries_only);
+    RUN_TEST(test_dumpBriefFiltered_no_match_returns_placeholder);
+    RUN_TEST(test_dumpBriefFiltered_empty_log_returns_placeholder);
+    RUN_TEST(test_dumpBriefFiltered_respects_n_limit);
 }

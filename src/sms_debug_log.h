@@ -56,6 +56,12 @@ public:
     // up to 10 entries. n is clamped to min(count_, kMaxEntries).
     String dumpBrief(size_t n = 5) const;
 
+    // RFC-0117: Like dumpBrief but only includes entries whose sender
+    // field contains `filter` as a substring. Returns up to `n` newest
+    // matching entries. Returns "(no entries matching <filter>)" when
+    // nothing matches.
+    String dumpBriefFiltered(size_t n, const String &filter) const;
+
     size_t count() const { return count_; }
 
     // RFC-0040: Clear all entries from the ring and (if a sink is set)

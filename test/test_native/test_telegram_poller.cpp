@@ -22,6 +22,7 @@
 #include "telegram_poller.h"
 #include "reply_target_map.h"
 #include "sms_sender.h"
+#include "sms_debug_log.h"
 #include "fake_modem.h"
 #include "fake_bot_client.h"
 #include "fake_persist.h"
@@ -2464,6 +2465,112 @@ void test_TelegramPoller_balance_ussd_empty_replies_no_response()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0117: /history <filter> replies with filtered log entries.
+void test_TelegramPoller_history_filters_debug_log()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsDebugLog log;
+    // Push two entries: one matching, one not.
+    SmsDebugLog::Entry e1;
+    e1.sender = String("+8613800138000");
+    e1.outcome = String("in:forwarded");
+    e1.bodyChars = 10;
+    log.push(e1);
+    SmsDebugLog::Entry e2;
+    e2.sender = String("+447911123456");
+    e2.outcome = String("out:sent");
+    e2.bodyChars = 5;
+    log.push(e2);
+    poller.setDebugLog(&log);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(810, kAllowedFromId, 0, "/history +8613", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(810, poller.lastUpdateId());
+    bool sawMatch = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("+86138")) >= 0) { sawMatch = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawMatch);
+    // Should NOT contain the UK number.
+    for (const auto &m : bot.sentMessages())
+    {
+        TEST_ASSERT_EQUAL(-1, m.indexOf(String("+44791")));
+    }
+}
+
+// RFC-0117: /history with no argument sends usage hint.
+void test_TelegramPoller_history_no_arg_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsDebugLog log;
+    poller.setDebugLog(&log);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(811, kAllowedFromId, 0, "/history", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(811, poller.lastUpdateId());
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Usage")) >= 0 || m.indexOf(String("usage")) >= 0)
+        { sawUsage = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+// RFC-0117: /history with no debug log set replies "not configured".
+void test_TelegramPoller_history_no_log_replies_not_configured()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    // No setDebugLog call.
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(812, kAllowedFromId, 0, "/history +8613", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(812, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
 // RFC-0112: /reboot calls rebootFn and replies "Rebooting...".
 void test_TelegramPoller_reboot_calls_fn_and_replies()
 {
@@ -2672,6 +2779,10 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_balance_no_code_fn_replies_not_configured);
     RUN_TEST(test_TelegramPoller_balance_empty_code_replies_not_configured);
     RUN_TEST(test_TelegramPoller_balance_ussd_empty_replies_no_response);
+    // RFC-0117: /history command
+    RUN_TEST(test_TelegramPoller_history_filters_debug_log);
+    RUN_TEST(test_TelegramPoller_history_no_arg_sends_usage);
+    RUN_TEST(test_TelegramPoller_history_no_log_replies_not_configured);
     // RFC-0112: /reboot command
     RUN_TEST(test_TelegramPoller_reboot_calls_fn_and_replies);
     RUN_TEST(test_TelegramPoller_reboot_not_configured_replies);
