@@ -1189,7 +1189,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             bool snoozed = false;
             for (const auto &s : snoozeList_)
             {
-                if (s.first == piPhone && piNow < s.second)
+                if (s.first == piPhone && (uint32_t)(s.second - piNow) < 0x80000000UL) // RFC-0269
                 {
                     uint32_t remMs = s.second - piNow;
                     uint32_t remMin = (remMs + 59999U) / 60000U;
@@ -4011,7 +4011,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             // Reap expired entries first.
             for (auto it = snoozeList_.begin(); it != snoozeList_.end(); )
             {
-                if (nowMs >= it->second)
+                if ((uint32_t)(nowMs - it->second) < 0x80000000UL) // RFC-0269
                     it = snoozeList_.erase(it);
                 else
                     ++it;
@@ -4519,7 +4519,7 @@ void TelegramPoller::tick()
     {
         for (auto it = snoozeList_.begin(); it != snoozeList_.end(); )
         {
-            if (now >= it->second)
+            if ((uint32_t)(now - it->second) < 0x80000000UL) // RFC-0269
                 it = snoozeList_.erase(it);
             else
                 ++it;

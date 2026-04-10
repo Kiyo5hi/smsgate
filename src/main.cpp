@@ -231,7 +231,11 @@ static constexpr uint32_t kStuckQueueThresholdMs = 5UL * 60UL * 1000UL;  // 5 mi
 static constexpr uint32_t kStuckQueueCheckIntervalMs = 60UL * 1000UL;    // 1 min
 // RFC-0098: Alert mute. 0 = not muted; else millis() timestamp until which alerts are silenced.
 static uint32_t s_alertsMutedUntilMs = 0;
-inline bool alertsMuted() { return (uint32_t)millis() < s_alertsMutedUntilMs; }
+inline bool alertsMuted() // RFC-0269: wraparound-safe; sentinel 0 = not muted
+{
+    return s_alertsMutedUntilMs != 0 &&
+           (uint32_t)(s_alertsMutedUntilMs - (uint32_t)millis()) < 0x80000000UL;
+}
 // RFC-0192: Forward pause. 0 = not paused; else millis() timestamp until which forwarding is off.
 static uint32_t s_fwdPauseUntilMs = 0;
 // RFC-0201: Scheduled SMS slots restored from NVS at boot (for boot banner).
@@ -2433,7 +2437,8 @@ void loop()
     }
 
     // RFC-0192: Forward-pause auto-resume.
-    if (s_fwdPauseUntilMs != 0 && (uint32_t)millis() >= s_fwdPauseUntilMs)
+    if (s_fwdPauseUntilMs != 0 && // RFC-0269: wraparound-safe expiry check
+        (uint32_t)((uint32_t)millis() - s_fwdPauseUntilMs) < 0x80000000UL)
     {
         s_fwdPauseUntilMs = 0;
         smsHandler.setForwardingEnabled(true);

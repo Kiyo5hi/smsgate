@@ -418,7 +418,8 @@ public:
         {
             if (it->first == phone)
             {
-                if (now >= it->second) { snoozeList_.erase(it); return false; }
+                // RFC-0269: wraparound-safe expiry check.
+                if ((uint32_t)(now - it->second) < 0x80000000UL) { snoozeList_.erase(it); return false; }
                 return true;
             }
         }
