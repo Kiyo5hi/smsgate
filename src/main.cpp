@@ -237,6 +237,9 @@ static uint32_t s_fwdPauseUntilMs = 0;
 static int s_schedLoadedAtBoot = 0;
 // RFC-0208: Timestamp of last successful Telegram API contact (0 = never this boot).
 static time_t s_lastTelegramOkTime = 0;
+// RFC-0238: Deferred boot sweep flag. Set if the boot banner send failed
+// (Telegram unreachable at boot). Cleared by the first successful pollUpdates.
+static bool s_needBootSweep = false;
 // RFC-0102: Boot time for uptime display in /status.
 static uint32_t s_bootMs = 0;
 
@@ -2015,7 +2018,25 @@ void setup()
             return s;
         });
         telegramPoller->setWallTimeFn([]() -> long { return (long)time(nullptr); }); // RFC-0202
-        telegramPoller->setOnPollSuccessFn([]() { s_lastTelegramOkTime = time(nullptr); }); // RFC-0208
+        telegramPoller->setOnPollSuccessFn([]() { // RFC-0208 / RFC-0238
+            s_lastTelegramOkTime = time(nullptr);
+            // RFC-0238: If the boot sweep was deferred (Telegram was down at boot),
+            // run it now on the first successful poll — Telegram is confirmed reachable.
+            if (s_needBootSweep)
+            {
+                s_needBootSweep = false;
+                Serial.println("[RFC-0238] Telegram reachable — running deferred boot sweep.");
+                esp_task_wdt_reset();
+                int swept = smsHandler.sweepExistingSms();
+                esp_task_wdt_reset();
+                if (swept > 0)
+                {
+                    String msg = String("\xF0\x9F\x93\xA8 Deferred sweep: ") + String(swept) // 📨
+                               + String(" offline SMS drained.");
+                    realBot.sendMessage(msg);
+                }
+            }
+        }); // RFC-0208 / RFC-0238
         // RFC-0211: Persist quiet hours to NVS on change.
         telegramPoller->setPersistQuietFn([&]() {
             uint8_t qh[2] = { (uint8_t)telegramPoller->quietStart(),
@@ -2230,11 +2251,21 @@ void setup()
                      + String(s_schedLoadedAtBoot)
                      + String(" scheduled SMS from NVS. Use /schedqueue to review.");
         }
-        realBot.sendMessage(bootMsg);
+        bool bootBannerOk = realBot.sendMessage(bootMsg);
+        // RFC-0238: If the boot banner failed, Telegram is unreachable.
+        // Defer the boot sweep to the first successful pollUpdates so
+        // we don't trigger the consecutive-failure reboot loop before
+        // the device even starts serving traffic.
+        if (!bootBannerOk)
+        {
+            s_needBootSweep = true;
+            Serial.println("[RFC-0238] Boot banner failed — boot sweep deferred to first successful poll.");
+        }
     }
 
     // Drain anything that arrived while we were offline.
-    {
+    // RFC-0238: Skip if Telegram unreachable at boot (deferred to first poll).
+    if (!s_needBootSweep) {
         int swept = smsHandler.sweepExistingSms(); // RFC-0097
         if (swept > 0) {
             String drainMsg = String("\xF0\x9F\x93\xA8 Drained ") + String(swept) // 📨
