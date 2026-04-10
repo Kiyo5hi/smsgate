@@ -316,6 +316,10 @@ public:
     // calls this fn with true/false to enable/disable block list enforcement.
     void setBlockingEnabledFn(std::function<void(bool)> fn) { blockingEnabledFn_ = std::move(fn); }
 
+    // RFC-0163: Optional block-check fn. When set, /blockcheck <phone> calls
+    // this fn and replies with whether the number would be blocked.
+    void setBlockCheckFn(std::function<String(const String &)> fn) { blockCheckFn_ = std::move(fn); }
+
     // RFC-0146: Optional SMS forward fn. When set, /forwardsim <idx> calls
     // this fn with the SIM index and replies success/failure.
     void setSmsForwardFn(std::function<bool(int)> fn) { smsForwardFn_ = std::move(fn); }
@@ -427,6 +431,7 @@ private:
     std::function<void(int)> maxPartsFn_;          // RFC-0160
     std::function<String()> smsCntFn_;             // RFC-0161
     std::function<void(bool)> blockingEnabledFn_;  // RFC-0162
+    std::function<String(const String &)> blockCheckFn_; // RFC-0163
     std::function<bool(int)> smsForwardFn_;        // RFC-0146
     uint32_t pollIntervalMs_ = kPollIntervalMs;    // RFC-0147
     std::function<void(uint32_t)> dedupWindowFn_;  // RFC-0144

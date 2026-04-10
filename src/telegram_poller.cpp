@@ -149,6 +149,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/smsslots \xe2\x80\x94 SIM SMS slot usage\n";
             help += "/smscount \xe2\x80\x94 SIM SMS storage capacity (used/total) via AT+CPMS?\n";
             help += "/setblockmode on|off \xe2\x80\x94 Enable/suspend SMS block list enforcement\n";
+            help += "/blockcheck <phone> \xe2\x80\x94 Test if a number would be blocked\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
             help += "/announce <msg> \xe2\x80\x94 Broadcast message to all authorized users\n";
             help += "/digest \xe2\x80\x94 Show on-demand stats digest\n";
@@ -740,6 +741,25 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             String reason;
             smsBlockMutator_(u.fromId, String("list"), String(), reason);
             bot_.sendMessageTo(u.chatId, reason);
+            return;
+        }
+
+        // RFC-0163: /blockcheck <phone> — test if a number would be blocked.
+        if (lower.startsWith("/blockcheck"))
+        {
+            if (!blockCheckFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(blockcheck not configured)"));
+                return;
+            }
+            String arg = extractArg(u.text, "/blockcheck ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /blockcheck <phone>\nExample: /blockcheck +8613912345678"));
+                return;
+            }
+            bot_.sendMessageTo(u.chatId, blockCheckFn_(arg));
             return;
         }
 

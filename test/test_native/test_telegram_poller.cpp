@@ -5586,6 +5586,65 @@ void test_TelegramPoller_setblockmode_on_calls_fn_true()
     TEST_ASSERT_TRUE(captured);
 }
 
+// RFC-0163: /blockcheck <phone> — calls blockCheckFn with phone number.
+void test_TelegramPoller_blockcheck_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    String captured;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setBlockCheckFn([&captured](const String &ph) -> String {
+        captured = ph;
+        return String("NOT blocked");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1081, kAllowedFromId, 0, "/blockcheck +1234567890", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1081, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(captured == String("+1234567890"));
+    bool sawResult = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("NOT blocked")) >= 0) { sawResult = true; break; }
+    TEST_ASSERT_TRUE(sawResult);
+}
+
+// RFC-0163: /blockcheck without arg → usage.
+void test_TelegramPoller_blockcheck_no_arg_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setBlockCheckFn([](const String &) -> String { return String("x"); });
+
+    bot.queueUpdateBatch({makeUpdate(1082, kAllowedFromId, 0, "/blockcheck", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1082, poller.lastUpdateId());
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Usage")) >= 0) { sawUsage = true; break; }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5822,6 +5881,9 @@ void run_telegram_poller_tests()
     // RFC-0162: /setblockmode command
     RUN_TEST(test_TelegramPoller_setblockmode_off_calls_fn_false);
     RUN_TEST(test_TelegramPoller_setblockmode_on_calls_fn_true);
+    // RFC-0163: /blockcheck command
+    RUN_TEST(test_TelegramPoller_blockcheck_calls_fn);
+    RUN_TEST(test_TelegramPoller_blockcheck_no_arg_sends_usage);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

@@ -1393,6 +1393,27 @@ void setup()
         telegramPoller->setBlockingEnabledFn([&smsHandler](bool enable) { // RFC-0162
             smsHandler.setBlockingEnabled(enable);
         });
+        telegramPoller->setBlockCheckFn([&smsHandler](const String &phone) -> String { // RFC-0163
+            bool enfEnabled = smsHandler.blockingEnabled();
+            bool hitCompile = (sBlockListCount > 0 &&
+                               isBlocked(phone.c_str(), sBlockList, sBlockListCount));
+            bool hitRuntime = (sRuntimeBlockListCount > 0 &&
+                               isBlocked(phone.c_str(), sRuntimeBlockList, sRuntimeBlockListCount));
+            if (!enfEnabled)
+            {
+                String r = String("\xe2\x9a\xa0\xef\xb8\x8f Enforcement SUSPENDED. "); // ⚠️
+                if (hitCompile || hitRuntime)
+                    r += String("Would be blocked (") + (hitCompile ? "compile" : "runtime") + String("-list) if enabled.");
+                else
+                    r += String("Not in any block list.");
+                return r;
+            }
+            if (hitCompile)
+                return String("\xF0\x9F\x9A\xAB BLOCKED by compile-time list."); // 🚫
+            if (hitRuntime)
+                return String("\xF0\x9F\x9A\xAB BLOCKED by runtime list."); // 🚫
+            return String("\xe2\x9c\x85 NOT blocked — would be forwarded."); // ✅
+        });
         telegramPoller->setSmsCntFn([]() -> String { // RFC-0161
             String raw;
             realModem.sendAT(String("+CPMS?"));
