@@ -272,6 +272,14 @@ public:
     // the count of deleted slots (-1 if unknown). /flushsim yes invokes it.
     void setFlushSimFn(std::function<int()> fn) { flushSimFn_ = std::move(fn); }
 
+    // RFC-0140: Optional SIM list fn. When set, /simlist calls this fn
+    // and replies with a compact index→sender list.
+    void setSimListFn(std::function<String()> fn) { simListFn_ = std::move(fn); }
+
+    // RFC-0141: Optional SIM read fn. When set, /simread <idx> calls
+    // this fn with the index and replies with the decoded SMS content.
+    void setSimReadFn(std::function<String(int)> fn) { simReadFn_ = std::move(fn); }
+
     // RFC-0121: Optional network info callback. When set, /network calls this
     // fn and replies with the result (e.g. "📶 Operator: T-Mobile | Reg: home | CSQ 18 (good)").
     // When not set, replies "(network info not configured)".
@@ -335,6 +343,8 @@ private:
     std::function<void(const String &)> noteSetFn_; // RFC-0131
     std::function<void(int)> maxFailFn_;  // RFC-0138
     std::function<int()> flushSimFn_;     // RFC-0139
+    std::function<String()> simListFn_;   // RFC-0140
+    std::function<String(int)> simReadFn_; // RFC-0141
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

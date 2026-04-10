@@ -1365,6 +1365,43 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0140: /simlist — list all SMS currently in SIM.
+        if (lower == "/simlist")
+        {
+            if (!simListFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(simlist not configured)"));
+                return;
+            }
+            bot_.sendMessageTo(u.chatId, simListFn_());
+            return;
+        }
+
+        // RFC-0141: /simread <idx> — decode and show a specific SIM slot.
+        if (lower == "/simread" || lower.startsWith("/simread "))
+        {
+            if (!simReadFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(simread not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/simread ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /simread <idx>"));
+                return;
+            }
+            long idx = arg.toInt();
+            if (idx < 1 || idx > 255)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid index (1\xe2\x80\x93 255).")); // ❌
+                return;
+            }
+            bot_.sendMessageTo(u.chatId, simReadFn_((int)idx));
+            return;
+        }
+
         // RFC-0131: /note — show current device note.
         if (lower == "/note")
         {

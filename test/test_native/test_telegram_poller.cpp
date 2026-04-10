@@ -4106,6 +4106,155 @@ void test_TelegramPoller_send_duplicate_gets_already_queued_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0140: /simlist calls fn and forwards result.
+void test_TelegramPoller_simlist_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSimListFn([&fnCalled]() -> String {
+        fnCalled = true;
+        return String("\xF0\x9F\x93\x8B SIM: 3 stored\n  [1]\n  [3]\n  [7]\n");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1000, kAllowedFromId, 0, "/simlist", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1000, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(fnCalled);
+    bool sawResult = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("SIM")) >= 0) { sawResult = true; break; }
+    TEST_ASSERT_TRUE(sawResult);
+}
+
+// RFC-0140: /simlist not configured → placeholder.
+void test_TelegramPoller_simlist_not_configured_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // setSimListFn NOT called → fn is nullptr.
+
+    bot.queueUpdateBatch({makeUpdate(1001, kAllowedFromId, 0, "/simlist", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1001, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("not configured")) >= 0) { sawPlaceholder = true; break; }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
+// RFC-0141: /simread <idx> calls fn with idx and forwards result.
+void test_TelegramPoller_simread_calls_fn_with_index()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    int capturedIdx = -1;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSimReadFn([&capturedIdx](int idx) -> String {
+        capturedIdx = idx;
+        return String("From: +447911123456\nBody: Hello");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1002, kAllowedFromId, 0, "/simread 7", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1002, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(7, capturedIdx);
+    bool sawResult = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Hello")) >= 0) { sawResult = true; break; }
+    TEST_ASSERT_TRUE(sawResult);
+}
+
+// RFC-0141: /simread with no arg → usage error.
+void test_TelegramPoller_simread_no_arg_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSimReadFn([&fnCalled](int) -> String { fnCalled = true; return String(); });
+
+    bot.queueUpdateBatch({makeUpdate(1003, kAllowedFromId, 0, "/simread", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1003, poller.lastUpdateId());
+    TEST_ASSERT_FALSE(fnCalled);
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Usage")) >= 0) { sawUsage = true; break; }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+// RFC-0141: /simread 0 → validation error (idx < 1).
+void test_TelegramPoller_simread_invalid_index_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSimReadFn([&fnCalled](int) -> String { fnCalled = true; return String(); });
+
+    bot.queueUpdateBatch({makeUpdate(1004, kAllowedFromId, 0, "/simread 0", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1004, poller.lastUpdateId());
+    TEST_ASSERT_FALSE(fnCalled);
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Invalid")) >= 0) { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 // RFC-0138: /setmaxfail <N> calls fn with N.
 void test_TelegramPoller_setmaxfail_calls_fn()
 {
@@ -4414,6 +4563,13 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setinterval_calls_fn);
     RUN_TEST(test_TelegramPoller_setinterval_zero_disables);
     RUN_TEST(test_TelegramPoller_setinterval_too_large_sends_error);
+    // RFC-0140: /simlist command
+    RUN_TEST(test_TelegramPoller_simlist_calls_fn);
+    RUN_TEST(test_TelegramPoller_simlist_not_configured_replies_placeholder);
+    // RFC-0141: /simread command
+    RUN_TEST(test_TelegramPoller_simread_calls_fn_with_index);
+    RUN_TEST(test_TelegramPoller_simread_no_arg_sends_usage);
+    RUN_TEST(test_TelegramPoller_simread_invalid_index_sends_error);
     // RFC-0138: /setmaxfail command
     RUN_TEST(test_TelegramPoller_setmaxfail_calls_fn);
     RUN_TEST(test_TelegramPoller_setmaxfail_zero_disables);

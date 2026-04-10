@@ -408,6 +408,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "flushsim";
         c["description"] = "Delete all SMS from SIM: /flushsim yes";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "simlist";
+        c["description"] = "List all SMS stored in SIM";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "simread";
+        c["description"] = "Read a SIM slot: /simread <idx>";
+    }
     String payload;
     serializeJson(doc, payload);
 

@@ -1330,6 +1330,60 @@ void setup()
             }
             return -1; // count unknown
         });
+        telegramPoller->setSimListFn([]() -> String { // RFC-0140
+            // Issue AT+CMGL="ALL" (PDU mode) and parse index lines.
+            String data;
+            realModem.sendAT(String("+CMGL=\"ALL\""));
+            realModem.waitResponse(10000UL, data);
+            String out;
+            int count = 0;
+            int search = 0;
+            while (true) {
+                int start = data.indexOf("+CMGL:", search);
+                if (start == -1) break;
+                int eol = data.indexOf('\n', start);
+                String line = eol > 0 ? data.substring(start, eol) : data.substring(start);
+                // +CMGL: <idx>,<stat>,,[<len>]
+                int c1 = line.indexOf(',');
+                String idxStr = c1 > 6 ? line.substring(7, c1) : String("?");
+                idxStr.trim();
+                out += String("  [") + idxStr + String("]\n");
+                count++;
+                search = (eol > 0) ? eol + 1 : data.length();
+            }
+            if (count == 0) return String("(no SMS in SIM)");
+            return String("\xF0\x9F\x93\x8B SIM: ") + String(count) + String(" stored\n") + out; // 📋
+        });
+        telegramPoller->setSimReadFn([](int idx) -> String { // RFC-0141
+            String raw;
+            realModem.sendAT(String("+CMGR=") + String(idx));
+            realModem.waitResponse(5000UL, raw);
+            // Extract PDU hex from "+CMGR: ...\r\n<hex>\r\nOK" response.
+            int header = raw.indexOf("+CMGR:");
+            if (header < 0)
+                return String("(slot ") + String(idx) + String(" empty or error)");
+            int headerEnd = raw.indexOf("\r\n", header);
+            if (headerEnd < 0) headerEnd = raw.length();
+            int hexStart = headerEnd + 2;
+            int hexEnd = raw.indexOf("\r\n", hexStart);
+            String pduHex = raw.substring(hexStart, hexEnd < 0 ? raw.length() : hexEnd);
+            pduHex.trim();
+            if (pduHex.isEmpty())
+                return String("(slot ") + String(idx) + String(": no PDU data)");
+            // Strip SMSC prefix (first octet = SMSC info length in bytes).
+            int smscLen = 0;
+            if (pduHex.length() >= 2)
+                smscLen = (int)strtol(pduHex.substring(0, 2).c_str(), nullptr, 16);
+            String tpdu = pduHex.substring(2 + smscLen * 2);
+            sms_codec::SmsPdu pdu;
+            if (!sms_codec::parseSmsPdu(tpdu, pdu))
+                return String("(idx ") + String(idx) + String(": PDU parse failed)");
+            String result = String("\xF0\x9F\x93\xA8 [") + String(idx) + String("]\n"); // 📨
+            result += String("From: ") + pdu.sender + String("\n");
+            result += String("Time: ") + pdu.timestamp + String("\n");
+            result += String("Body: ") + pdu.content;
+            return result;
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])
