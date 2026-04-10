@@ -448,6 +448,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "setpollinterval";
         c["description"] = "Set Telegram poll interval: /setpollinterval <seconds>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "sweepsim";
+        c["description"] = "Manually sweep SIM for pending SMS";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "health";
+        c["description"] = "Quick health check (WiFi/CSQ/heap/uptime)";
+    }
     String payload;
     serializeJson(doc, payload);
 

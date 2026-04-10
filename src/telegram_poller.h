@@ -272,6 +272,14 @@ public:
     // the count of deleted slots (-1 if unknown). /flushsim yes invokes it.
     void setFlushSimFn(std::function<int()> fn) { flushSimFn_ = std::move(fn); }
 
+    // RFC-0148: Optional SIM sweep fn. When set, /sweepsim calls this fn
+    // (which runs smsHandler.sweepExistingSms()) and replies with count.
+    void setSweepFn(std::function<int()> fn) { sweepFn_ = std::move(fn); }
+
+    // RFC-0149: Optional health fn. When set, /health calls this fn and
+    // replies with a compact single-line health summary.
+    void setHealthFn(std::function<String()> fn) { healthFn_ = std::move(fn); }
+
     // RFC-0146: Optional SMS forward fn. When set, /forwardsim <idx> calls
     // this fn with the SIM index and replies success/failure.
     void setSmsForwardFn(std::function<bool(int)> fn) { smsForwardFn_ = std::move(fn); }
@@ -373,6 +381,8 @@ private:
     std::function<void(const String &)> noteSetFn_; // RFC-0131
     std::function<void(int)> maxFailFn_;  // RFC-0138
     std::function<int()> flushSimFn_;     // RFC-0139
+    std::function<int()> sweepFn_;                  // RFC-0148
+    std::function<String()> healthFn_;             // RFC-0149
     std::function<bool(int)> smsForwardFn_;        // RFC-0146
     uint32_t pollIntervalMs_ = kPollIntervalMs;    // RFC-0147
     std::function<void(uint32_t)> dedupWindowFn_;  // RFC-0144

@@ -1316,6 +1316,32 @@ void setup()
             s_heartbeatIntervalSec = secs;
             realPersist.saveBlob("hb_interval", &secs, sizeof(secs));
         });
+        telegramPoller->setSweepFn([&smsHandler]() -> int { // RFC-0148
+            return smsHandler.sweepExistingSms();
+        });
+        telegramPoller->setHealthFn([]() -> String { // RFC-0149
+            // "✅ OK | WiFi: -65dBm | CSQ: 18 | Heap: 48KB | Up: 2d3h"
+            bool wifiOk = (WiFi.status() == WL_CONNECTED);
+            String msg = wifiOk
+                ? String("\xe2\x9c\x85 OK") // ✅
+                : String("\xe2\x9a\xa0\xef\xb8\x8f WiFi down"); // ⚠️
+            if (wifiOk) {
+                msg += String(" | WiFi: "); msg += String(WiFi.RSSI()); msg += String(" dBm");
+            }
+            msg += String(" | CSQ: "); msg += String(cachedCsq);
+            msg += String(" | Heap: "); msg += String(ESP.getFreeHeap() / 1024); msg += String("KB");
+            if (s_heartbeatIntervalSec > 0) {
+                unsigned long upSec = millis() / 1000;
+                unsigned long d = upSec / 86400; upSec %= 86400;
+                unsigned long h = upSec / 3600;  upSec %= 3600;
+                unsigned long m = upSec / 60;
+                msg += String(" | Up: ");
+                if (d > 0) { msg += String((int)d); msg += String("d"); }
+                if (h > 0 || d > 0) { msg += String((int)h); msg += String("h"); }
+                msg += String((int)m); msg += String("m");
+            }
+            return msg;
+        });
         telegramPoller->setSmsForwardFn([&smsHandler](int idx) -> bool { // RFC-0146
             smsHandler.handleSmsIndex(idx);
             return true; // handleSmsIndex is void; assume success

@@ -4106,6 +4106,95 @@ void test_TelegramPoller_send_duplicate_gets_already_queued_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0148: /sweepsim calls fn and reports count.
+void test_TelegramPoller_sweepsim_calls_fn_and_reports()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSweepFn([&fnCalled]() -> int { fnCalled = true; return 3; });
+
+    bot.queueUpdateBatch({makeUpdate(1040, kAllowedFromId, 0, "/sweepsim", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1040, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(fnCalled);
+    bool sawCount = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("3")) >= 0 && m.indexOf(String("wept")) >= 0) { sawCount = true; break; }
+    TEST_ASSERT_TRUE(sawCount);
+}
+
+// RFC-0148: /sweepsim with 0 SMS → placeholder.
+void test_TelegramPoller_sweepsim_zero_sms_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSweepFn([]() -> int { return 0; });
+
+    bot.queueUpdateBatch({makeUpdate(1041, kAllowedFromId, 0, "/sweepsim", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1041, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("no SMS")) >= 0 || m.indexOf(String("No SMS")) >= 0)
+            { sawPlaceholder = true; break; }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
+// RFC-0149: /health calls fn and forwards result.
+void test_TelegramPoller_health_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setHealthFn([&fnCalled]() -> String {
+        fnCalled = true;
+        return String("\xe2\x9c\x85 OK | WiFi: -65dBm | CSQ: 18");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1042, kAllowedFromId, 0, "/health", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1042, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(fnCalled);
+    bool sawResult = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("CSQ")) >= 0) { sawResult = true; break; }
+    TEST_ASSERT_TRUE(sawResult);
+}
+
 // RFC-0146: /forwardsim <idx> calls fn with index.
 void test_TelegramPoller_forwardsim_calls_fn_with_index()
 {
@@ -4880,6 +4969,11 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setinterval_calls_fn);
     RUN_TEST(test_TelegramPoller_setinterval_zero_disables);
     RUN_TEST(test_TelegramPoller_setinterval_too_large_sends_error);
+    // RFC-0148: /sweepsim command
+    RUN_TEST(test_TelegramPoller_sweepsim_calls_fn_and_reports);
+    RUN_TEST(test_TelegramPoller_sweepsim_zero_sms_replies_placeholder);
+    // RFC-0149: /health command
+    RUN_TEST(test_TelegramPoller_health_calls_fn);
     // RFC-0146: /forwardsim command
     RUN_TEST(test_TelegramPoller_forwardsim_calls_fn_with_index);
     RUN_TEST(test_TelegramPoller_forwardsim_no_arg_sends_usage);

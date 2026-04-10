@@ -1283,6 +1283,34 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0148: /sweepsim — manually trigger a SIM sweep.
+        if (lower == "/sweepsim")
+        {
+            if (!sweepFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(sweepsim not configured)"));
+                return;
+            }
+            int n = sweepFn_();
+            if (n == 0)
+                bot_.sendMessageTo(u.chatId, String("(no SMS found in SIM)"));
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 Swept ") + String(n) // ✅
+                    + String(n == 1 ? " SMS." : " SMS."));
+            return;
+        }
+
+        // RFC-0149: /health — compact single-line health check.
+        if (lower == "/health")
+        {
+            if (healthFn_)
+                bot_.sendMessageTo(u.chatId, healthFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(health not configured)"));
+            return;
+        }
+
         // RFC-0146: /forwardsim <idx> — force-forward a SIM slot to Telegram.
         if (lower == "/forwardsim" || lower.startsWith("/forwardsim "))
         {
