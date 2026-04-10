@@ -2859,6 +2859,128 @@ void test_TelegramPoller_ping_fallback_without_fn()
     TEST_ASSERT_TRUE(sawPong);
 }
 
+// RFC-0120: /uptime with fn set → replies with fn result.
+void test_TelegramPoller_uptime_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setUptimeFn([]() -> String { return String("\xE2\x8F\xB1 0d 0h 5m 3s"); });
+
+    bot.queueUpdateBatch({makeUpdate(910, kAllowedFromId, 0, "/uptime", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(910, poller.lastUpdateId());
+    bool sawUptime = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("5m")) >= 0) { sawUptime = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawUptime);
+}
+
+// RFC-0120: /uptime without fn → "(uptime not configured)".
+void test_TelegramPoller_uptime_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // uptimeFn_ NOT set
+
+    bot.queueUpdateBatch({makeUpdate(911, kAllowedFromId, 0, "/uptime", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(911, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
+// RFC-0121: /network with fn set → replies with fn result.
+void test_TelegramPoller_network_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setNetworkFn([]() -> String {
+        return String("\xF0\x9F\x93\xB6 Operator: T-Mobile | Reg: home | CSQ 18 (good)");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(912, kAllowedFromId, 0, "/network", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(912, poller.lastUpdateId());
+    bool sawNetwork = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("T-Mobile")) >= 0 && m.indexOf(String("Reg:")) >= 0)
+        {
+            sawNetwork = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawNetwork);
+}
+
+// RFC-0121: /network without fn → "(network info not configured)".
+void test_TelegramPoller_network_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // networkFn_ NOT set
+
+    bot.queueUpdateBatch({makeUpdate(913, kAllowedFromId, 0, "/network", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(913, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
 // RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
 void test_TelegramPoller_send_duplicate_gets_already_queued_error()
 {
@@ -3016,6 +3138,12 @@ void run_telegram_poller_tests()
     // RFC-0119: /ping enhanced summary
     RUN_TEST(test_TelegramPoller_ping_uses_summary_fn);
     RUN_TEST(test_TelegramPoller_ping_fallback_without_fn);
+    // RFC-0120: /uptime command
+    RUN_TEST(test_TelegramPoller_uptime_calls_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_uptime_not_configured_replies);
+    // RFC-0121: /network command
+    RUN_TEST(test_TelegramPoller_network_calls_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_network_not_configured_replies);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

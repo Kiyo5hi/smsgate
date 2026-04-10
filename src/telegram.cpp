@@ -308,6 +308,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "ussd";
         c["description"] = "Send USSD code and get response: /ussd *100#";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "uptime";
+        c["description"] = "Show device uptime";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "network";
+        c["description"] = "Show cellular operator + registration + CSQ";
+    }
 
     String payload;
     serializeJson(doc, payload);

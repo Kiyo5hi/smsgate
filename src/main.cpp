@@ -1156,6 +1156,44 @@ void setup()
             msg += String(" ("); msg += String(csqLabel); msg += String(")");
             return msg;
         });
+        telegramPoller->setUptimeFn([]() -> String {                 // RFC-0120
+            // "⏱ 2d 3h 15m 42s"
+            unsigned long uptimeSec = ((uint32_t)millis() - s_bootMs) / 1000UL;
+            unsigned long days  = uptimeSec / 86400UL;
+            unsigned long hours = (uptimeSec % 86400UL) / 3600UL;
+            unsigned long mins  = (uptimeSec % 3600UL) / 60UL;
+            unsigned long secs  = uptimeSec % 60UL;
+            String msg = String("\xE2\x8F\xB1 "); // ⏱
+            if (days > 0)  { msg += String(days);  msg += String("d "); }
+            if (hours > 0) { msg += String(hours); msg += String("h "); }
+            if (mins > 0 || days > 0 || hours > 0) { msg += String(mins); msg += String("m "); }
+            msg += String(secs); msg += String("s");
+            return msg;
+        });
+        telegramPoller->setNetworkFn([]() -> String {                // RFC-0121
+            // "📶 Operator: T-Mobile | Reg: home | CSQ 18 (good)"
+            const char *regStr;
+            switch (cachedRegStatus) {
+                case REG_OK_HOME:      regStr = "home";         break;
+                case REG_OK_ROAMING:   regStr = "roaming";      break;
+                case REG_SEARCHING:    regStr = "searching";    break;
+                case REG_DENIED:       regStr = "denied";       break;
+                case REG_UNREGISTERED: regStr = "unregistered"; break;
+                default:               regStr = "unknown";      break;
+            }
+            const char *csqLabel;
+            if (cachedCsq == 99)      csqLabel = "none";
+            else if (cachedCsq <= 9)  csqLabel = "marginal";
+            else if (cachedCsq <= 14) csqLabel = "ok";
+            else if (cachedCsq <= 19) csqLabel = "good";
+            else                      csqLabel = "excellent";
+            String msg = String("\xF0\x9F\x93\xB6 Operator: "); // 📶
+            msg += (cachedOperatorName.length() > 0 ? cachedOperatorName : String("(unknown)"));
+            msg += String(" | Reg: "); msg += String(regStr);
+            msg += String(" | CSQ "); msg += String(cachedCsq);
+            msg += String(" ("); msg += String(csqLabel); msg += String(")");
+            return msg;
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])

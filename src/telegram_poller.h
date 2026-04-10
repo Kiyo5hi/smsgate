@@ -212,6 +212,16 @@ public:
     // (e.g. set s_pendingRestart only if fromId is in the admin list).
     void setRebootFn(std::function<void(int64_t)> fn) { rebootFn_ = std::move(fn); }
 
+    // RFC-0120: Optional uptime callback. When set, /uptime calls this fn
+    // and replies with the result (e.g. "⏱ 2d 3h 15m 42s").
+    // When not set, replies "(uptime not configured)".
+    void setUptimeFn(std::function<String()> fn) { uptimeFn_ = std::move(fn); }
+
+    // RFC-0121: Optional network info callback. When set, /network calls this
+    // fn and replies with the result (e.g. "📶 Operator: T-Mobile | Reg: home | CSQ 18 (good)").
+    // When not set, replies "(network info not configured)".
+    void setNetworkFn(std::function<String()> fn) { networkFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -256,6 +266,8 @@ private:
     std::function<void(const String &)> labelSetFn_;        // RFC-0118
     std::function<String()> balanceCodeFn_; // RFC-0114
     std::function<void(int64_t)> rebootFn_; // RFC-0112
+    std::function<String()> uptimeFn_;     // RFC-0120
+    std::function<String()> networkFn_;    // RFC-0121
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

@@ -115,6 +115,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/version \xe2\x80\x94 Show firmware build timestamp\n";
             help += "/label \xe2\x80\x94 Show device label\n";
             help += "/setlabel <name> \xe2\x80\x94 Set device label (persisted to NVS)\n";
+            help += "/uptime \xe2\x80\x94 Quick uptime one-liner\n";
+            help += "/network \xe2\x80\x94 Cellular operator + registration + CSQ\n";
             help += "/reboot \xe2\x80\x94 Soft reboot\n";
             help += "/at <cmd> \xe2\x80\x94 Admin: raw AT command passthrough\n";
             if (smsBlockMutator_) {
@@ -1051,6 +1053,26 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             {
                 bot_.sendMessageTo(u.chatId, String("(reboot not configured)"));
             }
+            return;
+        }
+
+        // RFC-0120: /uptime — quick uptime one-liner.
+        if (lower == "/uptime")
+        {
+            if (uptimeFn_)
+                bot_.sendMessageTo(u.chatId, uptimeFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(uptime not configured)"));
+            return;
+        }
+
+        // RFC-0121: /network — cellular registration + operator + CSQ snapshot.
+        if (lower == "/network")
+        {
+            if (networkFn_)
+                bot_.sendMessageTo(u.chatId, networkFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(network info not configured)"));
             return;
         }
 
