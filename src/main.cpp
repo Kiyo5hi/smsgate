@@ -623,6 +623,22 @@ void setup()
         // --- assemble message ---
         String msg;
 
+        // RFC-0068: Compact one-liner at the top (same format as the heartbeat)
+        // so the key numbers are visible without scrolling.
+        {
+            msg += String("\xE2\x8F\xB1 "); // ⏱
+            msg += String((int)days); msg += "d ";
+            msg += String((int)hours); msg += "h ";
+            msg += String((int)mins); msg += "m";
+            msg += String(" | CSQ "); msg += String(cachedCsq);
+            if (cachedOperatorName.length() > 0) { msg += " "; msg += cachedOperatorName; }
+            msg += String(" | WiFi "); msg += String(WiFi.RSSI()); msg += "dBm";
+            msg += String(" | fwd "); msg += String(smsHandler.smsForwarded());
+            msg += String(" | q "); msg += String(smsSender.queueSize());
+            msg += String("/"); msg += String(SmsSender::kQueueSize);
+            msg += "\n\n";
+        }
+
         msg += "\xF0\x9F\x93\xA1 Device\n"; // 📡
         msg += "  Time: ";      msg += timeBuf; msg += " "; msg += tzLabel; msg += "\n";
         msg += "  Uptime: ";    msg += String((int)days); msg += "d "; msg += String((int)hours); msg += "h "; msg += String((int)mins); msg += "m\n";
