@@ -2556,6 +2556,7 @@ void loop()
     if (millis() - lastStatusRefreshMs > 30000UL)
     {
         lastStatusRefreshMs = millis();
+        esp_task_wdt_reset(); // RFC-0252: block can call sendMessage() up to 8× (~23 s each)
         String s236raw; // RFC-0236: accumulates raw bytes from all 4 AT exchanges
 
         // RFC-0236: Use raw AT for CSQ so the captured buffer can be
@@ -2616,14 +2617,18 @@ void loop()
                                : (cachedRegStatus == REG_UNKNOWN)      ? "unknown"
                                :                                         "unknown";
             if (!regOk && !s_regLostAlertSent && cachedCsq > 0) {
-                if (!alertsMuted()) // RFC-0098
+                if (!alertsMuted()) { // RFC-0098
+                    esp_task_wdt_reset(); // RFC-0252
                     realBot.sendMessage(
                         String("\xF0\x9F\x93\xB5 Network registration lost (") + regTxt + ")"); // 📵
+                }
                 s_regLostAlertSent = true;
             } else if (regOk && s_regLostAlertSent) {
-                if (!alertsMuted()) // RFC-0098
+                if (!alertsMuted()) { // RFC-0098
+                    esp_task_wdt_reset(); // RFC-0252
                     realBot.sendMessage(
                         String("\xE2\x9C\x85 Network registration restored (") + regTxt + ")"); // ✅
+                }
                 s_regLostAlertSent = false;
             }
         }
@@ -2636,6 +2641,7 @@ void loop()
                 {
                     String msg = String("\xE2\x9A\xA0\xEF\xB8\x8F Weak WiFi: "); // ⚠️
                     msg += String(rssi); msg += " dBm — Telegram delivery may be unreliable.";
+                    esp_task_wdt_reset(); // RFC-0252
                     realBot.sendMessage(msg);
                     s_lowWifiRssiAlertSent = true;
                 }
@@ -2693,6 +2699,7 @@ void loop()
                 String simMsg = String("\xE2\x9A\xA0\xEF\xB8\x8F SIM storage "); // ⚠️
                 simMsg += String(cachedSimUsed); simMsg += "/"; simMsg += String(cachedSimTotal);
                 simMsg += " slots (\xe2\x89\xa580%). Delete old SMS or SIM may reject new ones."; // ≥
+                esp_task_wdt_reset(); // RFC-0252
                 realBot.sendMessage(simMsg);
                 s_simFullWarnSent = true;
             } else if (!nearFull) {
@@ -2705,6 +2712,7 @@ void loop()
             if (!alertsMuted()) { // RFC-0098
                 String csqMsg = String("\xF0\x9F\x93\xB6 Low signal: CSQ "); // 📶
                 csqMsg += String(cachedCsq); csqMsg += ". SMS delivery may be unreliable.";
+                esp_task_wdt_reset(); // RFC-0252
                 realBot.sendMessage(csqMsg);
             }
             s_lowCsqWarnSent = true;
@@ -2720,12 +2728,14 @@ void loop()
                 // RFC-0073: Too close to the edge — reboot before we crash silently.
                 String critMsg = String("\xF0\x9F\x92\x80 Critical heap: "); // 💀
                 critMsg += String((int)freeHeap); critMsg += " B free — rebooting now.";
+                esp_task_wdt_reset(); // RFC-0252: ensure WDT alive for this critical send
                 realBot.sendMessage(critMsg);
                 delay(500);
                 ESP.restart();
             } else if (freeHeap < 15u * 1024u && !s_lowHeapWarnSent) {
                 String heapMsg = String("\xE2\x9A\xA0\xEF\xB8\x8F Low heap: "); // ⚠️
                 heapMsg += String((int)freeHeap); heapMsg += " B free. Device may become unstable.";
+                esp_task_wdt_reset(); // RFC-0252
                 realBot.sendMessage(heapMsg);
                 s_lowHeapWarnSent = true;
             } else if (freeHeap > 25u * 1024u) {
@@ -2739,6 +2749,7 @@ void loop()
                 s_lastNtpRetryMs = millis();
                 syncTime();
                 if (time(nullptr) > 8 * 3600 * 2) {
+                    esp_task_wdt_reset(); // RFC-0252
                     realBot.sendMessage(
                         String("\xF0\x9F\x95\x90 Clock synced via NTP.")); // 🕐
                 }
@@ -2777,6 +2788,7 @@ void loop()
                     alert += String(" waiting >5m. Oldest: "); alert += oldestPhone;
                     alert += String(" ("); alert += String((int)(oldestAgeSec / 60)); alert += "m)\n";
                     alert += String("Use /queue to inspect, /flushqueue to retry, /clearqueue to discard.");
+                    esp_task_wdt_reset(); // RFC-0252
                     realBot.sendMessage(alert);
                 }
                 s_stuckQueueAlertSent = true;
@@ -2803,6 +2815,7 @@ void loop()
                     digest += " | deduped "; digest += String(smsHandler.smsDeduplicated());
                 }
                 digest += " | heap "; digest += String((int)(ESP.getFreeHeap() / 1024)); digest += " KB free";
+                esp_task_wdt_reset(); // RFC-0252
                 realBot.sendMessage(digest);
             }
         }
