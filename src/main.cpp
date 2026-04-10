@@ -1390,6 +1390,47 @@ void setup()
         telegramPoller->setMaxPartsFn([&smsSender](int n) { // RFC-0160
             smsSender.setMaxParts(n);
         });
+        telegramPoller->setSmsCntFn([]() -> String { // RFC-0161
+            String raw;
+            realModem.sendAT(String("+CPMS?"));
+            realModem.waitResponse(3000UL, raw);
+            // +CPMS: "SM",<used>,<total>,"SM",<used2>,<total2>,...
+            int pos = raw.indexOf("+CPMS:");
+            if (pos < 0)
+                return String("(CPMS query failed)");
+            String line = raw.substring(pos + 7);
+            line.trim();
+            // Parse up to 3 store triplets: "name",used,total
+            String out = String("\xF0\x9F\x93\xB1 SMS storage:\n"); // 📱
+            int p = 0;
+            for (int store = 0; store < 3 && p < (int)line.length(); store++)
+            {
+                int qo = line.indexOf('"', p);
+                if (qo < 0) break;
+                int qc = line.indexOf('"', qo + 1);
+                if (qc < 0) break;
+                String name = line.substring(qo + 1, qc);
+                p = qc + 1;
+                // skip comma
+                if (p < (int)line.length() && line[p] == ',') ++p;
+                int c1 = line.indexOf(',', p);
+                if (c1 < 0) break;
+                String usedStr = line.substring(p, c1);
+                usedStr.trim();
+                p = c1 + 1;
+                int c2 = line.indexOf(',', p);
+                String totalStr = c2 > 0 ? line.substring(p, c2) : line.substring(p);
+                // totalStr may end at newline / CR
+                {
+                    int nl = totalStr.indexOf('\r'); if (nl >= 0) totalStr = totalStr.substring(0, nl);
+                    nl = totalStr.indexOf('\n'); if (nl >= 0) totalStr = totalStr.substring(0, nl);
+                }
+                totalStr.trim();
+                out += String("  ") + name + String(": ") + usedStr + String("/") + totalStr + String("\n");
+                p = c2 > 0 ? c2 + 1 : (int)line.length();
+            }
+            return out;
+        });
         telegramPoller->setFlushSimFn([]() -> int { // RFC-0139
             // AT+CMGDA="DEL ALL" — A76xx/SIM7xxx extension to delete all SMS.
             realModem.sendAT(String("+CMGDA=\"DEL ALL\""));

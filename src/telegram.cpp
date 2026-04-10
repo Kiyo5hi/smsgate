@@ -518,6 +518,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "setmaxparts";
         c["description"] = "Set max outbound SMS concat parts (1-10): /setmaxparts <N>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "smscount";
+        c["description"] = "SIM SMS storage capacity (used/total) via AT+CPMS?";
+    }
     String payload;
     serializeJson(doc, payload);
 

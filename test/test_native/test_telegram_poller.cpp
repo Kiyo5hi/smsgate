@@ -5473,6 +5473,64 @@ void test_TelegramPoller_setmaxparts_out_of_range_sends_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0161: /smscount — calls smsCntFn and sends result.
+void test_TelegramPoller_smscount_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSmsCntFn([&fnCalled]() -> String {
+        fnCalled = true;
+        return String("SM: 3/20");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1077, kAllowedFromId, 0, "/smscount", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1077, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(fnCalled);
+    bool sawResult = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("SM")) >= 0 && m.indexOf(String("3")) >= 0) { sawResult = true; break; }
+    TEST_ASSERT_TRUE(sawResult);
+}
+
+// RFC-0161: /smscount not configured → placeholder.
+void test_TelegramPoller_smscount_not_configured_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(1078, kAllowedFromId, 0, "/smscount", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1078, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("not configured")) >= 0) { sawPlaceholder = true; break; }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5703,6 +5761,9 @@ void run_telegram_poller_tests()
     // RFC-0160: /setmaxparts command
     RUN_TEST(test_TelegramPoller_setmaxparts_calls_fn);
     RUN_TEST(test_TelegramPoller_setmaxparts_out_of_range_sends_error);
+    // RFC-0161: /smscount command
+    RUN_TEST(test_TelegramPoller_smscount_calls_fn);
+    RUN_TEST(test_TelegramPoller_smscount_not_configured_replies_placeholder);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

@@ -147,6 +147,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/count \xe2\x80\x94 Session SMS/call counter summary\n";
             help += "/ip \xe2\x80\x94 WiFi IP address, SSID, and RSSI\n";
             help += "/smsslots \xe2\x80\x94 SIM SMS slot usage\n";
+            help += "/smscount \xe2\x80\x94 SIM SMS storage capacity (used/total) via AT+CPMS?\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
             help += "/announce <msg> \xe2\x80\x94 Broadcast message to all authorized users\n";
             help += "/digest \xe2\x80\x94 Show on-demand stats digest\n";
@@ -1315,6 +1316,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, smsSlotsFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(SMS slots info not configured)"));
+            return;
+        }
+
+        // RFC-0161: /smscount — SIM SMS storage capacity via AT+CPMS?.
+        if (lower == "/smscount")
+        {
+            if (smsCntFn_)
+                bot_.sendMessageTo(u.chatId, smsCntFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(smscount not configured)"));
             return;
         }
 
