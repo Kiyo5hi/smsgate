@@ -216,23 +216,30 @@ void test_timestampToRFC3339_exactly_17_chars()
                              timestampToRFC3339(String("24/01/15,10:30:45")).c_str());
 }
 
-// RFC-0169: custom GMT offset
+// RFC-0169/0175: custom GMT offset (parameter is minutes)
 void test_timestampToRFC3339_custom_positive_offset()
 {
     TEST_ASSERT_EQUAL_STRING("2024-01-15T10:30:45+09:00",
-                             timestampToRFC3339(String("24/01/15,10:30:45+32"), 9).c_str());
+                             timestampToRFC3339(String("24/01/15,10:30:45+32"), 540).c_str());
 }
 
 void test_timestampToRFC3339_custom_negative_offset()
 {
     TEST_ASSERT_EQUAL_STRING("2024-01-15T10:30:45-05:00",
-                             timestampToRFC3339(String("24/01/15,10:30:45+32"), -5).c_str());
+                             timestampToRFC3339(String("24/01/15,10:30:45+32"), -300).c_str());
 }
 
 void test_timestampToRFC3339_utc_zero_offset()
 {
     TEST_ASSERT_EQUAL_STRING("2024-01-15T10:30:45+00:00",
                              timestampToRFC3339(String("24/01/15,10:30:45+32"), 0).c_str());
+}
+
+// RFC-0175: fractional offset (UTC+5:30)
+void test_timestampToRFC3339_fractional_offset()
+{
+    TEST_ASSERT_EQUAL_STRING("2024-01-15T10:30:45+05:30",
+                             timestampToRFC3339(String("24/01/15,10:30:45+32"), 330).c_str());
 }
 
 // ---------- Unity plumbing ----------
@@ -354,6 +361,7 @@ void run_sms_codec_tests()
     RUN_TEST(test_timestampToRFC3339_custom_positive_offset);
     RUN_TEST(test_timestampToRFC3339_custom_negative_offset);
     RUN_TEST(test_timestampToRFC3339_utc_zero_offset);
+    RUN_TEST(test_timestampToRFC3339_fractional_offset);
     // RFC-0037: countSmsParts
     RUN_TEST(test_countSmsParts_empty_is_zero);
     RUN_TEST(test_countSmsParts_short_ascii_is_one_part);

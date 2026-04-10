@@ -149,15 +149,17 @@ public:
     void setBlockingEnabled(bool enabled) { blockingEnabled_ = enabled; }
     bool blockingEnabled() const { return blockingEnabled_; }
 
-    // RFC-0169: Runtime GMT offset for SMS timestamps (default 8 = UTC+8).
-    // Range: -12 to +14. Applied when formatting the Telegram forward message.
-    void setGmtOffsetHours(int h)
+    // RFC-0169/0175: Runtime GMT offset for SMS timestamps in minutes.
+    // Default 480 = UTC+8. Range: -720 to +840 (all IANA offsets).
+    // Use setGmtOffsetMinutes(hours*60) for whole-hour offsets, or pass
+    // total minutes directly for fractional offsets (e.g. 330 = UTC+5:30).
+    void setGmtOffsetMinutes(int m)
     {
-        if (h < -12) h = -12;
-        if (h > 14)  h = 14;
-        gmtOffsetHours_ = h;
+        if (m < -720) m = -720;
+        if (m > 840)  m = 840;
+        gmtOffsetMinutes_ = m;
     }
-    int gmtOffsetHours() const { return gmtOffsetHours_; }
+    int gmtOffsetMinutes() const { return gmtOffsetMinutes_; }
 
     // RFC-0172: Custom tag prepended to every forwarded SMS message.
     // Empty by default. When set to e.g. "[Home]", messages look like:
@@ -323,7 +325,7 @@ private:
     int runtimeListCount_ = 0;
     bool forwardingEnabled_ = true;                   // RFC-0153
     bool blockingEnabled_   = true;                   // RFC-0162
-    int    gmtOffsetHours_    = 8;                    // RFC-0169
+    int    gmtOffsetMinutes_  = 480;                  // RFC-0169/0175 (default UTC+8)
     String fwdTag_;                                   // RFC-0172 (default empty)
     unsigned long concatTtlMs_   = CONCAT_TTL_MS;    // RFC-0142
     unsigned long dedupWindowMs_ = kDedupWindowMs;   // RFC-0144

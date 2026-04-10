@@ -1424,15 +1424,20 @@ void setup()
             s += "  Poll interval: ";
             s += String(telegramPoller->pollIntervalMs() / 1000); s += "s\n";
             s += "  SMS timestamp GMT offset: UTC";
-            int gmt = smsHandler.gmtOffsetHours();
-            if (gmt >= 0) s += "+";
-            s += String(gmt); s += "\n";
+            int gmtM = smsHandler.gmtOffsetMinutes();
+            { int absM = gmtM < 0 ? -gmtM : gmtM;
+              int h = absM / 60, m = absM % 60;
+              if (gmtM >= 0) s += "+";
+              s += String(h);
+              if (m) { s += ":"; if (m < 10) s += "0"; s += String(m); }
+            }
+            s += "\n";
             s += "  Forward tag: ";
             s += (smsHandler.fwdTag().length() > 0 ? ("\"" + smsHandler.fwdTag() + "\"") : "(none)");
             return s;
         });
-        telegramPoller->setGmtOffsetFn([&smsHandler](int h) { // RFC-0169
-            smsHandler.setGmtOffsetHours(h);
+        telegramPoller->setGmtOffsetFn([&smsHandler](int m) { // RFC-0169/0175: m = total minutes
+            smsHandler.setGmtOffsetMinutes(m);
         });
         telegramPoller->setFwdTagFn([&smsHandler](const String &tag) { // RFC-0172
             smsHandler.setFwdTag(tag);
@@ -1453,9 +1458,14 @@ void setup()
             s += "  Max SMS parts: ";
             s += String(smsSender.maxParts()); s += "\n";
             s += "  GMT offset: UTC";
-            int gmt = smsHandler.gmtOffsetHours();
-            if (gmt >= 0) s += "+";
-            s += String(gmt); s += "\n";
+            int gmtM = smsHandler.gmtOffsetMinutes();
+            { int absM = gmtM < 0 ? -gmtM : gmtM;
+              int h = absM / 60, m = absM % 60;
+              if (gmtM >= 0) s += "+";
+              s += String(h);
+              if (m) { s += ":"; if (m < 10) s += "0"; s += String(m); }
+            }
+            s += "\n";
             s += "  Fwd tag: ";
             s += (smsHandler.fwdTag().length() > 0 ? ("\"" + smsHandler.fwdTag() + "\"") : "(none)"); s += "\n";
             s += "  Session: fwd=";

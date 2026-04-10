@@ -565,6 +565,11 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "setgmtoffsetmin";
+        c["description"] = "Timezone in total minutes for fractional offsets: /setgmtoffsetmin 330";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "loginfo";
         c["description"] = "Debug log ring buffer status (count/capacity + newest entry)";
     }

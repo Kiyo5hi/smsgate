@@ -100,7 +100,7 @@ void SmsHandler::evictLruUntilUnderCaps(size_t reservedExtraBytes)
 
 bool SmsHandler::forwardSingle(const sms_codec::SmsPdu &pdu, int /*simIndex*/)
 {
-    String formatted = formatBotMessage(pdu.sender, pdu.timestamp, pdu.content, gmtOffsetHours_, fwdTag_); // RFC-0169/0172
+    String formatted = formatBotMessage(pdu.sender, pdu.timestamp, pdu.content, gmtOffsetMinutes_, fwdTag_); // RFC-0169/0172
     int32_t mid = bot_.sendMessageReturningId(formatted);
     if (mid <= 0)
     {
@@ -319,7 +319,7 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
         return true;
     }
 
-    String formatted = formatBotMessage(group->sender, group->firstTimestamp, assembled, gmtOffsetHours_, fwdTag_); // RFC-0169/0172
+    String formatted = formatBotMessage(group->sender, group->firstTimestamp, assembled, gmtOffsetMinutes_, fwdTag_); // RFC-0169/0172
 
     int32_t mid = bot_.sendMessageReturningId(formatted);
     if (mid <= 0)

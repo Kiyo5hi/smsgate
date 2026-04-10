@@ -5857,7 +5857,7 @@ void test_TelegramPoller_nvsinfo_calls_fn_and_replies()
     TEST_ASSERT_TRUE(msgs.back().indexOf("used=12") >= 0);
 }
 
-// RFC-0169: /setgmtoffset command
+// RFC-0169/0175: /setgmtoffset command — fn receives minutes (hours * 60)
 void test_TelegramPoller_setgmtoffset_calls_fn_with_hours()
 {
     FakeModem modem;
@@ -5873,13 +5873,38 @@ void test_TelegramPoller_setgmtoffset_calls_fn_with_hours()
                           [&]() -> uint32_t { return clk.nowMs; },
                           allowedAuth);
     poller.begin();
-    poller.setGmtOffsetFn([&captured](int h) { captured = h; });
+    poller.setGmtOffsetFn([&captured](int m) { captured = m; });
 
     bot.queueUpdateBatch({makeUpdate(1091, kAllowedFromId, 0, "/setgmtoffset -5", kAllowedFromId)});
     poller.tick();
 
     TEST_ASSERT_EQUAL(1091, poller.lastUpdateId());
-    TEST_ASSERT_EQUAL(-5, captured);
+    TEST_ASSERT_EQUAL(-300, captured); // -5 hours * 60 = -300 minutes
+}
+
+// RFC-0175: /setgmtoffsetmin command — fn receives minutes directly
+void test_TelegramPoller_setgmtoffsetmin_calls_fn_with_minutes()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    int captured = 999;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setGmtOffsetFn([&captured](int m) { captured = m; });
+
+    bot.queueUpdateBatch({makeUpdate(1097, kAllowedFromId, 0, "/setgmtoffsetmin 330", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1097, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(330, captured); // 330 minutes = UTC+5:30
 }
 
 // RFC-0170: /loginfo command
@@ -6284,8 +6309,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_settings_calls_fn_and_replies);
     // RFC-0168: /nvsinfo command
     RUN_TEST(test_TelegramPoller_nvsinfo_calls_fn_and_replies);
-    // RFC-0169: /setgmtoffset command
+    // RFC-0169/0175: /setgmtoffset and /setgmtoffsetmin commands
     RUN_TEST(test_TelegramPoller_setgmtoffset_calls_fn_with_hours);
+    RUN_TEST(test_TelegramPoller_setgmtoffsetmin_calls_fn_with_minutes);
     // RFC-0170: /loginfo command
     RUN_TEST(test_TelegramPoller_loginfo_shows_count_and_capacity);
     // RFC-0171: /smsrate command

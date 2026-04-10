@@ -158,6 +158,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/setcalldedup <s> \xe2\x80\x94 Call dedup cooldown window in seconds (1\xe2\x80\x9360)\n";
             help += "/setunknowndeadline <ms> \xe2\x80\x94 RING-without-CLIP deadline in ms (500\xe2\x80\x9310000)\n";
             help += "/setgmtoffset <h> \xe2\x80\x94 Timezone for SMS timestamps (-12 to +14, default +8)\n";
+            help += "/setgmtoffsetmin <m> \xe2\x80\x94 Timezone in total minutes (-720 to +840, e.g. 330=UTC+5:30)\n";
             help += "/setfwdtag <text> \xe2\x80\x94 Custom prefix tag on forwarded SMS (max 20 chars)\n";
             help += "/clearfwdtag \xe2\x80\x94 Remove custom forward prefix tag\n";
             help += "/settings \xe2\x80\x94 Show all runtime-configurable parameters\n";
@@ -1629,7 +1630,9 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
-        // RFC-0169: /setgmtoffset <hours> — set timezone offset for SMS timestamps.
+        // RFC-0169/0175: /setgmtoffset <hours> — set timezone offset for SMS timestamps.
+        // Calls gmtOffsetFn_ with hours*60 (minutes). Use /setgmtoffsetmin for
+        // fractional offsets (UTC+5:30 etc).
         if (lower == "/setgmtoffset" || lower.startsWith("/setgmtoffset "))
         {
             if (!gmtOffsetFn_)
@@ -1641,7 +1644,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             if (arg.length() == 0)
             {
                 bot_.sendMessageTo(u.chatId,
-                    String("Usage: /setgmtoffset <hours>\nRange: -12 to +14\nExamples: /setgmtoffset 8  /setgmtoffset -5"));
+                    String("Usage: /setgmtoffset <hours>\nRange: -12 to +14\nExamples: /setgmtoffset 8  /setgmtoffset -5\nFor UTC+5:30 use /setgmtoffsetmin 330"));
                 return;
             }
             int hours = (int)arg.toInt();
@@ -1651,11 +1654,46 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("Error: hours must be -12 to +14"));
                 return;
             }
-            gmtOffsetFn_(hours);
+            gmtOffsetFn_(hours * 60); // RFC-0175: fn now takes minutes
             String sign = (hours >= 0) ? "+" : "";
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 GMT offset set to UTC") // ✅
                 + sign + String(hours) + String("."));
+            return;
+        }
+
+        // RFC-0175: /setgmtoffsetmin <minutes> — fractional timezone offsets.
+        if (lower == "/setgmtoffsetmin" || lower.startsWith("/setgmtoffsetmin "))
+        {
+            if (!gmtOffsetFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setgmtoffset not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/setgmtoffsetmin ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setgmtoffsetmin <total_minutes>\nRange: -720 to +840\nExamples: /setgmtoffsetmin 330 (UTC+5:30)  /setgmtoffsetmin -300 (UTC-5)"));
+                return;
+            }
+            int mins = (int)arg.toInt();
+            if (mins < -720 || mins > 840)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Error: minutes must be -720 to +840"));
+                return;
+            }
+            gmtOffsetFn_(mins);
+            int absM = mins < 0 ? -mins : mins;
+            int h = absM / 60, m = absM % 60;
+            char buf[12];
+            if (m == 0)
+                snprintf(buf, sizeof(buf), "%c%d", mins < 0 ? '-' : '+', h);
+            else
+                snprintf(buf, sizeof(buf), "%c%d:%02d", mins < 0 ? '-' : '+', h, m);
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 GMT offset set to UTC") + String(buf) + String(".")); // ✅
             return;
         }
 

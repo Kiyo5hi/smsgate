@@ -50,10 +50,10 @@ String normalizePhoneNumber(const String &raw);
 
 // Convert a CMGR timestamp ("yy/MM/dd,HH:mm:ss+zz") to RFC 3339.
 // Returns the empty string if the input is shorter than 17 chars
-// (we don't try to guess). gmtOffsetHours defaults to +8 to preserve
-// previous behaviour; pass the runtime value for RFC-0169 support.
-// Range: -12 to +14 (all IANA standard UTC offsets).
-String timestampToRFC3339(const String &timestamp, int gmtOffsetHours = 8);
+// (we don't try to guess). gmtOffsetMinutes defaults to +480 (UTC+8)
+// to preserve prior behaviour; pass the runtime value in minutes
+// (e.g. 330 for UTC+5:30, -300 for UTC-5). RFC-0169/0175.
+String timestampToRFC3339(const String &timestamp, int gmtOffsetMinutes = 480);
 
 // Parse a `+CLIP: "<number>",<type>,...` URC line, extracting the
 // caller number field into `number`. Returns true if the line starts

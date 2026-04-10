@@ -46,7 +46,7 @@ String normalizePhoneNumber(const String &raw)
     return result;
 }
 
-String timestampToRFC3339(const String &timestamp, int gmtOffsetHours)
+String timestampToRFC3339(const String &timestamp, int gmtOffsetMinutes)
 {
     // Input format:  "yy/MM/dd,HH:mm:ss+zz" (as returned in +CMGR headers)
     // Output format: "YYYY-MM-DDTHH:mm:ss+HH:MM"
@@ -60,11 +60,13 @@ String timestampToRFC3339(const String &timestamp, int gmtOffsetHours)
     String minute = timestamp.substring(12, 14);
     String second = timestamp.substring(15, 17);
 
-    // RFC-0169: format timezone offset from gmtOffsetHours
-    int absH = gmtOffsetHours < 0 ? -gmtOffsetHours : gmtOffsetHours;
+    // RFC-0169/0175: format timezone offset from total minutes
+    int absMins = gmtOffsetMinutes < 0 ? -gmtOffsetMinutes : gmtOffsetMinutes;
+    int absH  = absMins / 60;
+    int absM  = absMins % 60;
     char tzBuf[7]; // "+HH:MM\0"
-    snprintf(tzBuf, sizeof(tzBuf), "%c%02d:00",
-             gmtOffsetHours < 0 ? '-' : '+', absH);
+    snprintf(tzBuf, sizeof(tzBuf), "%c%02d:%02d",
+             gmtOffsetMinutes < 0 ? '-' : '+', absH, absM);
 
     return year + "-" + month + "-" + day + "T" + hour + ":" + minute + ":" + second + tzBuf;
 }
