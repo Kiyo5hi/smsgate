@@ -94,6 +94,11 @@ public:
     // The alias is prepended to the header: "Name (+86138...) | timestamp"
     void setAliasFn(std::function<String(const String &)> fn) { aliasFn_ = std::move(fn); }
 
+    // RFC-0181: Format a synthetic message using the current gmtOffsetMinutes_,
+    // fwdTag_, and aliasFn_ settings. Useful for /fwdtest to preview the output.
+    // `timestamp` should be in PDU format "YY/MM/DD,HH:MM:SS+tz".
+    String previewFormat(const String &sender, const String &timestamp, const String &body) const;
+
     // RFC-0070: Set extra Telegram recipients for forwarded SMS. When set,
     // each successfully forwarded SMS (single-part or assembled concat) is
     // also sent to each extra chat ID via sendMessageTo (no reply-routing).

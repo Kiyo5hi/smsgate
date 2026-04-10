@@ -6211,6 +6211,38 @@ void test_TelegramPoller_smshandlerinfo_calls_fn_and_replies()
     TEST_ASSERT_TRUE(msgs.back().indexOf("forwarding=ON") >= 0);
 }
 
+// RFC-0181: /fwdtest calls fwdTestFn and sends result.
+void test_TelegramPoller_fwdtest_calls_fn_and_sends_preview()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool called = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setFwdTestFn([&called]() -> String {
+        called = true;
+        return String("+10000000000 | 2026-04-10T12:00:00+08:00\n-----\nTest message");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1103, kAllowedFromId, 0, "/fwdtest", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1103, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(called);
+    bool sawPreview = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Test message") >= 0) { sawPreview = true; break; }
+    TEST_ASSERT_TRUE(sawPreview);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -6484,6 +6516,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_callstatus_calls_fn_and_replies);
     // RFC-0174: /smshandlerinfo command
     RUN_TEST(test_TelegramPoller_smshandlerinfo_calls_fn_and_replies);
+    // RFC-0181: /fwdtest command
+    RUN_TEST(test_TelegramPoller_fwdtest_calls_fn_and_sends_preview);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

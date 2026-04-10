@@ -163,6 +163,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/setgmtoffsetmin <m> \xe2\x80\x94 Timezone in total minutes (-720 to +840, e.g. 330=UTC+5:30)\n";
             help += "/setfwdtag <text> \xe2\x80\x94 Custom prefix tag on forwarded SMS (max 20 chars)\n";
             help += "/clearfwdtag \xe2\x80\x94 Remove custom forward prefix tag\n";
+            help += "/fwdtest \xe2\x80\x94 Preview forwarded SMS format with current settings\n";
             help += "/settings \xe2\x80\x94 Show all runtime-configurable parameters\n";
             help += "/nvsinfo \xe2\x80\x94 NVS flash storage usage (used/free/total entries)\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
@@ -1792,6 +1793,19 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             fwdTagFn_(String());
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Forward tag cleared.")); // ✅
+            return;
+        }
+
+        // RFC-0181: /fwdtest — preview forwarded SMS format with current settings.
+        if (lower == "/fwdtest")
+        {
+            if (!fwdTestFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(fwdtest not configured)"));
+                return;
+            }
+            String preview = fwdTestFn_();
+            bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x94\x8D Format preview:\n") + preview); // 🔍
             return;
         }
 

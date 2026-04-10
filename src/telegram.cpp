@@ -605,6 +605,11 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "fwdtest";
+        c["description"] = "Preview forwarded SMS format with current settings";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "callstatus";
         c["description"] = "Show call handler config (notify, dedup, deadline, call count)";
     }

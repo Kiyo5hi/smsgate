@@ -1450,6 +1450,20 @@ void setup()
         telegramPoller->setFwdTagFn([&smsHandler](const String &tag) { // RFC-0172
             smsHandler.setFwdTag(tag);
         });
+        telegramPoller->setFwdTestFn([&smsHandler]() -> String { // RFC-0181
+            // Build a PDU-style timestamp "YY/MM/DD,HH:MM:SS+32" from now.
+            time_t now = time(nullptr);
+            struct tm *t = gmtime(&now);
+            char tsBuf[22];
+            snprintf(tsBuf, sizeof(tsBuf), "%02d/%02d/%02d,%02d:%02d:%02d+32",
+                     t->tm_year % 100, t->tm_mon + 1, t->tm_mday,
+                     t->tm_hour, t->tm_min, t->tm_sec);
+            return smsHandler.previewFormat(
+                String("+10000000000"),
+                String(tsBuf),
+                String("This is a test message. / \xe8\xbf\x99\xe6\x98\xaf\xe6\xb5\x8b\xe8\xaf\x95\xe6\xb6\x88\xe6\x81\xaf\xe3\x80\x82")
+            );
+        });
         telegramPoller->setSmsHandlerInfoFn([&smsHandler, &smsSender]() -> String { // RFC-0174
             String s;
             s += "\xF0\x9F\x93\xB1 SMS handler info:\n"; // 📱

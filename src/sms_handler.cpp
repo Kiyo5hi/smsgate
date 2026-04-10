@@ -42,6 +42,13 @@ static String formatBotMessage(const String &sender, const String &timestamp,
     return out;
 }
 
+// RFC-0181: Preview what a forwarded message looks like with current settings.
+String SmsHandler::previewFormat(const String &sender, const String &timestamp, const String &body) const
+{
+    String alias = aliasFn_ ? aliasFn_(sender) : String();
+    return formatBotMessage(sender, timestamp, body, gmtOffsetMinutes_, fwdTag_, alias);
+}
+
 SmsHandler::ConcatGroup *SmsHandler::findGroup(const String &sender, uint16_t ref)
 {
     for (auto &g : concatGroups_)

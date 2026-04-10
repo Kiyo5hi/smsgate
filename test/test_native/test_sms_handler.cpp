@@ -639,6 +639,29 @@ void test_alias_prepended_to_forwarded_message_header()
     TEST_ASSERT_TRUE(msgs[0].text.indexOf("+13800138000") >= 0);
 }
 
+// RFC-0181: previewFormat respects current settings
+void test_previewFormat_uses_fwdTag_and_gmtOffset()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+    SmsHandler handler(modem, bot, [&]() {});
+    handler.setFwdTag(String("[Test]"));
+    handler.setGmtOffsetMinutes(540); // UTC+9
+
+    String result = handler.previewFormat(
+        String("+10000000000"),
+        String("24/01/15,10:30:45+32"),
+        String("Hello")
+    );
+
+    TEST_ASSERT_TRUE(result.startsWith("[Test]"));
+    TEST_ASSERT_TRUE(result.indexOf("+09:00") >= 0);
+    TEST_ASSERT_TRUE(result.indexOf("Hello") >= 0);
+}
+
 // ---------- Unity plumbing ----------
 
 void run_sms_handler_tests()
@@ -669,4 +692,6 @@ void run_sms_handler_tests()
     RUN_TEST(test_fwdTag_prepended_to_forwarded_message);
     // RFC-0176: alias in header
     RUN_TEST(test_alias_prepended_to_forwarded_message_header);
+    // RFC-0181: previewFormat
+    RUN_TEST(test_previewFormat_uses_fwdTag_and_gmtOffset);
 }

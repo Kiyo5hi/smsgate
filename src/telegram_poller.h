@@ -353,6 +353,11 @@ public:
     // and /clearfwdtag call this fn with the new tag string (empty = clear).
     void setFwdTagFn(std::function<void(const String &)> fn) { fwdTagFn_ = std::move(fn); }
 
+    // RFC-0181: Optional forward test fn. When set, /fwdtest calls this fn
+    // which builds a synthetic forwarded SMS using current handler settings
+    // (gmtOffset, fwdTag, aliasLookup) and returns the formatted string.
+    void setFwdTestFn(std::function<String()> fn) { fwdTestFn_ = std::move(fn); }
+
     // RFC-0173: Optional call status fn. When set, /callstatus calls this
     // fn to get a formatted snapshot of call handler config + state.
     void setCallStatusFn(std::function<String()> fn) { callStatusFn_ = std::move(fn); }
@@ -482,6 +487,7 @@ private:
     std::function<String()> nvsInfoFn_;                      // RFC-0168
     std::function<void(int)> gmtOffsetFn_;                          // RFC-0169
     std::function<void(const String &)> fwdTagFn_;                  // RFC-0172
+    std::function<String()> fwdTestFn_;                             // RFC-0181
     std::function<String()> callStatusFn_;                           // RFC-0173
     std::function<String()> smsHandlerInfoFn_;                       // RFC-0174
     std::function<bool(int)> smsForwardFn_;        // RFC-0146
