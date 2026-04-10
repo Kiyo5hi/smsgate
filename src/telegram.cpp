@@ -513,6 +513,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "logsince";
         c["description"] = "Show SMS log from past N hours: /logsince <1-168>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setmaxparts";
+        c["description"] = "Set max outbound SMS concat parts (1-10): /setmaxparts <N>";
+    }
     String payload;
     serializeJson(doc, payload);
 

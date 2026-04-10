@@ -139,6 +139,17 @@ public:
     // Pass nullptr to disable. Lifetime: log must outlive SmsSender.
     void setDebugLog(SmsDebugLog *log) { debugLog_ = log; }
 
+    // RFC-0160: Runtime-configurable maximum concat parts (1–10, default 10).
+    // Limits how many parts buildSmsSubmitPduMulti will generate, so
+    // operators on expensive plans can cap outbound message length.
+    void setMaxParts(int n)
+    {
+        if (n < 1) n = 1;
+        if (n > 10) n = 10;
+        maxParts_ = n;
+    }
+    int maxParts() const { return maxParts_; }
+
 private:
     IModem &modem_;
     String lastError_;
@@ -147,4 +158,5 @@ private:
     SmsDebugLog *debugLog_ = nullptr;
     int sentCount_   = 0; // RFC-0091: session-only, not persisted
     int failedCount_ = 0;
+    int maxParts_ = 10;   // RFC-0160: max concat parts (1-10)
 };

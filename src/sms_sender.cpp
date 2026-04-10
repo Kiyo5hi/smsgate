@@ -41,7 +41,7 @@ bool SmsSender::send(const String &number, const String &body)
     // DeliveryReportMap is wired in — that's the signal that
     // -DENABLE_DELIVERY_REPORTS is active in this build.
     bool requestSR = (deliveryReportMap_ != nullptr);
-    auto pdus = sms_codec::buildSmsSubmitPduMulti(number, body, 10, requestSR);
+    auto pdus = sms_codec::buildSmsSubmitPduMulti(number, body, maxParts_, requestSR); // RFC-0160
     if (pdus.empty())
     {
         bool gsm7 = sms_codec::isGsm7Compatible(body);

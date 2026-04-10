@@ -115,6 +115,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/topn [N] \xe2\x80\x94 Top N SMS senders by message count (default 5)\n";
             help += "/logsoutcome <keyword> \xe2\x80\x94 Filter log entries by outcome (fail/fwd/dup/...)\n";
             help += "/simstatus \xe2\x80\x94 SIM card + network status (ICCID, IMSI, operator, CSQ)\n";
+            help += "/setmaxparts <N> \xe2\x80\x94 Set max outbound SMS concat parts (1\xe2\x80\x9310, default 10)\n";
             help += "/wifiscan \xe2\x80\x94 Scan nearby WiFi networks (SSID, channel, RSSI)\n";
             help += "/history <filter> \xe2\x80\x94 Show log entries matching phone substring\n";
             help += "/concat \xe2\x80\x94 Show in-flight concat reassembly groups\n";
@@ -1698,6 +1699,42 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId,
                     String("\xe2\x9c\x85 Reboot threshold set to ") // ✅
                     + String((int)val) + String(" consecutive failures."));
+            return;
+        }
+
+        // RFC-0160: /setmaxparts <N> — set max concat parts for outbound SMS (1-10).
+        if (lower == "/setmaxparts" || lower.startsWith("/setmaxparts "))
+        {
+            if (!maxPartsFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setmaxparts not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/setmaxparts ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setmaxparts <N>\nRange: 1\xe2\x80\x93" "10 (default 10)"));
+                return;
+            }
+            int val = (int)arg.toInt();
+            if (val < 1 || val > 10)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Error: max parts must be 1\xe2\x80\x93" "10"));
+                return;
+            }
+            maxPartsFn_(val);
+            int charLimitGsm = val * 153;
+            int charLimitUcs = val * 67;
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Max SMS parts set to ") // ✅
+                + String(val)
+                + String(". Body limit: ~")
+                + String(charLimitGsm)
+                + String(" GSM-7 / ~")
+                + String(charLimitUcs)
+                + String(" Unicode chars."));
             return;
         }
 

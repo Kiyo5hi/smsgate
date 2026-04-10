@@ -304,6 +304,10 @@ public:
     // and replies with nearby SSIDs, channels, and RSSI values.
     void setWifiScanFn(std::function<String()> fn) { wifiScanFn_ = std::move(fn); }
 
+    // RFC-0160: Optional max-parts setter fn. When set, /setmaxparts <N>
+    // calls this fn with the new limit (1–10).
+    void setMaxPartsFn(std::function<void(int)> fn) { maxPartsFn_ = std::move(fn); }
+
     // RFC-0146: Optional SMS forward fn. When set, /forwardsim <idx> calls
     // this fn with the SIM index and replies success/failure.
     void setSmsForwardFn(std::function<bool(int)> fn) { smsForwardFn_ = std::move(fn); }
@@ -412,6 +416,7 @@ private:
     std::function<String()> healthFn_;             // RFC-0149
     std::function<String()> simStatusFn_;          // RFC-0156
     std::function<String()> wifiScanFn_;           // RFC-0158
+    std::function<void(int)> maxPartsFn_;          // RFC-0160
     std::function<bool(int)> smsForwardFn_;        // RFC-0146
     uint32_t pollIntervalMs_ = kPollIntervalMs;    // RFC-0147
     std::function<void(uint32_t)> dedupWindowFn_;  // RFC-0144

@@ -5415,6 +5415,64 @@ void test_TelegramPoller_logsince_invalid_hours_sends_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0160: /setmaxparts <N> — calls maxPartsFn with validated value.
+void test_TelegramPoller_setmaxparts_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    int captured = -1;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setMaxPartsFn([&captured](int n) { captured = n; });
+
+    bot.queueUpdateBatch({makeUpdate(1075, kAllowedFromId, 0, "/setmaxparts 3", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1075, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(3, captured);
+    bool sawOk = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("3")) >= 0 && m.indexOf(String("parts")) >= 0) { sawOk = true; break; }
+    TEST_ASSERT_TRUE(sawOk);
+}
+
+// RFC-0160: /setmaxparts out of range → error.
+void test_TelegramPoller_setmaxparts_out_of_range_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setMaxPartsFn([&fnCalled](int) { fnCalled = true; });
+
+    bot.queueUpdateBatch({makeUpdate(1076, kAllowedFromId, 0, "/setmaxparts 11", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1076, poller.lastUpdateId());
+    TEST_ASSERT_FALSE(fnCalled);
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Error")) >= 0) { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5642,6 +5700,9 @@ void run_telegram_poller_tests()
     // RFC-0159: /logsince command
     RUN_TEST(test_TelegramPoller_logsince_no_arg_sends_usage);
     RUN_TEST(test_TelegramPoller_logsince_invalid_hours_sends_error);
+    // RFC-0160: /setmaxparts command
+    RUN_TEST(test_TelegramPoller_setmaxparts_calls_fn);
+    RUN_TEST(test_TelegramPoller_setmaxparts_out_of_range_sends_error);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

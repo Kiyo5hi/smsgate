@@ -1387,6 +1387,9 @@ void setup()
         telegramPoller->setMaxFailFn([&smsHandler](int n) { // RFC-0138
             smsHandler.setMaxConsecutiveFailures(n);
         });
+        telegramPoller->setMaxPartsFn([&smsSender](int n) { // RFC-0160
+            smsSender.setMaxParts(n);
+        });
         telegramPoller->setFlushSimFn([]() -> int { // RFC-0139
             // AT+CMGDA="DEL ALL" — A76xx/SIM7xxx extension to delete all SMS.
             realModem.sendAT(String("+CMGDA=\"DEL ALL\""));
