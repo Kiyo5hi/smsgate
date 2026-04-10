@@ -7140,6 +7140,138 @@ void test_TelegramPoller_pending_all_clear()
     TEST_ASSERT_TRUE(sawClear);
 }
 
+// RFC-0211: /setquiethours sets the window, /quiethours reflects it.
+void test_TelegramPoller_quiethours_set_and_show()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    // NTP-synced wall clock at 10:00 UTC (epoch with hour=10).
+    // 1744300000 % 86400 = 1744300000 mod 86400
+    // 1744300000 / 86400 = 20188 days + remainder
+    // 20188 * 86400 = 1744243200; 1744300000 - 1744243200 = 56800
+    // 56800 / 3600 = 15 (hour 15 UTC). Use a clean epoch at hour 10.
+    // epoch = 20188 * 86400 + 10 * 3600 = 1744243200 + 36000 = 1744279200
+    const long kEpoch10UTC = 1744279200L; // 2025-04-10 10:00:00 UTC
+    poller.setWallTimeFn([=]() -> long { return kEpoch10UTC; });
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bool persistCalled = false;
+    poller.setPersistQuietFn([&]() { persistCalled = true; });
+
+    // Set quiet hours 22-08.
+    bot.queueUpdateBatch({makeUpdate(14001, kAllowedFromId, 0,
+        "/setquiethours 22-8", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(14001, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(22, poller.quietStart());
+    TEST_ASSERT_EQUAL(8,  poller.quietEnd());
+    TEST_ASSERT_TRUE(persistCalled);
+
+    // /quiethours shows the window and "not active" at hour 10.
+    persistCalled = false;
+    bot.queueUpdateBatch({makeUpdate(14002, kAllowedFromId, 0,
+        "/quiethours", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(14002, poller.lastUpdateId());
+    bool sawWindow = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("22:00") >= 0 && m.indexOf("08:00") >= 0)
+        { sawWindow = true; break; }
+    TEST_ASSERT_TRUE(sawWindow);
+}
+
+// RFC-0211: quiet window suppresses scheduled SMS tick firing.
+void test_TelegramPoller_quiethours_suppresses_tick()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    // Wall clock at 23:00 UTC — inside 22-08 quiet window.
+    // epoch at 23:00: 20188 * 86400 + 23 * 3600 = 1744243200 + 82800 = 1744326000
+    const long kEpoch23UTC = 1744326000L; // 2025-04-10 23:00:00 UTC
+    long wallTime = kEpoch23UTC;
+    poller.setWallTimeFn([&]() -> long { return wallTime; });
+    poller.setQuietHours(22, 8);
+    poller.begin();
+
+    // Schedule a slot to fire immediately.
+    auto sq = poller.getSchedQueue();
+    sq[0].sendAtMs = 1; // already past
+    sq[0].phone    = String("+9999");
+    sq[0].body     = String("quiet test");
+    poller.setSchedQueue(sq);
+
+    clk.nowMs += 4000;
+    poller.tick(); // should NOT fire due to quiet hours
+
+    // Sender queue should be empty — slot was suppressed.
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+    // Slot still occupied.
+    TEST_ASSERT_NOT_EQUAL(0, (int)poller.getSchedQueue()[0].sendAtMs);
+
+    // Advance wall clock to 08:01 UTC — outside quiet window.
+    // 08:01 = 8*3600 + 60 = 28860 seconds into day
+    wallTime = 1744243200L + 28860L; // 08:01 UTC
+    clk.nowMs += 4000;
+    poller.tick(); // now should fire
+
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+    TEST_ASSERT_EQUAL(0, (int)poller.getSchedQueue()[0].sendAtMs); // slot freed
+}
+
+// RFC-0211: /clearquiethours disables the window.
+void test_TelegramPoller_clearquiethours()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.setQuietHours(22, 8);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bool persistCalled = false;
+    poller.setPersistQuietFn([&]() { persistCalled = true; });
+
+    bot.queueUpdateBatch({makeUpdate(14003, kAllowedFromId, 0,
+        "/clearquiethours", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(14003, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(-1, poller.quietStart());
+    TEST_ASSERT_EQUAL(-1, poller.quietEnd());
+    TEST_ASSERT_TRUE(persistCalled);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -7800,6 +7932,10 @@ void run_telegram_poller_tests()
     // RFC-0209: /pending command
     RUN_TEST(test_TelegramPoller_pending_with_items);
     RUN_TEST(test_TelegramPoller_pending_all_clear);
+    // RFC-0211: quiet hours
+    RUN_TEST(test_TelegramPoller_quiethours_set_and_show);
+    RUN_TEST(test_TelegramPoller_quiethours_suppresses_tick);
+    RUN_TEST(test_TelegramPoller_clearquiethours);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);

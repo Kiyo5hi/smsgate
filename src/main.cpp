@@ -1128,6 +1128,18 @@ void setup()
                 smsHandler.setMaxSmsAgeHours((int)v);
         }
 
+        // RFC-0211: Load quiet hours from NVS.
+        {
+            uint8_t qh[2] = {0xFF, 0xFF};
+            if (realPersist.loadBlob("quiet_hrs", qh, sizeof(qh)) == sizeof(qh)
+                && qh[0] <= 23 && qh[1] <= 23 && qh[0] != qh[1])
+            {
+                telegramPoller->setQuietHours((int)qh[0], (int)qh[1]);
+                Serial.printf("[RFC-0211] Quiet hours loaded: %02d:00-%02d:00 UTC\n",
+                              (int)qh[0], (int)qh[1]);
+            }
+        }
+
         // RFC-0150: Load auto-reply text from NVS.
         {
             char buf[161] = {};
@@ -1995,6 +2007,12 @@ void setup()
         });
         telegramPoller->setWallTimeFn([]() -> long { return (long)time(nullptr); }); // RFC-0202
         telegramPoller->setOnPollSuccessFn([]() { s_lastTelegramOkTime = time(nullptr); }); // RFC-0208
+        // RFC-0211: Persist quiet hours to NVS on change.
+        telegramPoller->setPersistQuietFn([&]() {
+            uint8_t qh[2] = { (uint8_t)telegramPoller->quietStart(),
+                               (uint8_t)telegramPoller->quietEnd() };
+            realPersist.saveBlob("quiet_hrs", qh, sizeof(qh));
+        });
         // RFC-0209: /pending — terse snapshot of all pending work.
         telegramPoller->setPendingFn([&]() -> String {
             int q = smsSender.queueSize();

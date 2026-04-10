@@ -395,6 +395,17 @@ public:
     // Production: returns "Queue: N/8 | Sched: N/5 | Concat: N" or "All clear".
     void setPendingFn(std::function<String()> fn) { pendingFn_ = std::move(fn); }
 
+    // RFC-0211: Quiet hours — suppress scheduled SMS delivery during a UTC
+    // window [start, end). start and end are UTC hours 0-23. Overnight ranges
+    // (e.g. start=22 end=8) are handled via wraparound. Pass -1/-1 to disable.
+    void setQuietHours(int start, int end) { quietStart_ = start; quietEnd_ = end; }
+    void clearQuietHours()                  { quietStart_ = -1; quietEnd_ = -1; }
+    int  quietStart() const { return quietStart_; }
+    int  quietEnd()   const { return quietEnd_; }
+    // Optional callback fired after any quiet hours change (set or clear).
+    // Production: persists (start, end) to NVS.
+    void setPersistQuietFn(std::function<void()> fn) { persistQuietFn_ = std::move(fn); }
+
     // RFC-0202: Optional wall-time fn. When set, scheduled SMS commands show
     // absolute UTC timestamps alongside relative minutes (e.g. "in 30m (14:32 UTC)").
     // Returns Unix seconds (long); 0 or negative means NTP not yet synced.
@@ -573,6 +584,9 @@ private:
     std::function<void()> onPollSuccessFn_;                                    // RFC-0208
     std::function<String()> pendingFn_;                                        // RFC-0209
     std::function<long()> wallTimeFn_;                                         // RFC-0202
+    int quietStart_ = -1;  // RFC-0211: UTC hour (0-23) start of quiet window; -1 = disabled
+    int quietEnd_   = -1;  // RFC-0211: UTC hour (0-23) end of quiet window; -1 = disabled
+    std::function<void()> persistQuietFn_;                                     // RFC-0211
     std::function<void()> persistSchedFn_;                                     // RFC-0200
     std::function<String()> callStatusFn_;                           // RFC-0173
     std::function<String()> smsHandlerInfoFn_;                       // RFC-0174

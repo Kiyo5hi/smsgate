@@ -36,6 +36,24 @@ static String schedEtaStr(uint32_t sendAtMs, uint32_t nowMs,
     return rel + String(" (") + String(buf) + String(")");
 }
 
+// RFC-0211: Return true if wallTimeFn returns a valid epoch and the current
+// UTC hour falls within the quiet window [start, end). Handles overnight
+// wrap-around (e.g. start=22 end=8: quiet from 22:xx to 07:59).
+// Returns false if start < 0 (disabled) or wallTimeFn is unset / pre-NTP.
+static bool isInQuietHours(int start, int end,
+                            const std::function<long()> &wallTimeFn)
+{
+    if (start < 0 || end < 0) return false;
+    if (!wallTimeFn) return false;
+    long wallNow = wallTimeFn();
+    if (wallNow <= 1000000000L) return false; // NTP not synced
+    int utcHour = (int)((wallNow % 86400L) / 3600L);
+    if (start < end)
+        return utcHour >= start && utcHour < end;   // same-day window
+    else
+        return utcHour >= start || utcHour < end;   // overnight wrap
+}
+
 // File-static helper: strips the given prefix from `lower` and returns
 // the trimmed remainder. Returns an empty String if lower does not start
 // with prefix.
@@ -175,6 +193,9 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/schedrename <N> <phone> \xe2\x80\x94 Change destination phone of scheduled slot N\n"; // RFC-0197
             help += "/schedbody <N> <text> \xe2\x80\x94 Edit the body of scheduled slot N\n"; // RFC-0207
             help += "/pending \xe2\x80\x94 Terse snapshot of all pending work (queue/sched/concat)\n"; // RFC-0209
+            help += "/setquiethours <start>-<end> \xe2\x80\x94 Defer sched SMS during UTC window (e.g. 22-08)\n"; // RFC-0211
+            help += "/clearquiethours \xe2\x80\x94 Disable quiet hours\n"; // RFC-0211
+            help += "/quiethours \xe2\x80\x94 Show current quiet hours setting\n"; // RFC-0211
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/mute [min] \xe2\x80\x94 Snooze proactive alerts (default 60m)\n";
             help += "/unmute \xe2\x80\x94 Cancel alert snooze\n";
@@ -3090,6 +3111,77 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0211: /setquiethours <start>-<end> — configure UTC quiet window.
+        if (lower == "/setquiethours" || lower.startsWith("/setquiethours "))
+        {
+            String arg = extractArg(u.text, "/setquiethours ");
+            arg.trim();
+            int dash = arg.indexOf('-');
+            bool ok = false;
+            int qs = -1, qe = -1;
+            if (dash > 0)
+            {
+                String startStr = arg.substring(0, dash);
+                String endStr   = arg.substring(dash + 1);
+                startStr.trim(); endStr.trim();
+                qs = (int)startStr.toInt();
+                qe = (int)endStr.toInt();
+                if (qs >= 0 && qs <= 23 && qe >= 0 && qe <= 23 && qs != qe)
+                    ok = true;
+            }
+            if (!ok || arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setquiethours <start>-<end> (UTC hours 0-23)\n"
+                           "Example: /setquiethours 22-8\n"
+                           "Scheduled SMS will be deferred until the window ends."));
+                return;
+            }
+            setQuietHours(qs, qe);
+            if (persistQuietFn_) persistQuietFn_(); // RFC-0211
+            char buf[32];
+            snprintf(buf, sizeof(buf), "\xe2\x9c\x85 Quiet hours set: %02d:00\xe2\x80\x93%02d:00 UTC.", qs, qe); // ✅ –
+            bot_.sendMessageTo(u.chatId, String(buf));
+            return;
+        }
+
+        // RFC-0211: /clearquiethours — disable quiet hours.
+        if (lower == "/clearquiethours")
+        {
+            if (quietStart_ < 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Quiet hours not set."));
+            }
+            else
+            {
+                clearQuietHours();
+                if (persistQuietFn_) persistQuietFn_(); // RFC-0211
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 Quiet hours cleared. Scheduled SMS will fire normally.")); // ✅
+            }
+            return;
+        }
+
+        // RFC-0211: /quiethours — show current quiet hours setting.
+        if (lower == "/quiethours")
+        {
+            if (quietStart_ < 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Quiet hours: disabled."));
+            }
+            else
+            {
+                char buf[64];
+                bool nowQuiet = isInQuietHours(quietStart_, quietEnd_, wallTimeFn_);
+                snprintf(buf, sizeof(buf),
+                    "\xf0\x9f\x94\x95 Quiet hours: %02d:00\xe2\x80\x93%02d:00 UTC%s.", // 🔕 –
+                    quietStart_, quietEnd_,
+                    nowQuiet ? " (currently active)" : "");
+                bot_.sendMessageTo(u.chatId, String(buf));
+            }
+            return;
+        }
+
         // RFC-0209: /pending — terse summary of all pending work items.
         if (lower == "/pending")
         {
@@ -3194,9 +3286,11 @@ void TelegramPoller::tick()
 
     // RFC-0188: Drain scheduled SMS whose sendAtMs has passed.
     bool schedFired = false;
+    // RFC-0211: suppress all slot firing during quiet hours.
+    bool inQuiet = isInQuietHours(quietStart_, quietEnd_, wallTimeFn_);
     for (auto &slot : scheduledQueue_)
     {
-        if (slot.sendAtMs != 0 && now >= slot.sendAtMs)
+        if (slot.sendAtMs != 0 && now >= slot.sendAtMs && !inQuiet)
         {
             // Try to enqueue. SmsSender::enqueue returns false only if the
             // retry queue is full — leave the slot and try again next tick.
