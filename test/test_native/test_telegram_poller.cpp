@@ -7272,6 +7272,43 @@ void test_TelegramPoller_clearquiethours()
     TEST_ASSERT_TRUE(persistCalled);
 }
 
+// RFC-0212: /schedulesend into quiet window appends warning.
+void test_TelegramPoller_schedulesend_warns_quiet_overlap()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    // Wall clock at 21:50 UTC — 10 minutes before quiet window starts.
+    // 21:50 UTC epoch = 1744243200 + 21*3600 + 50*60 = 1244243200+75600+3000 = 1744321800
+    const long kEpoch2150UTC = 1744243200L + 21L * 3600L + 50L * 60L; // 2025-04-10 21:50 UTC
+    poller.setWallTimeFn([=]() -> long { return kEpoch2150UTC; });
+    poller.setQuietHours(22, 8); // 22:00-08:00 UTC
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Schedule for 30 min out: 22:20 UTC — inside quiet window.
+    bot.queueUpdateBatch({makeUpdate(15001, kAllowedFromId, 0,
+        "/schedulesend 30 +5555 test body", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(15001, poller.lastUpdateId());
+
+    bool sawWarning = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Quiet hours") >= 0 || m.indexOf("quiet hours") >= 0)
+        { sawWarning = true; break; }
+    TEST_ASSERT_TRUE(sawWarning);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -7936,6 +7973,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_quiethours_set_and_show);
     RUN_TEST(test_TelegramPoller_quiethours_suppresses_tick);
     RUN_TEST(test_TelegramPoller_clearquiethours);
+    // RFC-0212: quiet-hours overlap warning on schedule
+    RUN_TEST(test_TelegramPoller_schedulesend_warns_quiet_overlap);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);

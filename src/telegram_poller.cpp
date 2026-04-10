@@ -40,6 +40,16 @@ static String schedEtaStr(uint32_t sendAtMs, uint32_t nowMs,
 // UTC hour falls within the quiet window [start, end). Handles overnight
 // wrap-around (e.g. start=22 end=8: quiet from 22:xx to 07:59).
 // Returns false if start < 0 (disabled) or wallTimeFn is unset / pre-NTP.
+static bool isInQuietHoursAt(long unixTs, int start, int end)
+{
+    if (start < 0 || end < 0) return false;
+    int utcHour = (int)((unixTs % 86400L) / 3600L);
+    if (start < end)
+        return utcHour >= start && utcHour < end;
+    else
+        return utcHour >= start || utcHour < end;
+}
+
 static bool isInQuietHours(int start, int end,
                             const std::function<long()> &wallTimeFn)
 {
@@ -47,11 +57,27 @@ static bool isInQuietHours(int start, int end,
     if (!wallTimeFn) return false;
     long wallNow = wallTimeFn();
     if (wallNow <= 1000000000L) return false; // NTP not synced
-    int utcHour = (int)((wallNow % 86400L) / 3600L);
-    if (start < end)
-        return utcHour >= start && utcHour < end;   // same-day window
-    else
-        return utcHour >= start || utcHour < end;   // overnight wrap
+    return isInQuietHoursAt(wallNow, start, end);
+}
+
+// RFC-0212: Build a quiet-hours warning suffix if sendAtUnix falls inside
+// the configured window. Returns "" if quiet hours not configured or NTP
+// not synced.
+static String quietHoursWarning(uint32_t sendAtMs, uint32_t nowMs,
+                                 int qStart, int qEnd,
+                                 const std::function<long()> &wallTimeFn)
+{
+    if (qStart < 0 || qEnd < 0 || !wallTimeFn) return String();
+    long wallNow = wallTimeFn();
+    if (wallNow <= 1000000000L) return String(); // NTP not synced
+    long deltaMs = (long)sendAtMs - (long)nowMs;
+    long sendAtUnix = wallNow + deltaMs / 1000L;
+    if (!isInQuietHoursAt(sendAtUnix, qStart, qEnd)) return String();
+    char buf[48];
+    snprintf(buf, sizeof(buf),
+        "\n\xe2\x9a\xa0\xef\xb8\x8f Quiet hours (%02d:00\xe2\x80\x93%02d:00 UTC) \xe2\x80\x94 delivery deferred.", // ⚠️ –
+        qStart, qEnd);
+    return String(buf);
 }
 
 // File-static helper: strips the given prefix from `lower` and returns
@@ -2609,7 +2635,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             String reply = String("\xe2\x8f\xb0 SMS to ") + phone // ⏰
                          + String(" scheduled ") + eta
                          + String(" (slot ") + String(slotIdx + 1) + String("/")
-                         + String((int)kScheduledQueueSize) + String(").");
+                         + String((int)kScheduledQueueSize) + String(").")
+                         + quietHoursWarning(sendAt, nowMsSched, quietStart_, quietEnd_, wallTimeFn_); // RFC-0212
             bot_.sendMessageTo(u.chatId, reply);
             return;
         }
@@ -2754,7 +2781,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 String("\xe2\x8f\xb0 SMS to ") + phone2 // ⏰
                 + String(" scheduled ") + eta2
                 + String(" (slot ") + String(slotIdx2 + 1) + String("/")
-                + String((int)kScheduledQueueSize) + String(")."));
+                + String((int)kScheduledQueueSize) + String(").")
+                + quietHoursWarning(sendAt2, nowMs5, quietStart_, quietEnd_, wallTimeFn_)); // RFC-0212
             return;
         }
 
