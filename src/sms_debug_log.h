@@ -84,6 +84,11 @@ public:
     // nothing qualifies.
     String dumpBriefSince(uint32_t sinceUnix) const;
 
+    // RFC-0179: Export all entries oldest-first as CSV:
+    // "unix_ts,sender,outcome,chars\n..." — header row included.
+    // Entries with unixTimestamp==0 use 0 for ts. Empty log returns header only.
+    String dumpCsv() const;
+
     // RFC-0178: Like dumpBriefSince but restricted to entries in [since, until).
     // Entries with unixTimestamp == 0 or outside the window are omitted.
     // Returns "(no entries for that date)" when nothing qualifies.

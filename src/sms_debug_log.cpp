@@ -508,6 +508,34 @@ String SmsDebugLog::dumpBriefSince(uint32_t sinceUnix) const
     return out;
 }
 
+// RFC-0179: dumpCsv — export all entries oldest-first as CSV.
+String SmsDebugLog::dumpCsv() const
+{
+    String out = String("unix_ts,sender,outcome,chars\n");
+    if (count_ == 0)
+        return out;
+
+    // Walk oldest-first: head_ is the next write position, so
+    // head_ is also the oldest slot if count_ == kMaxEntries.
+    // For count_ < kMaxEntries, oldest = 0 (ring not yet wrapped).
+    // Use same traversal as dump(): start from oldest.
+    size_t start = (count_ < kMaxEntries) ? 0 : head_;
+    for (size_t i = 0; i < count_; i++)
+    {
+        size_t idx = (start + i) % kMaxEntries;
+        const Entry &e = entries_[idx];
+        out += String((uint32_t)e.unixTimestamp);
+        out += ",";
+        out += e.sender;
+        out += ",";
+        out += e.outcome;
+        out += ",";
+        out += String((int)e.bodyChars);
+        out += "\n";
+    }
+    return out;
+}
+
 // RFC-0178: dumpBriefRange — entries whose unixTimestamp is in [since, until).
 String SmsDebugLog::dumpBriefRange(uint32_t sinceUnix, uint32_t untilUnix) const
 {

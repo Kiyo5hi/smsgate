@@ -312,6 +312,31 @@ void test_countForwarded_zero_timestamp_excluded()
     TEST_ASSERT_EQUAL(0u, log.countForwarded(0, 9999999));
 }
 
+// RFC-0179: dumpCsv — CSV export of all log entries.
+void test_dumpCsv_header_always_present()
+{
+    SmsDebugLog log;
+    String result = log.dumpCsv();
+    TEST_ASSERT_TRUE(result.startsWith("unix_ts,sender,outcome,chars"));
+}
+
+void test_dumpCsv_contains_entry_data()
+{
+    SmsDebugLog log;
+    SmsDebugLog::Entry e;
+    e.unixTimestamp = 1775606400;
+    e.sender = "+86138001";
+    e.outcome = "fwd OK";
+    e.bodyChars = 42;
+    log.push(e);
+
+    String result = log.dumpCsv();
+    TEST_ASSERT_TRUE(result.indexOf("1775606400") >= 0);
+    TEST_ASSERT_TRUE(result.indexOf("+86138001") >= 0);
+    TEST_ASSERT_TRUE(result.indexOf("fwd OK") >= 0);
+    TEST_ASSERT_TRUE(result.indexOf("42") >= 0);
+}
+
 // RFC-0178: dumpBriefRange — filter by [since, until) window.
 void test_dumpBriefRange_returns_entries_in_window()
 {
@@ -365,6 +390,9 @@ void run_sms_debug_log_tests()
     // RFC-0171: countForwarded
     RUN_TEST(test_countForwarded_counts_fwd_entries_in_range);
     RUN_TEST(test_countForwarded_zero_timestamp_excluded);
+    // RFC-0179: dumpCsv
+    RUN_TEST(test_dumpCsv_header_always_present);
+    RUN_TEST(test_dumpCsv_contains_entry_data);
     // RFC-0178: dumpBriefRange
     RUN_TEST(test_dumpBriefRange_returns_entries_in_window);
     RUN_TEST(test_dumpBriefRange_no_match_returns_placeholder);

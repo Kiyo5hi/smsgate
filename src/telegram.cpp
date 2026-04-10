@@ -185,6 +185,11 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "logcsv";
+        c["description"] = "Export SMS log as CSV (unix_ts,sender,outcome,chars)";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "status";
         c["description"] = "Show device health and stats";
     }

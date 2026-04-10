@@ -123,6 +123,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/history <filter> \xe2\x80\x94 Show log entries matching phone substring\n";
             help += "/concat \xe2\x80\x94 Show in-flight concat reassembly groups\n";
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
+            help += "/logcsv \xe2\x80\x94 Export SMS debug log as CSV (unix_ts,sender,outcome,chars)\n";
             help += "/cleardebug \xe2\x80\x94 Clear SMS diagnostic log\n";
             help += "/send <num> <msg> \xe2\x80\x94 Send outbound SMS\n";
             help += "/sendall <msg> \xe2\x80\x94 Broadcast to all aliases\n";
@@ -488,6 +489,18 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             {
                 bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
             }
+            return;
+        }
+
+        // RFC-0179: /logcsv — export debug log as CSV (unix_ts,sender,outcome,chars).
+        if (lower == "/logcsv")
+        {
+            if (!debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+                return;
+            }
+            bot_.sendMessageTo(u.chatId, debugLog_->dumpCsv());
             return;
         }
 

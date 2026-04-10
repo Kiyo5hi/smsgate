@@ -5469,6 +5469,40 @@ void test_TelegramPoller_logsince_invalid_hours_sends_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0179: /logcsv — exports debug log as CSV with header.
+void test_TelegramPoller_logcsv_returns_csv_with_header()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsDebugLog log;
+    { SmsDebugLog::Entry e; e.unixTimestamp = 1775606400; e.sender = "+55555";
+      e.outcome = "fwd OK"; e.bodyChars = 10; log.push(e); }
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(1102, kAllowedFromId, 0, "/logcsv", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1102, poller.lastUpdateId());
+    bool sawHeader = false, sawData = false;
+    for (const auto &m : bot.sentMessages()) {
+        if (m.indexOf("unix_ts,sender,outcome,chars") >= 0) sawHeader = true;
+        if (m.indexOf("+55555") >= 0) sawData = true;
+    }
+    TEST_ASSERT_TRUE(sawHeader);
+    TEST_ASSERT_TRUE(sawData);
+}
+
 // RFC-0178: /logdate YYYY-MM-DD — valid date calls dumpBriefRange.
 void test_TelegramPoller_logdate_valid_date_calls_debug_log()
 {
@@ -6407,6 +6441,8 @@ void run_telegram_poller_tests()
     // RFC-0159: /logsince command
     RUN_TEST(test_TelegramPoller_logsince_no_arg_sends_usage);
     RUN_TEST(test_TelegramPoller_logsince_invalid_hours_sends_error);
+    // RFC-0179: /logcsv command
+    RUN_TEST(test_TelegramPoller_logcsv_returns_csv_with_header);
     // RFC-0178: /logdate command
     RUN_TEST(test_TelegramPoller_logdate_valid_date_calls_debug_log);
     RUN_TEST(test_TelegramPoller_logdate_invalid_format_sends_error);
