@@ -6995,6 +6995,79 @@ void test_TelegramPoller_schedqueue_shows_abs_time_when_ntpsynced()
     TEST_ASSERT_TRUE(sawUtc);
 }
 
+// RFC-0207: /schedbody <N> <text> edits the body of a scheduled slot.
+void test_TelegramPoller_schedbody_updates_body()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Schedule a slot.
+    bot.queueUpdateBatch({makeUpdate(12001, kAllowedFromId, 0,
+        "/schedulesend 30 +4444 Original body", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Edit the body.
+    bot.queueUpdateBatch({makeUpdate(12002, kAllowedFromId, 0,
+        "/schedbody 1 Updated body text", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(12002, poller.lastUpdateId());
+
+    const auto& q = poller.getSchedQueue();
+    TEST_ASSERT_EQUAL_STRING("Updated body text", q[0].body.c_str());
+    TEST_ASSERT_EQUAL_STRING("+4444", q[0].phone.c_str()); // phone unchanged
+
+    bool sawUpdated = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Updated") >= 0 || m.indexOf("body updated") >= 0)
+        { sawUpdated = true; break; }
+    TEST_ASSERT_TRUE(sawUpdated);
+}
+
+// RFC-0207: /schedbody on empty slot replies error.
+void test_TelegramPoller_schedbody_empty_slot_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(12003, kAllowedFromId, 0,
+        "/schedbody 1 Some text", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(12003, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("empty") >= 0 || m.indexOf("range") >= 0)
+        { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 // RFC-0205: /sendafter schedules for a specific UTC time (future time today).
 void test_TelegramPoller_sendafter_schedules_future_slot()
 {
@@ -7619,6 +7692,9 @@ void run_telegram_poller_tests()
     // RFC-0202: absolute time in scheduled SMS commands
     RUN_TEST(test_TelegramPoller_schedulesend_shows_abs_time_when_ntpsynced);
     RUN_TEST(test_TelegramPoller_schedqueue_shows_abs_time_when_ntpsynced);
+    // RFC-0207: /schedbody command
+    RUN_TEST(test_TelegramPoller_schedbody_updates_body);
+    RUN_TEST(test_TelegramPoller_schedbody_empty_slot_error);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);

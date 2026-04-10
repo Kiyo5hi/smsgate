@@ -173,6 +173,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/sendafter <HH:MM> <phone> <body> \xe2\x80\x94 Schedule SMS at a specific UTC time\n"; // RFC-0205
             help += "/schedinfo <N> \xe2\x80\x94 Show full body and ETA of scheduled slot N\n"; // RFC-0198
             help += "/schedrename <N> <phone> \xe2\x80\x94 Change destination phone of scheduled slot N\n"; // RFC-0197
+            help += "/schedbody <N> <text> \xe2\x80\x94 Edit the body of scheduled slot N\n"; // RFC-0207
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/mute [min] \xe2\x80\x94 Snooze proactive alerts (default 60m)\n";
             help += "/unmute \xe2\x80\x94 Cancel alert snooze\n";
@@ -2828,6 +2829,46 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Slot ") + String(n) // ✅
                 + String(" phone changed to ") + newPhone + String("."));
+            return;
+        }
+
+        // RFC-0207: /schedbody <N> <new_body> — edit the body of a scheduled slot.
+        if (lower == "/schedbody" || lower.startsWith("/schedbody "))
+        {
+            String arg = extractArg(u.text, "/schedbody ");
+            arg.trim();
+            int sp = arg.indexOf(' ');
+            if (sp <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /schedbody <slot> <text>\n"
+                           "Example: /schedbody 1 Updated message body"));
+                return;
+            }
+            int n = (int)arg.substring(0, sp).toInt();
+            String newBody = arg.substring(sp + 1);
+            newBody.trim();
+            if (n < 1 || n > (int)kScheduledQueueSize || scheduledQueue_[n - 1].sendAtMs == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Slot ") + String(n) // ❌
+                    + String(" is empty or out of range."));
+                return;
+            }
+            if (newBody.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Body cannot be empty.")); // ❌
+                return;
+            }
+            if (newBody.length() > 127) newBody = newBody.substring(0, 127);
+            scheduledQueue_[n - 1].body = newBody;
+            if (persistSchedFn_) persistSchedFn_(); // RFC-0200
+            String preview = newBody;
+            if (preview.length() > 40) preview = preview.substring(0, 40) + String("...");
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Slot ") + String(n) // ✅
+                + String(" body updated: ") + preview);
             return;
         }
 
