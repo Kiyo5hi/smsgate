@@ -217,6 +217,11 @@ public:
     // When not set, replies "(uptime not configured)".
     void setUptimeFn(std::function<String()> fn) { uptimeFn_ = std::move(fn); }
 
+    // RFC-0123: Optional boot info callback. When set, /boot calls this fn
+    // and replies with the result (e.g. "🔄 Boot #42 | Reason: WDT | 2026-04-10 14:32 UTC").
+    // When not set, replies "(boot info not configured)".
+    void setBootInfoFn(std::function<String()> fn) { bootInfoFn_ = std::move(fn); }
+
     // RFC-0121: Optional network info callback. When set, /network calls this
     // fn and replies with the result (e.g. "📶 Operator: T-Mobile | Reg: home | CSQ 18 (good)").
     // When not set, replies "(network info not configured)".
@@ -268,6 +273,7 @@ private:
     std::function<void(int64_t)> rebootFn_; // RFC-0112
     std::function<String()> uptimeFn_;     // RFC-0120
     std::function<String()> networkFn_;    // RFC-0121
+    std::function<String()> bootInfoFn_;   // RFC-0123
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

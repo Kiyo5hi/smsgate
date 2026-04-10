@@ -318,6 +318,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "network";
         c["description"] = "Show cellular operator + registration + CSQ";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "logs";
+        c["description"] = "Show last N SMS log entries: /logs [N]";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "boot";
+        c["description"] = "Show boot count, reset reason, and boot timestamp";
+    }
 
     String payload;
     serializeJson(doc, payload);

@@ -92,6 +92,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/ntp \xe2\x80\x94 Force NTP time resync\n";
             help += "/status \xe2\x80\x94 Device health & stats\n";
             help += "/last [N] \xe2\x80\x94 Show last N forwarded SMS (default 5)\n";
+            help += "/logs [N] \xe2\x80\x94 Show last N SMS log entries (default 10)\n";
             help += "/history <filter> \xe2\x80\x94 Show log entries matching phone substring\n";
             help += "/concat \xe2\x80\x94 Show in-flight concat reassembly groups\n";
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
@@ -117,6 +118,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/setlabel <name> \xe2\x80\x94 Set device label (persisted to NVS)\n";
             help += "/uptime \xe2\x80\x94 Quick uptime one-liner\n";
             help += "/network \xe2\x80\x94 Cellular operator + registration + CSQ\n";
+            help += "/boot \xe2\x80\x94 Boot count, reset reason, and boot timestamp\n";
             help += "/reboot \xe2\x80\x94 Soft reboot\n";
             help += "/at <cmd> \xe2\x80\x94 Admin: raw AT command passthrough\n";
             if (smsBlockMutator_) {
@@ -228,6 +230,26 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 return;
             }
             bot_.sendMessageTo(u.chatId, debugLog_->dumpBriefFiltered(10, filter));
+            return;
+        }
+
+        // RFC-0122: /logs [N] — show last N (default 10, max 50) debug log entries.
+        if (lower == "/logs" || lower.startsWith("/logs "))
+        {
+            if (!debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+                return;
+            }
+            size_t n = 10;
+            String arg = extractArg(u.text, "/logs ");
+            if (arg.length() > 0)
+            {
+                int parsed = arg.toInt();
+                if (parsed > 0)
+                    n = (size_t)(parsed > 50 ? 50 : parsed);
+            }
+            bot_.sendMessageTo(u.chatId, debugLog_->dumpBrief(n));
             return;
         }
 
@@ -1073,6 +1095,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, networkFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(network info not configured)"));
+            return;
+        }
+
+        // RFC-0123: /boot — boot count, reset reason, boot timestamp.
+        if (lower == "/boot")
+        {
+            if (bootInfoFn_)
+                bot_.sendMessageTo(u.chatId, bootInfoFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(boot info not configured)"));
             return;
         }
 

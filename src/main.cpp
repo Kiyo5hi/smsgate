@@ -1194,6 +1194,21 @@ void setup()
             msg += String(" ("); msg += String(csqLabel); msg += String(")");
             return msg;
         });
+        telegramPoller->setBootInfoFn([]() -> String {              // RFC-0123
+            // "🔄 Boot #42 | Reason: Power-on | 2026-04-10 14:32 UTC"
+            String msg = String("\xF0\x9F\x94\x84 Boot #"); // 🔄
+            msg += String((int)s_bootCount);
+            msg += String(" | Reason: ");
+            msg += String(resetReasonStr(s_resetReason));
+            if (s_bootTimestamp > 0) {
+                time_t bt = s_bootTimestamp + TIMEZONE_OFFSET_SEC;
+                struct tm *tm_info = gmtime(&bt);
+                char buf[32];
+                strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M UTC", tm_info);
+                msg += String(" | "); msg += String(buf);
+            }
+            return msg;
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])

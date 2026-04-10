@@ -2981,6 +2981,165 @@ void test_TelegramPoller_network_not_configured_replies()
     TEST_ASSERT_TRUE(sawNotConfigured);
 }
 
+// RFC-0122: /logs with debug log set → replies with dumpBrief(N).
+void test_TelegramPoller_logs_returns_debug_log_entries()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsDebugLog log;
+    SmsDebugLog::Entry e1;
+    e1.sender    = String("+1234567890");
+    e1.bodyChars = 5;
+    e1.outcome   = String("fwd");
+    log.push(e1);
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(920, kAllowedFromId, 0, "/logs", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(920, poller.lastUpdateId());
+    bool sawEntry = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("+1234567890")) >= 0) { sawEntry = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawEntry);
+}
+
+// RFC-0122: /logs 2 respects the N argument.
+void test_TelegramPoller_logs_respects_n_arg()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsDebugLog log;
+    for (int i = 0; i < 5; i++) {
+        SmsDebugLog::Entry e;
+        e.sender    = String("+111000000") + String(i);
+        e.bodyChars = 3;
+        e.outcome   = String("fwd");
+        log.push(e);
+    }
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(921, kAllowedFromId, 0, "/logs 2", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(921, poller.lastUpdateId());
+    // Just verify a reply was sent (content is format-checked in test_sms_debug_log tests)
+    TEST_ASSERT_TRUE(bot.sentMessages().size() > 0);
+}
+
+// RFC-0122: /logs without debug log → "(debug log not configured)".
+void test_TelegramPoller_logs_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // debugLog_ NOT set
+
+    bot.queueUpdateBatch({makeUpdate(922, kAllowedFromId, 0, "/logs", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(922, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
+// RFC-0123: /boot with fn set → replies with fn result.
+void test_TelegramPoller_boot_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setBootInfoFn([]() -> String {
+        return String("\xF0\x9F\x94\x84 Boot #7 | Reason: Power-on | 2026-04-10 12:00 UTC");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(923, kAllowedFromId, 0, "/boot", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(923, poller.lastUpdateId());
+    bool sawBoot = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Boot #7")) >= 0) { sawBoot = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawBoot);
+}
+
+// RFC-0123: /boot without fn → "(boot info not configured)".
+void test_TelegramPoller_boot_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // bootInfoFn_ NOT set
+
+    bot.queueUpdateBatch({makeUpdate(924, kAllowedFromId, 0, "/boot", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(924, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
 // RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
 void test_TelegramPoller_send_duplicate_gets_already_queued_error()
 {
@@ -3144,6 +3303,13 @@ void run_telegram_poller_tests()
     // RFC-0121: /network command
     RUN_TEST(test_TelegramPoller_network_calls_fn_and_replies);
     RUN_TEST(test_TelegramPoller_network_not_configured_replies);
+    // RFC-0122: /logs command
+    RUN_TEST(test_TelegramPoller_logs_returns_debug_log_entries);
+    RUN_TEST(test_TelegramPoller_logs_respects_n_arg);
+    RUN_TEST(test_TelegramPoller_logs_not_configured_replies);
+    // RFC-0123: /boot command
+    RUN_TEST(test_TelegramPoller_boot_calls_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_boot_not_configured_replies);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }
