@@ -366,6 +366,7 @@ void setup()
     pinMode(MODEM_RING_PIN, INPUT_PULLUP);
 #endif
 
+    Serial1.setRxBufferSize(2048); // RFC-0232: enlarge RX buffer before begin() for URC burst tolerance
     SerialAT.begin(115200, SERIAL_8N1, MODEM_RX_PIN, MODEM_TX_PIN);
     SerialAT.setTimeout(100); // RFC-0229: prevent 1-second stalls on empty-stream reads
 
