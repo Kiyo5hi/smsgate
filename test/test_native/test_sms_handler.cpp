@@ -13,8 +13,10 @@
 #include <Arduino.h>
 
 #include "sms_handler.h"
+#include "reply_target_map.h"
 #include "fake_modem.h"
 #include "fake_bot_client.h"
+#include "fake_persist.h"
 #include "pdu_test_helpers.h"
 
 using pdu_test::buildPduHex;
@@ -548,7 +550,11 @@ void test_extra_recipients_receive_forwarded_sms()
 {
     FakeModem modem;
     FakeBotClient bot;
+    FakePersist persist;
+    ReplyTargetMap rtm(persist);
+    rtm.load();
     SmsHandler handler(modem, bot, [&]() {});
+    handler.setReplyTargetMap(&rtm);
 
     static const int64_t extras[2] = {111, 222};
     handler.setExtraRecipients(extras, 2);
@@ -558,7 +564,7 @@ void test_extra_recipients_receive_forwarded_sms()
 
     handler.handleSmsIndex(1);
 
-    // Total sends: 1 (admin via sendMessageReturningId) + 2 (extras via sendMessageTo)
+    // Total sends: 1 (admin via sendMessageReturningId) + 2 (extras via sendMessageToReturningId)
     TEST_ASSERT_EQUAL(3, (int)bot.callCount());
     // smsForwarded should still be 1 (each unique SMS counts once).
     TEST_ASSERT_EQUAL(1, handler.smsForwarded());
@@ -573,6 +579,9 @@ void test_extra_recipients_receive_forwarded_sms()
     TEST_ASSERT_TRUE(msgs[0].text.indexOf("Hello") >= 0);
     TEST_ASSERT_TRUE(msgs[1].text.indexOf("Hello") >= 0);
     TEST_ASSERT_TRUE(msgs[2].text.indexOf("Hello") >= 0);
+
+    // RFC-0080: all three message_ids should be in the reply-target map.
+    TEST_ASSERT_EQUAL(3, (int)rtm.occupiedSlots());
 }
 
 // ---------- Unity plumbing ----------
