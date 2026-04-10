@@ -8,6 +8,8 @@
 #include "imodem.h"
 #include "delivery_report_map.h"
 
+class SmsDebugLog; // forward declaration for RFC-0035 log sink
+
 // Outbound SMS sender. Builds an SMS-SUBMIT PDU via sms_codec and
 // sends it through IModem::sendPduSms, which stays in PDU mode —
 // no text-mode flip, no post-send restoration needed.
@@ -104,9 +106,16 @@ public:
         deliveryReportMap_ = map;
     }
 
+    // Attach a debug log to record outbound SMS failures (RFC-0035):
+    // queue-full rejections and final-failure drops are pushed as
+    // log entries with outcome "out:queue_full" / "out:fail: <reason>".
+    // Pass nullptr to disable. Lifetime: log must outlive SmsSender.
+    void setDebugLog(SmsDebugLog *log) { debugLog_ = log; }
+
 private:
     IModem &modem_;
     String lastError_;
     std::array<OutboundEntry, kQueueSize> queue_;
     DeliveryReportMap *deliveryReportMap_ = nullptr;
+    SmsDebugLog *debugLog_ = nullptr;
 };

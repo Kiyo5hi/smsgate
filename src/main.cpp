@@ -624,6 +624,8 @@ void setup()
         msg += "  Failed: ";    msg += String(smsHandler.smsFailed()); msg += "\n";
         msg += "  Consec. failures: "; msg += String(smsHandler.consecutiveFailures()); msg += "\n";
         msg += "  Concat in-flight: "; msg += String((int)smsHandler.concatKeyCount()); msg += "\n";
+        // RFC-0034: show outbound retry queue depth.
+        msg += "  Outbound queue: "; msg += String(smsSender.queueSize()); msg += "/"; msg += String(SmsSender::kQueueSize); msg += "\n";
 
         msg += "\n\xF0\x9F\x92\xAC Telegram\n"; // 💬
         msg += "  Reply slots: ";
@@ -823,6 +825,7 @@ void setup()
         smsHandler.setReplyTargetMap(&replyTargets);
         smsHandler.setDebugLog(&smsDebugLog);
         telegramPoller->setDebugLog(&smsDebugLog);
+        smsSender.setDebugLog(&smsDebugLog); // RFC-0035: log outbound failures
         telegramPoller->begin();
         Serial.print("TG->SMS poller online; reply-target slots in use: ");
         Serial.println((unsigned long)replyTargets.occupiedSlots());

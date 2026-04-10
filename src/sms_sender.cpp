@@ -1,5 +1,6 @@
 #include "sms_sender.h"
 #include "sms_codec.h"
+#include "sms_debug_log.h"
 
 #ifdef ESP_PLATFORM
 #include <esp_task_wdt.h>
@@ -124,6 +125,18 @@ bool SmsSender::enqueue(const String &phone, const String &body,
 
     // Queue is full — reject the new entry (do not evict existing ones).
     Serial.println("SmsSender: outbound queue full, dropping new message");
+    if (debugLog_)
+    {
+        SmsDebugLog::Entry le;
+#ifdef ESP_PLATFORM
+        le.timestampMs = millis();
+#endif
+        le.sender    = phone; // repurposed: recipient
+        le.bodyChars = (uint16_t)(body.length() > 65535u ? 65535u : body.length());
+        le.outcome   = String("out:queue_full");
+        le.pduPrefix = body.substring(0, 40); // body preview
+        debugLog_->push(le);
+    }
     if (onFinalFailure)
         onFinalFailure();
     return false;
@@ -165,6 +178,16 @@ void SmsSender::drainQueue(uint32_t nowMs)
                 // All retries exhausted — drop the entry.
                 Serial.print("SmsSender: queue entry permanently failed to ");
                 Serial.println(e.phone);
+                if (debugLog_)
+                {
+                    SmsDebugLog::Entry le;
+                    le.timestampMs = nowMs;
+                    le.sender      = e.phone; // repurposed: recipient
+                    le.bodyChars   = (uint16_t)(e.body.length() > 65535u ? 65535u : e.body.length());
+                    le.outcome     = String("out:fail: ") + lastError_;
+                    le.pduPrefix   = e.body.substring(0, 40);
+                    debugLog_->push(le);
+                }
                 auto cb = e.onFinalFailure; // copy before clearing slot
                 e.occupied = false;
                 if (cb)

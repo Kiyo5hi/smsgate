@@ -18,7 +18,9 @@
 
 #include "sms_sender.h"
 #include "sms_codec.h"
+#include "sms_debug_log.h"
 #include "fake_modem.h"
+#include "fake_persist.h"
 
 void test_SmsSender_ascii_builds_gsm7_pdu()
 {
@@ -450,6 +452,54 @@ void test_SmsSender_snapshot_captures_entry()
     TEST_ASSERT_EQUAL(1, snap[0].attempts);
 }
 
+// RFC-0035: queue_full logs an "out:queue_full" entry to the debug log.
+void test_SmsSender_queue_full_logs_to_debug_log()
+{
+    FakeModem modem;
+    FakePersist persist;
+    SmsDebugLog log;
+    SmsSender sender(modem);
+    sender.setDebugLog(&log);
+    modem.setPduSendDefault(-1); // keep entries in queue
+
+    // Fill all 8 slots.
+    for (int i = 0; i < SmsSender::kQueueSize; ++i)
+        sender.enqueue(String("+") + String(i), String("x"));
+    TEST_ASSERT_EQUAL(0, (int)log.count()); // no log entries yet
+
+    // 9th enqueue — queue full → should log.
+    sender.enqueue(String("+99"), String("overflow body"));
+    TEST_ASSERT_EQUAL(1, (int)log.count());
+    TEST_ASSERT_TRUE(log.dump().indexOf(String("out:queue_full")) >= 0);
+    TEST_ASSERT_TRUE(log.dump().indexOf(String("+99")) >= 0);
+}
+
+// RFC-0035: final failure after kMaxAttempts logs "out:fail:" entry.
+void test_SmsSender_final_failure_logs_to_debug_log()
+{
+    FakeModem modem;
+    SmsDebugLog log;
+    SmsSender sender(modem);
+    sender.setDebugLog(&log);
+    modem.setPduSendDefault(-1); // always fail
+
+    sender.enqueue(String("+1"), String("hello fail"));
+
+    // Exhaust all retries.
+    uint32_t t = 0;
+    for (int i = 0; i < SmsSender::kMaxAttempts; ++i)
+    {
+        sender.drainQueue(t);
+        int idx = (i + 1 < 5) ? (i + 1) : 4;
+        t += SmsSender::kBackoffMs[idx] + 1;
+    }
+
+    TEST_ASSERT_EQUAL(0, sender.queueSize()); // entry removed
+    TEST_ASSERT_EQUAL(1, (int)log.count());
+    TEST_ASSERT_TRUE(log.dump().indexOf(String("out:fail:")) >= 0);
+    TEST_ASSERT_TRUE(log.dump().indexOf(String("+1")) >= 0);
+}
+
 void run_sms_sender_tests()
 {
     RUN_TEST(test_SmsSender_ascii_builds_gsm7_pdu);
@@ -473,4 +523,6 @@ void run_sms_sender_tests()
     RUN_TEST(test_SmsSender_on_success_not_called_on_failure);
     RUN_TEST(test_SmsSender_snapshot_empty_queue);
     RUN_TEST(test_SmsSender_snapshot_captures_entry);
+    RUN_TEST(test_SmsSender_queue_full_logs_to_debug_log);
+    RUN_TEST(test_SmsSender_final_failure_logs_to_debug_log);
 }
