@@ -121,6 +121,10 @@ public:
     // Returns the number of entries cleared.
     int clearQueue();
 
+    // RFC-0136: Remove all queue entries for the given phone number.
+    // Returns the number of entries removed. onFinalFailure is NOT called.
+    int cancelByPhone(const String &phone);
+
     // Attach a DeliveryReportMap so single-part sends store the MR for
     // correlation with +CDS URCs (RFC-0011). Pass nullptr to disable.
     // Lifetime: map must outlive SmsSender. Default: nullptr (disabled).

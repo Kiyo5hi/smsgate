@@ -297,3 +297,17 @@ int SmsSender::clearQueue()
     }
     return cleared;
 }
+
+int SmsSender::cancelByPhone(const String &phone)
+{
+    int removed = 0;
+    for (auto &e : queue_)
+    {
+        if (e.occupied && e.phone == phone)
+        {
+            e.occupied = false;
+            removed++;
+        }
+    }
+    return removed;
+}

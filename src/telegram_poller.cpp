@@ -122,6 +122,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/clearqueue \xe2\x80\x94 Discard all pending outbound SMS\n";
             help += "/resetstats \xe2\x80\x94 Reset session counters (SMS fwd/fail, calls)\n";
             help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
+            help += "/cancelnum <phone> \xe2\x80\x94 Cancel all queued entries for a phone number\n";
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/mute [min] \xe2\x80\x94 Snooze proactive alerts (default 60m)\n";
             help += "/unmute \xe2\x80\x94 Cancel alert snooze\n";
@@ -142,6 +143,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
             help += "/announce <msg> \xe2\x80\x94 Broadcast message to all authorized users\n";
             help += "/digest \xe2\x80\x94 Show on-demand stats digest\n";
+            help += "/setinterval <s> \xe2\x80\x94 Set heartbeat interval (0=disable, max 86400)\n";
             help += "/note \xe2\x80\x94 Show device note\n";
             help += "/setnote <text> \xe2\x80\x94 Save device note (max 120 chars)\n";
             help += "/me \xe2\x80\x94 Show your Telegram fromId and chatId\n";
@@ -1271,6 +1273,38 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0137: /setinterval <seconds> — change heartbeat interval at runtime.
+        if (lower == "/setinterval" || lower.startsWith("/setinterval "))
+        {
+            if (!intervalFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setinterval not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/setinterval ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setinterval <seconds>\n0 = disable, max 86400 (24h)"));
+                return;
+            }
+            long val = arg.toInt();
+            if (val < 0 || val > 86400)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid interval (0\xe2\x80\x93 86400 seconds).")); // ❌
+                return;
+            }
+            intervalFn_((uint32_t)val);
+            if (val == 0)
+                bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 Heartbeat disabled.")); // ✅
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 Heartbeat interval set to ") // ✅
+                    + String((int)val) + String(" seconds."));
+            return;
+        }
+
         // RFC-0131: /note — show current device note.
         if (lower == "/note")
         {
@@ -1349,6 +1383,33 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             {
                 sendErrorReply(u.chatId,
                     String("No entry ") + String(n) + String(" in queue (use /queue to list)."));
+            }
+            return;
+        }
+
+        // RFC-0136: /cancelnum <phone> — cancel all queued entries for a phone number.
+        if (lower == "/cancelnum" || lower.startsWith("/cancelnum "))
+        {
+            String arg = extractArg(u.text, "/cancelnum ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /cancelnum <phone>\nExample: /cancelnum +447911123456"));
+                return;
+            }
+            String phone = sms_codec::normalizePhoneNumber(arg);
+            int n = smsSender_.cancelByPhone(phone);
+            if (n > 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 Cancelled ") // ✅
+                    + String(n) + String(n == 1 ? " entry for " : " entries for ")
+                    + phone + String("."));
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("(no queued entries for ") + phone + String(")"));
             }
             return;
         }

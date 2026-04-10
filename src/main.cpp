@@ -243,6 +243,9 @@ static std::function<String()> statusFn;
 #if HEARTBEAT_INTERVAL_SEC != 0
 static uint32_t lastHeartbeatMs = 0;
 #endif
+// RFC-0137: Runtime-overridable heartbeat interval. Loaded from NVS "hb_interval"
+// at boot; set via /setinterval. 0 = disabled. Defaults to HEARTBEAT_INTERVAL_SEC.
+static uint32_t s_heartbeatIntervalSec = HEARTBEAT_INTERVAL_SEC;
 
 // Try to connect to WiFi. Returns true if connected within the timeout.
 // Times out after ~15 s (30 retries × 500 ms) so we don't block setup()
@@ -1015,6 +1018,13 @@ void setup()
             }
         }
 
+        // RFC-0137: Load heartbeat interval override from NVS.
+        {
+            uint32_t hbInterval = 0;
+            if (realPersist.loadBlob("hb_interval", &hbInterval, sizeof(hbInterval)) == sizeof(hbInterval))
+                s_heartbeatIntervalSec = hbInterval;
+        }
+
         // RFC-0021: Load runtime SMS block list from NVS.
         {
             struct { int32_t count; char numbers[20][21]; } blob{};
@@ -1301,6 +1311,10 @@ void setup()
         telegramPoller->setNoteSetFn([](const String &note) {       // RFC-0131
             s_deviceNote = note;
             realPersist.saveBlob("device_note", note.c_str(), note.length());
+        });
+        telegramPoller->setIntervalFn([](uint32_t secs) {           // RFC-0137
+            s_heartbeatIntervalSec = secs;
+            realPersist.saveBlob("hb_interval", &secs, sizeof(secs));
         });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
@@ -1814,7 +1828,8 @@ void loop()
 #if HEARTBEAT_INTERVAL_SEC != 0
     {
         uint32_t nowMs = (uint32_t)millis();
-        if ((uint32_t)(nowMs - lastHeartbeatMs) >= (uint32_t)HEARTBEAT_INTERVAL_SEC * 1000u)
+        if (s_heartbeatIntervalSec > 0 &&
+            (uint32_t)(nowMs - lastHeartbeatMs) >= s_heartbeatIntervalSec * 1000u)
         {
             lastHeartbeatMs = nowMs;  // advance regardless of send result
             esp_task_wdt_reset();  // heartbeat sendMessage can block; pet WDT first

@@ -388,6 +388,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "clearaliases";
         c["description"] = "Remove all phone aliases";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "cancelnum";
+        c["description"] = "Cancel all queued SMS to a phone number";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setinterval";
+        c["description"] = "Set heartbeat interval: /setinterval <seconds> (0=off)";
+    }
 
     String payload;
     serializeJson(doc, payload);

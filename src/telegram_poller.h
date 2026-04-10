@@ -254,6 +254,12 @@ public:
     // When not set, replies "(digest not configured)".
     void setDigestFn(std::function<String()> fn) { digestFn_ = std::move(fn); }
 
+    // RFC-0137: Optional heartbeat interval setter. When set, /setinterval <N>
+    // validates N (0 = disable, max 86400) and calls this fn. Confirmed with
+    // "✅ Heartbeat interval set to N seconds." When not set, replies
+    // "(setinterval not configured)".
+    void setIntervalFn(std::function<void(uint32_t)> fn) { intervalFn_ = std::move(fn); }
+
     // RFC-0131: /note and /setnote — persistent device note stored in NVS.
     void setNoteGetFn(std::function<String()> fn) { noteGetFn_ = std::move(fn); }
     void setNoteSetFn(std::function<void(const String &)> fn) { noteSetFn_ = std::move(fn); }
@@ -316,6 +322,7 @@ private:
     std::function<String()> lifetimeFn_;  // RFC-0128
     AnnounceFn announceFn_;               // RFC-0129
     std::function<String()> digestFn_;    // RFC-0130
+    std::function<void(uint32_t)> intervalFn_; // RFC-0137
     std::function<String()> noteGetFn_;   // RFC-0131
     std::function<void(const String &)> noteSetFn_; // RFC-0131
     int32_t lastUpdateId_ = 0;

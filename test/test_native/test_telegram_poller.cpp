@@ -3800,6 +3800,194 @@ void test_TelegramPoller_shortcuts_replies_with_quick_ref()
     TEST_ASSERT_TRUE(sawHelp);
 }
 
+// RFC-0136: /cancelnum with matching entries → removes and confirms.
+void test_TelegramPoller_cancelnum_removes_matching_entries()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    modem.setPduSendDefault(-1); // keep entries in queue
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // Enqueue two SMS to the same number and one to a different number.
+    sender.enqueue(String("+447911111111"), String("msg1"), nullptr);
+    sender.enqueue(String("+447911111111"), String("msg2"), nullptr);
+    sender.enqueue(String("+447922222222"), String("msg3"), nullptr);
+
+    bot.queueUpdateBatch({makeUpdate(990, kAllowedFromId, 0, "/cancelnum +447911111111", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(990, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(1, sender.queueSize()); // only the +447922222222 entry remains
+    bool sawCancelled = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Cancelled")) >= 0 && m.indexOf(String("2")) >= 0)
+        {
+            sawCancelled = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawCancelled);
+}
+
+// RFC-0136: /cancelnum with no matching entries → placeholder.
+void test_TelegramPoller_cancelnum_no_match_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(991, kAllowedFromId, 0, "/cancelnum +447911111111", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(991, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("no queued entries")) >= 0) { sawPlaceholder = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
+// RFC-0136: /cancelnum with no arg → usage error.
+void test_TelegramPoller_cancelnum_no_arg_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(992, kAllowedFromId, 0, "/cancelnum", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(992, poller.lastUpdateId());
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Usage")) >= 0) { sawUsage = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+// RFC-0137: /setinterval 3600 calls fn with 3600.
+void test_TelegramPoller_setinterval_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    uint32_t capturedInterval = 0;
+    poller.setIntervalFn([&](uint32_t secs) { capturedInterval = secs; });
+
+    bot.queueUpdateBatch({makeUpdate(993, kAllowedFromId, 0, "/setinterval 3600", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(993, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL((uint32_t)3600, capturedInterval);
+    bool sawConfirm = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("3600")) >= 0) { sawConfirm = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawConfirm);
+}
+
+// RFC-0137: /setinterval 0 → disable confirmed.
+void test_TelegramPoller_setinterval_zero_disables()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    uint32_t capturedInterval = 999;
+    poller.setIntervalFn([&](uint32_t secs) { capturedInterval = secs; });
+
+    bot.queueUpdateBatch({makeUpdate(994, kAllowedFromId, 0, "/setinterval 0", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(994, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL((uint32_t)0, capturedInterval);
+    bool sawDisabled = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("disabled")) >= 0) { sawDisabled = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawDisabled);
+}
+
+// RFC-0137: /setinterval 99999 → validation error.
+void test_TelegramPoller_setinterval_too_large_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setIntervalFn([](uint32_t) {});
+
+    bot.queueUpdateBatch({makeUpdate(995, kAllowedFromId, 0, "/setinterval 99999", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(995, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Invalid")) >= 0) { sawError = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 // RFC-0134: /clearaliases with populated store → removes all and confirms count.
 void test_TelegramPoller_clearaliases_removes_all()
 {
@@ -4073,6 +4261,14 @@ void run_telegram_poller_tests()
     // RFC-0134: /clearaliases command
     RUN_TEST(test_TelegramPoller_clearaliases_removes_all);
     RUN_TEST(test_TelegramPoller_clearaliases_empty_store_replies_placeholder);
+    // RFC-0136: /cancelnum command
+    RUN_TEST(test_TelegramPoller_cancelnum_removes_matching_entries);
+    RUN_TEST(test_TelegramPoller_cancelnum_no_match_replies_placeholder);
+    RUN_TEST(test_TelegramPoller_cancelnum_no_arg_sends_usage);
+    // RFC-0137: /setinterval command
+    RUN_TEST(test_TelegramPoller_setinterval_calls_fn);
+    RUN_TEST(test_TelegramPoller_setinterval_zero_disables);
+    RUN_TEST(test_TelegramPoller_setinterval_too_large_sends_error);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }
