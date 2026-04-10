@@ -98,6 +98,12 @@ public:
     };
     std::vector<QueueSnapshot> getQueueSnapshot() const;
 
+    // RFC-0046: Cancel the Nth occupied queue entry (1-indexed, matching
+    // /queue display order). Returns true if found and removed, false if
+    // N is out of range. onFinalFailure is NOT called — cancellation is
+    // intentional, not a retry-exhaustion failure.
+    bool cancelQueueEntry(int n);
+
     // Attach a DeliveryReportMap so single-part sends store the MR for
     // correlation with +CDS URCs (RFC-0011). Pass nullptr to disable.
     // Lifetime: map must outlive SmsSender. Default: nullptr (disabled).

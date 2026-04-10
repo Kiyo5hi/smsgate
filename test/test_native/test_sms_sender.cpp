@@ -500,6 +500,33 @@ void test_SmsSender_final_failure_logs_to_debug_log()
     TEST_ASSERT_TRUE(log.dump().indexOf(String("+1")) >= 0);
 }
 
+// RFC-0046: cancelQueueEntry removes the Nth occupied entry (1-indexed).
+void test_SmsSender_cancel_removes_entry()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1); // never succeeds → stays in queue
+    sender.enqueue(String("+11"), String("msg1"));
+    sender.enqueue(String("+22"), String("msg2"));
+    TEST_ASSERT_EQUAL(2, sender.queueSize());
+    bool ok = sender.cancelQueueEntry(1); // cancel first entry
+    TEST_ASSERT_TRUE(ok);
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+    auto snap = sender.getQueueSnapshot();
+    TEST_ASSERT_EQUAL_STRING("+22", snap[0].phone.c_str()); // second entry remains
+}
+
+void test_SmsSender_cancel_out_of_range_returns_false()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1);
+    sender.enqueue(String("+11"), String("msg1"));
+    TEST_ASSERT_FALSE(sender.cancelQueueEntry(0)); // 0 is never valid
+    TEST_ASSERT_FALSE(sender.cancelQueueEntry(2)); // only 1 entry
+    TEST_ASSERT_EQUAL(1, sender.queueSize()); // unchanged
+}
+
 void run_sms_sender_tests()
 {
     RUN_TEST(test_SmsSender_ascii_builds_gsm7_pdu);
@@ -525,4 +552,6 @@ void run_sms_sender_tests()
     RUN_TEST(test_SmsSender_snapshot_captures_entry);
     RUN_TEST(test_SmsSender_queue_full_logs_to_debug_log);
     RUN_TEST(test_SmsSender_final_failure_logs_to_debug_log);
+    RUN_TEST(test_SmsSender_cancel_removes_entry);
+    RUN_TEST(test_SmsSender_cancel_out_of_range_returns_false);
 }

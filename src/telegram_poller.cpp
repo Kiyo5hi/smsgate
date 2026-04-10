@@ -292,10 +292,38 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0046: /cancel <N> — remove the Nth pending queue entry.
+        if (lower == "/cancel" || lower.startsWith("/cancel "))
+        {
+            String arg = extractArg(lower, "/cancel ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /cancel <N>  (see /queue for numbers)"));
+                return;
+            }
+            int n = arg.toInt();
+            if (n <= 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /cancel <N>  (N must be a positive integer)"));
+                return;
+            }
+            if (smsSender_.cancelQueueEntry(n))
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xE2\x9C\x85 Queue entry ") + String(n) + String(" cancelled.")); // ✅
+            }
+            else
+            {
+                sendErrorReply(u.chatId,
+                    String("No entry ") + String(n) + String(" in queue (use /queue to list)."));
+            }
+            return;
+        }
+
         Serial.println("TelegramPoller: no reply_to_message_id, dropping");
         {
             String help = "Reply to a forwarded SMS to send a response. ";
-            help += "Commands: /ping, /debug, /cleardebug, /status, /restart, /send <num> <msg>, /queue";
+            help += "Commands: /ping, /debug, /cleardebug, /status, /restart, /send <num> <msg>, /queue, /cancel <N>";
             if (smsBlockMutator_)
                 help += ", /blocklist, /block <num>, /unblock <num>";
             sendErrorReply(u.chatId, help);

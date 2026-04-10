@@ -230,3 +230,19 @@ std::vector<SmsSender::QueueSnapshot> SmsSender::getQueueSnapshot() const
     }
     return result;
 }
+
+bool SmsSender::cancelQueueEntry(int n)
+{
+    int count = 0;
+    for (auto &e : queue_)
+    {
+        if (!e.occupied)
+            continue;
+        if (++count == n)
+        {
+            e.occupied = false;
+            return true;
+        }
+    }
+    return false;
+}
