@@ -145,6 +145,11 @@ public:
     // main.cpp; the flag is checked at the top of loop().
     void setWifiReconnectFn(std::function<void()> fn) { wifiReconnectFn_ = std::move(fn); }
 
+    // RFC-0072: Optional heap info callback. When set, /heap calls this
+    // function and returns the result. Production wires this to a lambda
+    // that formats ESP.getFreeHeap() / getMinFreeHeap() / getMaxAllocHeap().
+    void setHeapFn(std::function<String()> fn) { heapFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -174,6 +179,7 @@ private:
     std::function<void()> ntpSyncFn_;
     std::function<String()> concatSummaryFn_; // RFC-0069
     std::function<void()> wifiReconnectFn_;   // RFC-0071
+    std::function<String()> heapFn_;          // RFC-0072
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

@@ -210,6 +210,11 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "heap";
+        c["description"] = "Show free heap stats";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "restart";
         c["description"] = "Soft reboot the bridge";
     }
@@ -288,7 +293,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /restart /send /queue /cancel");
+        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /heap /restart /send /queue /cancel");
     }
     else
     {

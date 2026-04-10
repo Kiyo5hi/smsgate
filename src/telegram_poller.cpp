@@ -98,6 +98,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/queue \xe2\x80\x94 Show pending outbound queue\n";
             help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
+            help += "/heap \xe2\x80\x94 Show free/min/max-block heap\n";
             help += "/restart \xe2\x80\x94 Soft reboot\n";
             if (smsBlockMutator_) {
                 help += "/blocklist \xe2\x80\x94 Show block list\n";
@@ -248,6 +249,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             {
                 bot_.sendMessageTo(u.chatId, String("(WiFi reconnect not configured)"));
             }
+            return;
+        }
+
+        // RFC-0072: /heap — show free/min/max-block heap.
+        if (lower == "/heap")
+        {
+            if (heapFn_)
+                bot_.sendMessageTo(u.chatId, heapFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(heap info not configured)"));
             return;
         }
 
