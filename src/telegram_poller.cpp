@@ -80,6 +80,34 @@ static String quietHoursWarning(uint32_t sendAtMs, uint32_t nowMs,
     return String(buf);
 }
 
+// RFC-0222: Convert a UTC date+time to a Unix timestamp.
+// Uses the proleptic Gregorian calendar formula — no mktime dependency.
+// Returns -1 if any field is out of range.
+static long dateTimeToUnix(int year, int month, int day, int hour, int minute)
+{
+    if (year  < 2020 || year  > 2099) return -1;
+    if (month < 1    || month > 12  ) return -1;
+    if (day   < 1    || day   > 31  ) return -1;
+    if (hour  < 0    || hour  > 23  ) return -1;
+    if (minute< 0    || minute> 59  ) return -1;
+    // Days in each month (non-leap year).
+    static const int kDaysInMonth[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    bool isLeap = (year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+    int maxDay = kDaysInMonth[month - 1] + (isLeap && month == 2 ? 1 : 0);
+    if (day > maxDay) return -1;
+    // Days from 1970-01-01 to start of `year`.
+    long y = year;
+    long days = 365L * (y - 1970L)
+              + (y - 1969L) / 4L
+              - (y - 1901L) / 100L
+              + (y - 1601L) / 400L;
+    // Add days in months before `month`.
+    for (int m = 1; m < month; m++)
+        days += kDaysInMonth[m - 1] + (isLeap && m == 2 ? 1 : 0);
+    days += day - 1; // 0-based day offset
+    return days * 86400L + (long)hour * 3600L + (long)minute * 60L;
+}
+
 // File-static helper: strips the given prefix from `lower` and returns
 // the trimmed remainder. Returns an empty String if lower does not start
 // with prefix.
@@ -218,6 +246,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/scheddelay <N> <min> \xe2\x80\x94 Extend scheduled slot N by extra minutes\n"; // RFC-0196
             help += "/delayall <min> \xe2\x80\x94 Extend all scheduled slots by extra minutes\n"; // RFC-0204
             help += "/sendafter <HH:MM> <phone> <body> \xe2\x80\x94 Schedule SMS at a specific UTC time\n"; // RFC-0205
+            help += "/scheduleat <YYYY-MM-DD HH:MM> <phone> <body> \xe2\x80\x94 Schedule SMS at an exact UTC date+time\n"; // RFC-0222
             help += "/schedinfo <N> \xe2\x80\x94 Show full body and ETA of scheduled slot N\n"; // RFC-0198
             help += "/schedrename <N> <phone> \xe2\x80\x94 Change destination phone of scheduled slot N\n"; // RFC-0197
             help += "/schedbody <N> <text> \xe2\x80\x94 Edit the body of scheduled slot N\n"; // RFC-0207
@@ -2987,6 +3016,107 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 + String(" (slot ") + String(slotIdx2 + 1) + String("/")
                 + String((int)kScheduledQueueSize) + String(").")
                 + quietHoursWarning(sendAt2, nowMs5, quietStart_, quietEnd_, wallTimeFn_)); // RFC-0212
+            return;
+        }
+
+        // RFC-0222: /scheduleat <YYYY-MM-DD HH:MM> <phone> <body> — schedule at a
+        // specific UTC date+time. Requires NTP. Max 365 days ahead.
+        if (lower == "/scheduleat" || lower.startsWith("/scheduleat "))
+        {
+            if (!wallTimeFn_)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c /scheduleat requires NTP sync. Use /ntp first.")); // ❌
+                return;
+            }
+            long wallNowAt = wallTimeFn_();
+            if (wallNowAt <= 1000000000L)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c NTP not synced. Use /ntp first.")); // ❌
+                return;
+            }
+            // Parse: /scheduleat YYYY-MM-DD HH:MM phone body
+            String arg = extractArg(u.text, "/scheduleat ");
+            arg.trim();
+            // Format: "YYYY-MM-DD HH:MM <phone> <body>"
+            // Minimum length: 16 chars for date+time ("2026-04-10 14:30")
+            if (arg.length() < 16 || arg[4] != '-' || arg[7] != '-' || arg[13] != ':')
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /scheduleat YYYY-MM-DD HH:MM <phone> <body>\n"
+                           "Example: /scheduleat 2026-12-25 09:00 +1234567890 Merry Christmas!"));
+                return;
+            }
+            int yr  = arg.substring(0, 4).toInt();
+            int mo  = arg.substring(5, 7).toInt();
+            int dy  = arg.substring(8, 10).toInt();
+            int hh  = arg.substring(11, 13).toInt();
+            int mm2 = arg.substring(14, 16).toInt();
+            long targetUnixAt = dateTimeToUnix(yr, mo, dy, hh, mm2);
+            if (targetUnixAt < 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid date/time. Check year(2020-2099), month, day, hour, minute.")); // ❌
+                return;
+            }
+            long deltaSecAt = targetUnixAt - wallNowAt;
+            if (deltaSecAt < -60L)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c That date/time is in the past.")); // ❌
+                return;
+            }
+            if (deltaSecAt > 365L * 86400L)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Cannot schedule more than 365 days ahead.")); // ❌
+                return;
+            }
+            // Parse phone + body from the rest (after "YYYY-MM-DD HH:MM ").
+            String rest = arg.length() > 16 ? arg.substring(16) : String();
+            rest.trim();
+            int spAt = rest.indexOf(' ');
+            if (spAt < 0 || rest.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /scheduleat YYYY-MM-DD HH:MM <phone> <body>"));
+                return;
+            }
+            String phoneAt = sms_codec::normalizePhoneNumber(rest.substring(0, spAt));
+            String bodyAt  = rest.substring(spAt + 1);
+            bodyAt.trim();
+            if (phoneAt.length() < 5 || bodyAt.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /scheduleat YYYY-MM-DD HH:MM <phone> <body>"));
+                return;
+            }
+            if (bodyAt.length() > 127) bodyAt = bodyAt.substring(0, 127);
+            // Find a free slot.
+            int slotAt = -1;
+            uint32_t nowMsAt = clock_ ? clock_() : 0;
+            for (int i = 0; i < (int)kScheduledQueueSize; i++)
+                if (scheduledQueue_[i].sendAtMs == 0) { slotAt = i; break; }
+            if (slotAt < 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Scheduled queue full (5 slots). Use /schedqueue to see pending.")); // ❌
+                return;
+            }
+            long delayMsAt = deltaSecAt > 0L ? deltaSecAt * 1000L : 1L; // 1ms = fire immediately
+            uint32_t sendAtAt = nowMsAt + (uint32_t)delayMsAt;
+            scheduledQueue_[slotAt].sendAtMs = sendAtAt;
+            scheduledQueue_[slotAt].phone    = phoneAt;
+            scheduledQueue_[slotAt].body     = bodyAt;
+            if (persistSchedFn_) persistSchedFn_(); // RFC-0200
+            String etaAt = schedEtaStr(sendAtAt, nowMsAt, wallTimeFn_); // RFC-0202
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x8f\xb0 SMS to ") + phoneAt // ⏰
+                + String(" scheduled ") + etaAt
+                + String(" (slot ") + String(slotAt + 1) + String("/")
+                + String((int)kScheduledQueueSize) + String(").")
+                + quietHoursWarning(sendAtAt, nowMsAt, quietStart_, quietEnd_, wallTimeFn_)); // RFC-0212
             return;
         }
 

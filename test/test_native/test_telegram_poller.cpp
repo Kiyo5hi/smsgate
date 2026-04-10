@@ -7941,6 +7941,114 @@ void test_TelegramPoller_sendafter_no_ntp_replies_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0222: /scheduleat schedules at a specific UTC date+time.
+void test_TelegramPoller_scheduleat_future_date()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 5000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // wallNow = 2025-04-10 10:00:00 UTC = 1744279200
+    poller.setWallTimeFn([]() -> long { return 1744279200L; });
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Schedule for 2025-04-11 09:00 UTC = 1744279200 + (23*3600 - 3600)s = 1744279200 + 82800 = 1744362000
+    // deltaMs ≈ 82800000 ms
+    bot.queueUpdateBatch({makeUpdate(23001, kAllowedFromId, 0,
+        "/scheduleat 2025-04-11 09:00 +5551 Future SMS", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(23001, poller.lastUpdateId());
+
+    const auto &q = poller.getSchedQueue();
+    TEST_ASSERT_NOT_EQUAL(0U, q[0].sendAtMs);
+    TEST_ASSERT_EQUAL_STRING("+5551", q[0].phone.c_str());
+    // sendAtMs should be ~82800000ms from nowMs (5000 + 4000 + 4000 = 13000)
+    // Allow ±1min tolerance.
+    uint32_t expected = 13000U + 82800000U;
+    TEST_ASSERT_TRUE(q[0].sendAtMs >= expected - 60000U);
+    TEST_ASSERT_TRUE(q[0].sendAtMs <= expected + 60000U);
+
+    bool sawScheduled = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("scheduled") >= 0) { sawScheduled = true; break; }
+    TEST_ASSERT_TRUE(sawScheduled);
+}
+
+// RFC-0222: /scheduleat with a past date returns an error.
+void test_TelegramPoller_scheduleat_past_date_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 5000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setWallTimeFn([]() -> long { return 1744279200L; }); // 2025-04-10 10:00 UTC
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // 2025-04-09 09:00 is ~25h before wallNow → in the past
+    bot.queueUpdateBatch({makeUpdate(23002, kAllowedFromId, 0,
+        "/scheduleat 2025-04-09 09:00 +5552 Past", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(23002, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("past") >= 0 || m.indexOf("past") >= 0)
+        { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+    TEST_ASSERT_EQUAL(0U, poller.getSchedQueue()[0].sendAtMs); // no slot allocated
+}
+
+// RFC-0222: /scheduleat with no NTP returns an error.
+void test_TelegramPoller_scheduleat_no_ntp_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // wallTimeFn_ not set.
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(23003, kAllowedFromId, 0,
+        "/scheduleat 2026-04-11 09:00 +5553 No NTP", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(23003, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("NTP") >= 0) { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 // RFC-0204: /delayall extends all occupied slots.
 void test_TelegramPoller_delayall_extends_all_slots()
 {
@@ -8494,6 +8602,10 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);
     RUN_TEST(test_TelegramPoller_sendafter_no_ntp_replies_error);
+    // RFC-0222: /scheduleat command
+    RUN_TEST(test_TelegramPoller_scheduleat_future_date);
+    RUN_TEST(test_TelegramPoller_scheduleat_past_date_error);
+    RUN_TEST(test_TelegramPoller_scheduleat_no_ntp_error);
     // RFC-0204: /delayall command
     RUN_TEST(test_TelegramPoller_delayall_extends_all_slots);
     RUN_TEST(test_TelegramPoller_delayall_empty_queue);
