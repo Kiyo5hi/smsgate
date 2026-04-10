@@ -710,6 +710,8 @@ void setup()
         case REG_SEARCHING:    regStr = "searching";     break;
         case REG_DENIED:       regStr = "denied";        break;
         case REG_UNREGISTERED: regStr = "unregistered";  break;
+        case REG_SMS_ONLY:     regStr = "sms-only";      break;
+        case REG_UNKNOWN:      regStr = "unknown";        break;
         default:               regStr = "unknown";       break;
         }
 
@@ -1298,6 +1300,8 @@ void setup()
                 case REG_SEARCHING:    regStr = "searching";    break;
                 case REG_DENIED:       regStr = "denied";       break;
                 case REG_UNREGISTERED: regStr = "unregistered"; break;
+                case REG_SMS_ONLY:     regStr = "sms-only";     break;
+                case REG_UNKNOWN:      regStr = "unknown";       break;
                 default:               regStr = "unknown";      break;
             }
             String s = String("\xF0\x9F\x93\xB6 CSQ ") + String(cachedCsq) // 📶
@@ -1385,6 +1389,8 @@ void setup()
                 case REG_SEARCHING:    regStr = "searching";    break;
                 case REG_DENIED:       regStr = "denied";       break;
                 case REG_UNREGISTERED: regStr = "unregistered"; break;
+                case REG_SMS_ONLY:     regStr = "sms-only";     break;
+                case REG_UNKNOWN:      regStr = "unknown";       break;
                 default:               regStr = "unknown";      break;
             }
             const char *csqLabel;
