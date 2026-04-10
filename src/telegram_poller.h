@@ -160,6 +160,11 @@ public:
     // and /test.
     void setAliasStore(SmsAliasStore *store) { aliasStore_ = store; }
 
+    // RFC-0092: Optional compact signal-health callback. When set, /csq
+    // calls this function and returns the result. Production wires this to
+    // a lambda that formats cachedCsq / cachedRegStatus / cachedOperatorName.
+    void setCsqFn(std::function<String()> fn) { csqFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -192,6 +197,7 @@ private:
     std::function<String()> heapFn_;          // RFC-0072
     String versionStr_ = "(unknown build)";   // RFC-0074
     SmsAliasStore *aliasStore_ = nullptr;     // RFC-0088
+    std::function<String()> csqFn_;          // RFC-0092
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

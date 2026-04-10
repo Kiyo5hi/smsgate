@@ -1358,6 +1358,40 @@ void test_TelegramPoller_send_delivery_notification()
     TEST_ASSERT_TRUE(sawSent);
 }
 
+// ---------- RFC-0092: /csq ----------
+
+void test_TelegramPoller_csq_command_calls_csq_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    poller.setCsqFn([]() -> String { return String("📶 CSQ 18 (good) | home (TestNet) | WiFi -62 dBm"); });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(800, kAllowedFromId, 0, "/csq", kAllowedFromId)});
+    poller.tick();
+
+    bool sawCsq = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("CSQ 18")) >= 0)
+        {
+            sawCsq = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawCsq);
+    TEST_ASSERT_EQUAL(800, poller.lastUpdateId());
+}
+
 // ---------- RFC-0089: /clearqueue ----------
 
 void test_TelegramPoller_clearqueue_discards_entries()
@@ -1652,6 +1686,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_send_multipart_shows_part_count);
     // RFC-0089: /clearqueue command
     RUN_TEST(test_TelegramPoller_clearqueue_discards_entries);
+    // RFC-0092: /csq command
+    RUN_TEST(test_TelegramPoller_csq_command_calls_csq_fn);
     // RFC-0088: phone aliases
     RUN_TEST(test_TelegramPoller_addalias_adds_and_replies);
     RUN_TEST(test_TelegramPoller_rmalias_removes_and_replies);

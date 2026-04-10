@@ -215,6 +215,11 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "csq";
+        c["description"] = "Quick signal strength snapshot";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "version";
         c["description"] = "Show firmware build timestamp";
     }
@@ -328,7 +333,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /heap /version /restart /send /test /queue /flushqueue /clearqueue /cancel /aliases /addalias /rmalias");
+        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /heap /csq /version /restart /send /test /queue /flushqueue /clearqueue /cancel /aliases /addalias /rmalias");
     }
     else
     {

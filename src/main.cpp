@@ -1008,6 +1008,29 @@ void setup()
         });
         smsSender.setDebugLog(&smsDebugLog); // RFC-0035: log outbound failures
         telegramPoller->setAliasStore(&smsAliasStore); // RFC-0088
+        telegramPoller->setCsqFn([]() -> String {      // RFC-0092
+            const char *csqLabel;
+            if (cachedCsq == 99)      csqLabel = "none";
+            else if (cachedCsq <= 9)  csqLabel = "marginal";
+            else if (cachedCsq <= 14) csqLabel = "ok";
+            else if (cachedCsq <= 19) csqLabel = "good";
+            else                      csqLabel = "excellent";
+            const char *regStr;
+            switch (cachedRegStatus) {
+                case REG_OK_HOME:      regStr = "home";         break;
+                case REG_OK_ROAMING:   regStr = "roaming";      break;
+                case REG_SEARCHING:    regStr = "searching";    break;
+                case REG_DENIED:       regStr = "denied";       break;
+                case REG_UNREGISTERED: regStr = "unregistered"; break;
+                default:               regStr = "unknown";      break;
+            }
+            String s = String("\xF0\x9F\x93\xB6 CSQ ") + String(cachedCsq) // 📶
+                + String(" (") + csqLabel + String(") | ") + regStr;
+            if (cachedOperatorName.length() > 0)
+                s += String(" (") + cachedOperatorName + String(")");
+            s += String(" | WiFi ") + String(WiFi.RSSI()) + String(" dBm");
+            return s;
+        });
         telegramPoller->begin();
         Serial.print("TG->SMS poller online; reply-target slots in use: ");
         Serial.println((unsigned long)replyTargets.occupiedSlots());

@@ -102,6 +102,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/heap \xe2\x80\x94 Show free/min/max-block heap\n";
+            help += "/csq \xe2\x80\x94 Quick signal strength snapshot\n";
             help += "/version \xe2\x80\x94 Show firmware build timestamp\n";
             help += "/restart \xe2\x80\x94 Soft reboot\n";
             if (smsBlockMutator_) {
@@ -268,6 +269,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, heapFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(heap info not configured)"));
+            return;
+        }
+
+        // RFC-0092: /csq — compact signal health snapshot.
+        if (lower == "/csq")
+        {
+            if (csqFn_)
+                bot_.sendMessageTo(u.chatId, csqFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(signal info not configured)"));
             return;
         }
 
