@@ -1065,6 +1065,30 @@ void setup()
                 telegramPoller->setPollIntervalMs(v);
         }
 
+        // RFC-0189: Restore maxParts, concatTtl, maxFail, dedupWindow from NVS.
+        {
+            int32_t v = 10;
+            if (realPersist.loadBlob("max_parts", &v, sizeof(v)) == sizeof(v)
+                && v >= 1 && v <= 10)
+                smsSender.setMaxParts((int)v);
+        }
+        {
+            uint32_t v = 0;
+            if (realPersist.loadBlob("concat_ttl", &v, sizeof(v)) == sizeof(v) && v > 0)
+                smsHandler.setConcatTtlMs((unsigned long)v * 1000UL);
+        }
+        {
+            int32_t v = 8;
+            if (realPersist.loadBlob("max_fail", &v, sizeof(v)) == sizeof(v)
+                && v >= 0 && v <= 100)
+                smsHandler.setMaxConsecutiveFailures((int)v);
+        }
+        {
+            uint32_t v = 0;
+            if (realPersist.loadBlob("dedup_secs", &v, sizeof(v)) == sizeof(v))
+                smsHandler.setDedupWindowMs((unsigned long)v * 1000UL);
+        }
+
         // RFC-0150: Load auto-reply text from NVS.
         {
             char buf[161] = {};
@@ -1420,14 +1444,16 @@ void setup()
             smsHandler.handleSmsIndex(idx);
             return true; // handleSmsIndex is void; assume success
         });
-        telegramPoller->setDedupWindowFn([&smsHandler](uint32_t secs) { // RFC-0144
+        telegramPoller->setDedupWindowFn([&smsHandler](uint32_t secs) { // RFC-0144/0189
             smsHandler.setDedupWindowMs((unsigned long)secs * 1000UL);
+            realPersist.saveBlob("dedup_secs", &secs, sizeof(secs));
         });
         telegramPoller->setClearDedupFn([&smsHandler]() { // RFC-0145
             smsHandler.clearDedupBuffer();
         });
-        telegramPoller->setConcatTtlFn([&smsHandler](uint32_t secs) { // RFC-0142
+        telegramPoller->setConcatTtlFn([&smsHandler](uint32_t secs) { // RFC-0142/0189
             smsHandler.setConcatTtlMs((unsigned long)secs * 1000UL);
+            realPersist.saveBlob("concat_ttl", &secs, sizeof(secs));
         });
         telegramPoller->setModemInfoFn([]() -> String { // RFC-0143
             String info = String("\xF0\x9F\x93\xB1 Modem Info\n"); // 📱
@@ -1436,11 +1462,15 @@ void setup()
             info += String("FW: ") + String(modem.getModemInfo());
             return info;
         });
-        telegramPoller->setMaxFailFn([&smsHandler](int n) { // RFC-0138
+        telegramPoller->setMaxFailFn([&smsHandler](int n) { // RFC-0138/0189
             smsHandler.setMaxConsecutiveFailures(n);
+            int32_t v = n;
+            realPersist.saveBlob("max_fail", &v, sizeof(v));
         });
-        telegramPoller->setMaxPartsFn([&smsSender](int n) { // RFC-0160
+        telegramPoller->setMaxPartsFn([&smsSender](int n) { // RFC-0160/0189
             smsSender.setMaxParts(n);
+            int32_t v = n;
+            realPersist.saveBlob("max_parts", &v, sizeof(v));
         });
         telegramPoller->setBlockingEnabledFn([&smsHandler](bool enable) { // RFC-0162/0183
             smsHandler.setBlockingEnabled(enable);
