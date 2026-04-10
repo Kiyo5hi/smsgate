@@ -356,6 +356,52 @@ void test_SmsSender_drain_queue_one_send_per_call()
     TEST_ASSERT_EQUAL(0, sender.queueSize());
 }
 
+// RFC-0032: onSuccess is called once on successful drain, then cleared.
+void test_SmsSender_on_success_called_after_delivery()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+
+    int successCount = 0;
+    TEST_ASSERT_TRUE(sender.enqueue(String("+1"), String("hello"),
+                                    nullptr, // no failure cb
+                                    [&]() { successCount++; }));
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    sender.drainQueue(0);
+
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+    TEST_ASSERT_EQUAL(1, successCount); // fired exactly once
+    TEST_ASSERT_EQUAL(1, (int)modem.pduSendCalls().size());
+}
+
+// RFC-0032: onSuccess is NOT called on final failure.
+void test_SmsSender_on_success_not_called_on_failure()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1); // always fail
+
+    bool successCalled = false;
+    bool failureCalled = false;
+    sender.enqueue(String("+1"), String("hello"),
+                   [&]() { failureCalled = true; },
+                   [&]() { successCalled = true; });
+
+    // Exhaust all retries.
+    uint32_t t = 0;
+    for (int i = 0; i < SmsSender::kMaxAttempts; ++i)
+    {
+        sender.drainQueue(t);
+        int idx = (i + 1 < 5) ? (i + 1) : 4;
+        t += SmsSender::kBackoffMs[idx] + 1;
+    }
+
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+    TEST_ASSERT_TRUE(failureCalled);
+    TEST_ASSERT_FALSE(successCalled); // must NOT fire on failure
+}
+
 // Nullptr onFinalFailure: exhaust retries without crashing.
 void test_SmsSender_nullptr_on_final_failure_no_crash()
 {
@@ -397,4 +443,6 @@ void run_sms_sender_tests()
     RUN_TEST(test_SmsSender_queue_full_rejects_new_entry);
     RUN_TEST(test_SmsSender_drain_queue_one_send_per_call);
     RUN_TEST(test_SmsSender_nullptr_on_final_failure_no_crash);
+    RUN_TEST(test_SmsSender_on_success_called_after_delivery);
+    RUN_TEST(test_SmsSender_on_success_not_called_on_failure);
 }

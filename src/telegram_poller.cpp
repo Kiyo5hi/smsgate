@@ -211,10 +211,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             }
             int64_t requesterChatId = u.chatId;
             String capturedPhone = phone;
-            smsSender_.enqueue(phone, body, [this, requesterChatId, capturedPhone]() {
-                sendErrorReply(requesterChatId,
-                    String("SMS to ") + capturedPhone + " failed after retries.");
-            });
+            smsSender_.enqueue(phone, body,
+                [this, requesterChatId, capturedPhone]() {
+                    sendErrorReply(requesterChatId,
+                        String("SMS to ") + capturedPhone + " failed after retries.");
+                },
+                [this, requesterChatId, capturedPhone]() {
+                    // RFC-0032: delivery confirmation.
+                    bot_.sendMessageTo(requesterChatId,
+                        String("\xF0\x9F\x93\xA8 Sent to ") + capturedPhone); // U+1F4E8
+                });
             // RFC-0029: Include a body preview so the user can catch typos.
             String preview = body.substring(0, 30);
             if (body.length() > 30) preview += "\xE2\x80\xA6"; // U+2026 ellipsis
@@ -270,9 +276,15 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
 
     String capturedPhone = phone; // copy for lambda capture
     int64_t requesterChatId = u.chatId; // copy for lambda capture (u is a local, lambda may fire later)
-    smsSender_.enqueue(phone, u.text, [this, capturedPhone, requesterChatId]() {
-        sendErrorReply(requesterChatId, String("SMS to ") + capturedPhone + " failed after retries.");
-    });
+    smsSender_.enqueue(phone, u.text,
+        [this, capturedPhone, requesterChatId]() {
+            sendErrorReply(requesterChatId, String("SMS to ") + capturedPhone + " failed after retries.");
+        },
+        [this, capturedPhone, requesterChatId]() {
+            // RFC-0032: delivery confirmation fires from drainQueue on success.
+            bot_.sendMessageTo(requesterChatId,
+                String("\xF0\x9F\x93\xA8 Sent to ") + capturedPhone); // U+1F4E8 envelope
+        });
 
     // 4. Confirm enqueueing immediately (delivery confirmation comes
     // asynchronously via the queue; we tell the user the reply is queued).

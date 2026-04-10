@@ -1181,6 +1181,89 @@ void test_TelegramPoller_send_preserves_body_case()
     TEST_ASSERT_EQUAL(1, sender.queueSize());
 }
 
+// ---------- RFC-0032: delivery confirmation on successful SMS send ----------
+
+// Reply to a forwarded SMS: after drainQueue succeeds, "📨 Sent to" is delivered.
+void test_TelegramPoller_reply_delivery_notification()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+    rtm.put(42, String("+8613800138000"));
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(600, kAllowedFromId, 42, "hi", kAllowedFromId)});
+    poller.tick();
+
+    // No delivery notification yet — SMS is only queued.
+    bool sawSent = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Sent to")) >= 0) { sawSent = true; break; }
+    TEST_ASSERT_FALSE(sawSent);
+
+    // After drain succeeds, delivery notification fires.
+    sender.drainQueue(0);
+
+    sawSent = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.chatId == kAllowedFromId &&
+            m.text.indexOf(String("Sent to")) >= 0 &&
+            m.text.indexOf(String("+8613800138000")) >= 0)
+        {
+            sawSent = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawSent);
+}
+
+// /send path: after drainQueue succeeds, "📨 Sent to" is delivered.
+void test_TelegramPoller_send_delivery_notification()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(601, kAllowedFromId, 0, "/send +8613800138000 Hello", kAllowedFromId)});
+    poller.tick();
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    // Drain succeeds — delivery notification expected.
+    sender.drainQueue(0);
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+
+    bool sawSent = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.chatId == kAllowedFromId &&
+            m.text.indexOf(String("Sent to")) >= 0 &&
+            m.text.indexOf(String("+8613800138000")) >= 0)
+        {
+            sawSent = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawSent);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -1220,4 +1303,7 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_send_no_arg_sends_usage);
     RUN_TEST(test_TelegramPoller_send_number_only_sends_usage);
     RUN_TEST(test_TelegramPoller_send_preserves_body_case);
+    // RFC-0032: delivery confirmation
+    RUN_TEST(test_TelegramPoller_reply_delivery_notification);
+    RUN_TEST(test_TelegramPoller_send_delivery_notification);
 }

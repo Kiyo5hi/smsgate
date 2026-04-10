@@ -101,7 +101,8 @@ bool SmsSender::send(const String &number, const String &body)
 // ---- RFC-0012: outbound queue with exponential-backoff retry ----
 
 bool SmsSender::enqueue(const String &phone, const String &body,
-                        std::function<void()> onFinalFailure)
+                        std::function<void()> onFinalFailure,
+                        std::function<void()> onSuccess)
 {
     // Find a free slot.
     for (auto &e : queue_)
@@ -113,6 +114,7 @@ bool SmsSender::enqueue(const String &phone, const String &body,
             e.attempts       = 0;
             e.nextRetryMs    = 0; // first attempt is immediate
             e.onFinalFailure = onFinalFailure;
+            e.onSuccess      = onSuccess;
             e.occupied       = true;
             Serial.print("SmsSender: enqueued SMS to ");
             Serial.println(phone);
@@ -143,7 +145,10 @@ void SmsSender::drainQueue(uint32_t nowMs)
         {
             Serial.print("SmsSender: queue entry delivered to ");
             Serial.println(e.phone);
+            auto cb = e.onSuccess; // copy before clearing slot
             e.occupied = false;
+            if (cb)
+                cb();
         }
         else
         {

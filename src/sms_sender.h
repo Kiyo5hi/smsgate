@@ -37,6 +37,7 @@ struct OutboundEntry {
     int attempts;           // how many send attempts have been made so far
     uint32_t nextRetryMs;   // drainQueue(nowMs) only acts when nowMs >= this
     std::function<void()> onFinalFailure; // called once on final drop; may be nullptr
+    std::function<void()> onSuccess;      // called once on successful send; may be nullptr
     bool occupied;          // true when this slot is in use
 };
 
@@ -60,12 +61,13 @@ public:
     // Queue `body` for delivery to `phone` with exponential-backoff retry.
     // Returns true if the entry was accepted into the queue.
     // If the queue is full, calls onFinalFailure immediately and returns false.
-    // onFinalFailure may be nullptr (no notification on final drop).
+    // onFinalFailure / onSuccess may be nullptr (no notification).
     // Both the poller and SmsSender are process-lifetime objects so it is
-    // safe for onFinalFailure to capture a raw TelegramPoller* — see
+    // safe for the lambdas to capture a raw TelegramPoller* — see
     // RFC-0012 §3 and "Notes for handover".
     bool enqueue(const String &phone, const String &body,
-                 std::function<void()> onFinalFailure = nullptr);
+                 std::function<void()> onFinalFailure = nullptr,
+                 std::function<void()> onSuccess = nullptr);
 
     // Attempt to send at most ONE pending queue entry whose nextRetryMs <=
     // nowMs. Returns immediately if the queue is empty or nothing is due.
