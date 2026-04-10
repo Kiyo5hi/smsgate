@@ -3130,6 +3130,12 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("Usage: /schedulesend <delay_min> <phone> <body>"));
                 return;
             }
+            if (body.length() > 1530) // RFC-0261: enforce SMS body cap
+            {
+                sendErrorReply(u.chatId,
+                    String("\xe2\x9d\x8c Message too long for scheduled queue (max 1530 chars).")); // ❌
+                return;
+            }
             // Find a free slot.
             uint32_t nowMs   = clock_ ? clock_() : 0;
             uint32_t sendAt  = nowMs + (uint32_t)delayMin * 60000UL;
@@ -3402,7 +3408,12 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("Usage: /sendafter <HH:MM> <phone> <body>"));
                 return;
             }
-            if (body2.length() > 127) body2 = body2.substring(0, 127);
+            if (body2.length() > 1530) // RFC-0261: enforce SMS body cap
+            {
+                sendErrorReply(u.chatId,
+                    String("\xe2\x9d\x8c Message too long for scheduled queue (max 1530 chars).")); // ❌
+                return;
+            }
             // Compute target Unix timestamp (UTC today at HH:MM:00; if past, tomorrow).
             time_t nowT = (time_t)wallNow;
             struct tm *tmNow = gmtime(&nowT);
@@ -3523,7 +3534,12 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     ? schedAtErr : String("Usage: /scheduleat YYYY-MM-DD HH:MM <phone> <body>"));
                 return;
             }
-            if (bodyAt.length() > 127) bodyAt = bodyAt.substring(0, 127);
+            if (bodyAt.length() > 1530) // RFC-0261: enforce SMS body cap
+            {
+                sendErrorReply(u.chatId,
+                    String("\xe2\x9d\x8c Message too long for scheduled queue (max 1530 chars).")); // ❌
+                return;
+            }
             // Find a free slot.
             int slotAt = -1;
             uint32_t nowMsAt = clock_ ? clock_() : 0;
@@ -3682,7 +3698,12 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("\xe2\x9d\x8c Body cannot be empty.")); // ❌
                 return;
             }
-            if (newBody.length() > 127) newBody = newBody.substring(0, 127);
+            if (newBody.length() > 1530) // RFC-0261: enforce SMS body cap
+            {
+                sendErrorReply(u.chatId,
+                    String("\xe2\x9d\x8c Message too long for scheduled queue (max 1530 chars).")); // ❌
+                return;
+            }
             scheduledQueue_[n - 1].body = newBody;
             if (persistSchedFn_) persistSchedFn_(); // RFC-0200
             String preview = newBody;
@@ -3833,7 +3854,12 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     ? recurErr : String("Usage: /recurring <interval_min> <phone> <body>"));
                 return;
             }
-            if (rBody.length() > 127) rBody = rBody.substring(0, 127);
+            if (rBody.length() > 1530) // RFC-0261: enforce SMS body cap
+            {
+                sendErrorReply(u.chatId,
+                    String("\xe2\x9d\x8c Message too long for scheduled queue (max 1530 chars).")); // ❌
+                return;
+            }
             // Find a free slot.
             int rSlot = -1;
             uint32_t rNowMs = clock_ ? clock_() : 0;

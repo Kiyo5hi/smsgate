@@ -2138,14 +2138,16 @@ void setup()
             return out;
         });
         // RFC-0200/RFC-0221: Serialize scheduled SMS queue to NVS after any mutation.
-        // Blob layout v0x02: 1 version byte + 5 × 168-byte slots.
-        // Slot: uint32_t sendAtUnix (4), char phone[32], char body[128],
+        // RFC-0261: Blob layout v0x03: 1 version byte + 5 × 1571-byte slots.
+        // Slot: uint32_t sendAtUnix (4), char phone[32], char body[1531],
         //       uint32_t repeatIntervalSec (4) [RFC-0221].
+        // (Bumped from v0x02 char body[128] — old blobs are discarded on load.)
         telegramPoller->setPersistSchedFn([&]() {
-            static const size_t kSlotSize = sizeof(uint32_t) + 32 + 128 + sizeof(uint32_t); // 168
+            static const size_t kBodyLen  = 1531;
+            static const size_t kSlotSize = sizeof(uint32_t) + 32 + kBodyLen + sizeof(uint32_t); // 1571
             static const size_t kNumSlots = 5;
             uint8_t blob[1 + kNumSlots * kSlotSize] = {};
-            blob[0] = 0x02; // version byte (bumped for RFC-0221)
+            blob[0] = 0x03; // version byte (bumped for RFC-0261)
             const auto& q = telegramPoller->getSchedQueue();
             long nowSec = (long)time(nullptr);
             long nowMs  = (long)(uint32_t)millis();
@@ -2157,9 +2159,9 @@ void setup()
                 uint32_t sendAtUnix = (uint32_t)(nowSec + deltaMs / 1000L);
                 memcpy(slotPtr, &sendAtUnix, 4);
                 q[i].phone.toCharArray((char*)(slotPtr + 4), 32);
-                q[i].body.toCharArray((char*)(slotPtr + 4 + 32), 128);
+                q[i].body.toCharArray((char*)(slotPtr + 4 + 32), kBodyLen);
                 uint32_t repeatSec = q[i].repeatIntervalMs / 1000U; // RFC-0221
-                memcpy(slotPtr + 4 + 32 + 128, &repeatSec, 4);
+                memcpy(slotPtr + 4 + 32 + kBodyLen, &repeatSec, 4);
             }
             realPersist.saveBlob("sched_queue", blob, sizeof(blob));
         });
@@ -2168,13 +2170,15 @@ void setup()
 
         // RFC-0200/RFC-0221: Load persisted scheduled SMS queue. NTP has already synced
         // above (syncTime()), so time(nullptr) is valid here.
+        // RFC-0261: Blob v0x03 uses 1531-byte body field.
         {
-            static const size_t kSlotSize = sizeof(uint32_t) + 32 + 128 + sizeof(uint32_t); // 168
+            static const size_t kBodyLen  = 1531;
+            static const size_t kSlotSize = sizeof(uint32_t) + 32 + kBodyLen + sizeof(uint32_t); // 1571
             static const size_t kNumSlots = 5;
             static const size_t kExpectedSize = 1 + kNumSlots * kSlotSize;
             uint8_t blob[kExpectedSize] = {};
             if (realPersist.loadBlob("sched_queue", blob, kExpectedSize) == kExpectedSize
-                && blob[0] == 0x02)
+                && blob[0] == 0x03)
             {
                 long nowSec = (long)time(nullptr);
                 long nowMs  = (long)(uint32_t)millis();
@@ -2191,12 +2195,13 @@ void setup()
                     // one-shots are dropped. For repeating slots (repeatSec > 0)
                     // we accept any past-due time and fire on next tick.
                     uint32_t repeatSec = 0;
-                    memcpy(&repeatSec, slotPtr + 4 + 32 + 128, 4);
+                    memcpy(&repeatSec, slotPtr + 4 + 32 + kBodyLen, 4);
                     if (ageSeconds >= 2L * 3600L && repeatSec == 0) continue; // stale one-shot: drop
                     char phone[33] = {};
-                    char body[129] = {};
+                    char body[kBodyLen + 1] = {};
                     memcpy(phone, slotPtr + 4,      32);
-                    memcpy(body,  slotPtr + 4 + 32, 128);
+                    memcpy(body,  slotPtr + 4 + 32, kBodyLen);
+                    body[kBodyLen] = '\0'; // always NUL-terminate
                     q[i].phone = String(phone);
                     q[i].body  = String(body);
                     q[i].repeatIntervalMs = repeatSec * 1000U; // RFC-0221

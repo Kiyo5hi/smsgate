@@ -8229,6 +8229,98 @@ void test_TelegramPoller_help_paginates_multiple_messages()
     }
 }
 
+// RFC-0261: /schedulesend rejects bodies > 1530 chars.
+void test_TelegramPoller_schedulesend_body_too_long_rejected()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 10000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Build a 1531-char body (one over the limit).
+    String longBody;
+    for (int k = 0; k < 1531; k++) longBody += 'A';
+    String cmd = String("/schedulesend 30 +11100000 ") + longBody;
+
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(40001, kAllowedFromId, 0, cmd.c_str(), kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(40001, poller.lastUpdateId());
+
+    const auto &msgs = bot.sentMessages();
+    TEST_ASSERT_TRUE_MESSAGE(msgs.size() > 0, "Expected error reply for over-limit body");
+    bool sawError = false;
+    for (const auto &m : msgs)
+        if (m.indexOf("too long") >= 0 || m.indexOf("1530") >= 0) { sawError = true; break; }
+    TEST_ASSERT_TRUE_MESSAGE(sawError, "Expected 'too long' / '1530' in error reply (RFC-0261)");
+
+    // Verify no slot was occupied.
+    const auto &q = poller.getSchedQueue();
+    int occupied = 0;
+    for (const auto &s : q) if (s.sendAtMs != 0) occupied++;
+    TEST_ASSERT_EQUAL_MESSAGE(0, occupied, "No slot should be occupied after rejected body");
+}
+
+// RFC-0261: /schedulesend accepts exactly 1530-char body.
+void test_TelegramPoller_schedulesend_body_at_limit_accepted()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 10000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Build exactly a 1530-char body.
+    String body1530;
+    for (int k = 0; k < 1530; k++) body1530 += 'A';
+    String cmd = String("/schedulesend 30 +11100000 ") + body1530;
+
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(40002, kAllowedFromId, 0, cmd.c_str(), kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(40002, poller.lastUpdateId());
+
+    // At least one slot should be occupied.
+    const auto &q = poller.getSchedQueue();
+    int occupied = 0;
+    for (const auto &s : q) if (s.sendAtMs != 0) occupied++;
+    TEST_ASSERT_EQUAL_MESSAGE(1, occupied, "Exactly 1530-char body should be accepted (RFC-0261)");
+
+    // Confirm the body was stored intact.
+    for (const auto &s : q)
+    {
+        if (s.sendAtMs != 0)
+        {
+            TEST_ASSERT_EQUAL_MESSAGE(1530, (int)s.body.length(),
+                "Stored body should be exactly 1530 chars (RFC-0261)");
+            break;
+        }
+    }
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -9447,6 +9539,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_schedexport_truncates_long_bodies); // RFC-0259
     // RFC-0260: /help pagination
     RUN_TEST(test_TelegramPoller_help_paginates_multiple_messages);
+    // RFC-0261: scheduler body length cap
+    RUN_TEST(test_TelegramPoller_schedulesend_body_too_long_rejected);
+    RUN_TEST(test_TelegramPoller_schedulesend_body_at_limit_accepted);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);
