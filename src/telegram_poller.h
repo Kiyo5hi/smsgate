@@ -390,6 +390,11 @@ public:
     // to record "last TG contact" timestamp for /status display.
     void setOnPollSuccessFn(std::function<void()> fn) { onPollSuccessFn_ = std::move(fn); }
 
+    // RFC-0209: Optional fn returning a terse pending-work summary string.
+    // When set, /pending calls this fn instead of computing inline.
+    // Production: returns "Queue: N/8 | Sched: N/5 | Concat: N" or "All clear".
+    void setPendingFn(std::function<String()> fn) { pendingFn_ = std::move(fn); }
+
     // RFC-0202: Optional wall-time fn. When set, scheduled SMS commands show
     // absolute UTC timestamps alongside relative minutes (e.g. "in 30m (14:32 UTC)").
     // Returns Unix seconds (long); 0 or negative means NTP not yet synced.
@@ -566,6 +571,7 @@ private:
     std::function<String(const String &)> testPduFn_;                          // RFC-0191
     std::function<String(uint32_t)> pauseFwdFn_;                               // RFC-0192
     std::function<void()> onPollSuccessFn_;                                    // RFC-0208
+    std::function<String()> pendingFn_;                                        // RFC-0209
     std::function<long()> wallTimeFn_;                                         // RFC-0202
     std::function<void()> persistSchedFn_;                                     // RFC-0200
     std::function<String()> callStatusFn_;                           // RFC-0173

@@ -174,6 +174,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/schedinfo <N> \xe2\x80\x94 Show full body and ETA of scheduled slot N\n"; // RFC-0198
             help += "/schedrename <N> <phone> \xe2\x80\x94 Change destination phone of scheduled slot N\n"; // RFC-0197
             help += "/schedbody <N> <text> \xe2\x80\x94 Edit the body of scheduled slot N\n"; // RFC-0207
+            help += "/pending \xe2\x80\x94 Terse snapshot of all pending work (queue/sched/concat)\n"; // RFC-0209
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/mute [min] \xe2\x80\x94 Snooze proactive alerts (default 60m)\n";
             help += "/unmute \xe2\x80\x94 Cancel alert snooze\n";
@@ -3086,6 +3087,37 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId,
                     String("\xe2\x9c\x85 SMS age filter set to ") // ✅
                     + String((int)h) + String("h."));
+            return;
+        }
+
+        // RFC-0209: /pending — terse summary of all pending work items.
+        if (lower == "/pending")
+        {
+            String reply;
+            if (pendingFn_)
+            {
+                reply = pendingFn_();
+            }
+            else
+            {
+                // Inline fallback: queue + sched only (no concat count without fn).
+                int q = smsSender_.queueSize();
+                int s = 0;
+                for (const auto &slot : scheduledQueue_)
+                    if (slot.sendAtMs != 0) s++;
+                if (q == 0 && s == 0)
+                {
+                    reply = String("\xf0\x9f\x93\x8b All clear (nothing pending)"); // 📋
+                }
+                else
+                {
+                    reply = String("\xf0\x9f\x93\x8b Queue: ") // 📋
+                           + String(q) + String("/") + String(SmsSender::kQueueSize)
+                           + String(" | Sched: ") + String(s) + String("/")
+                           + String((int)kScheduledQueueSize);
+                }
+            }
+            bot_.sendMessageTo(u.chatId, reply);
             return;
         }
 

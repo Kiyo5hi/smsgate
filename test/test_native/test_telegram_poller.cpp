@@ -7038,6 +7038,108 @@ void test_TelegramPoller_schedbody_updates_body()
     TEST_ASSERT_TRUE(sawUpdated);
 }
 
+// RFC-0209: /pending with items in queue, sched, and concat.
+void test_TelegramPoller_pending_with_items()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // Enqueue 2 outbound SMS so queueSize() == 2.
+    sender.enqueue(String("+1111"), String("body1"));
+    sender.enqueue(String("+2222"), String("body2"));
+
+    // Put 1 slot into scheduled queue.
+    auto sq = poller.getSchedQueue();
+    sq[0].sendAtMs = clk.nowMs + 60000;
+    sq[0].phone    = String("+3333");
+    sq[0].body     = String("sched body");
+    poller.setSchedQueue(sq);
+
+    // Wire pendingFn that uses smsSender + schedQueue (no concat in this scope).
+    poller.setPendingFn([&]() -> String {
+        int q = sender.queueSize();
+        int s = 0;
+        const auto& qsq = poller.getSchedQueue();
+        for (const auto& slot : qsq)
+            if (slot.sendAtMs != 0) s++;
+        if (q == 0 && s == 0)
+            return String("All clear (nothing pending)");
+        String out = String("Queue: ") + String(q) + String("/8")
+                   + String(" | Sched: ") + String(s) + String("/5")
+                   + String(" | Concat: 0");
+        return out;
+    });
+
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(13001, kAllowedFromId, 0,
+        "/pending", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(13001, poller.lastUpdateId());
+
+    bool sawPending = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Queue: 2") >= 0 && m.indexOf("Sched: 1") >= 0)
+        { sawPending = true; break; }
+    TEST_ASSERT_TRUE(sawPending);
+}
+
+// RFC-0209: /pending with nothing pending shows "All clear".
+void test_TelegramPoller_pending_all_clear()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // Wire pendingFn that returns all-clear.
+    poller.setPendingFn([&]() -> String {
+        int q = sender.queueSize();
+        int s = 0;
+        const auto& qsq = poller.getSchedQueue();
+        for (const auto& slot : qsq)
+            if (slot.sendAtMs != 0) s++;
+        if (q == 0 && s == 0)
+            return String("All clear (nothing pending)");
+        return String("pending");
+    });
+
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(13002, kAllowedFromId, 0,
+        "/pending", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(13002, poller.lastUpdateId());
+
+    bool sawClear = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("All clear") >= 0)
+        { sawClear = true; break; }
+    TEST_ASSERT_TRUE(sawClear);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -7695,6 +7797,9 @@ void run_telegram_poller_tests()
     // RFC-0207: /schedbody command
     RUN_TEST(test_TelegramPoller_schedbody_updates_body);
     RUN_TEST(test_TelegramPoller_schedbody_empty_slot_error);
+    // RFC-0209: /pending command
+    RUN_TEST(test_TelegramPoller_pending_with_items);
+    RUN_TEST(test_TelegramPoller_pending_all_clear);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);

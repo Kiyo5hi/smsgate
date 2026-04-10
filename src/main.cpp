@@ -1995,6 +1995,23 @@ void setup()
         });
         telegramPoller->setWallTimeFn([]() -> long { return (long)time(nullptr); }); // RFC-0202
         telegramPoller->setOnPollSuccessFn([]() { s_lastTelegramOkTime = time(nullptr); }); // RFC-0208
+        // RFC-0209: /pending — terse snapshot of all pending work.
+        telegramPoller->setPendingFn([&]() -> String {
+            int q = smsSender.queueSize();
+            int s = 0;
+            const auto& sq = telegramPoller->getSchedQueue();
+            for (const auto& slot : sq)
+                if (slot.sendAtMs != 0) s++;
+            int c = (int)smsHandler.concatKeyCount();
+            if (q == 0 && s == 0 && c == 0)
+                return String("\xf0\x9f\x93\x8b All clear (nothing pending)"); // 📋
+            String out = String("\xf0\x9f\x93\x8b Queue: ") // 📋
+                       + String(q) + String("/") + String(SmsSender::kQueueSize)
+                       + String(" | Sched: ") + String(s) + String("/")
+                       + String((int)TelegramPoller::kScheduledQueueSize)
+                       + String(" | Concat: ") + String(c);
+            return out;
+        });
         // RFC-0200: Serialize scheduled SMS queue to NVS after any mutation.
         // Blob layout: 1 version byte + 5 × 164-byte slots.
         // Slot: uint32_t sendAtUnix (0 = free), char phone[32], char body[128].
