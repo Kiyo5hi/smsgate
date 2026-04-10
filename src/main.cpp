@@ -404,6 +404,24 @@ void setup()
         return;
     }
 
+#ifdef SIM_PIN
+    // RFC-0083: Unlock SIM if a PIN is configured and the SIM is locked.
+    // getSimStatus() returns 3 when the SIM is ready (no PIN required or
+    // already unlocked). Values 1/2 indicate PIN/PUK needed.
+    {
+        int simStatus = modem.getSimStatus();
+        Serial.print("SIM status: "); Serial.println(simStatus);
+        if (simStatus != 3) {
+            Serial.println("SIM locked, sending PIN...");
+            if (modem.simUnlock(SIM_PIN)) {
+                Serial.println("SIM PIN accepted.");
+            } else {
+                Serial.println("SIM PIN rejected! Check SIM_PIN in secrets.h.");
+            }
+        }
+    }
+#endif
+
 #ifdef NETWORK_APN
     Serial.printf("Set network apn : %s\n", NETWORK_APN);
     if (!modem.setNetworkAPN(NETWORK_APN))
