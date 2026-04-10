@@ -1557,9 +1557,10 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             int delayMin = rest2.substring(0, sp2).toInt();
             String rawPhone = rest2.substring(sp2 + 1);
             rawPhone.trim();
-            if (delayMin <= 0)
+            if (delayMin < 1 || delayMin > 1440)
             {
-                bot_.sendMessageTo(u.chatId, String("Delay must be a positive integer (minutes)."));
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Delay must be 1\xe2\x80\x93 1440 minutes.")); // ❌ –
                 return;
             }
             String tbody = templateStore_->get(tname);
