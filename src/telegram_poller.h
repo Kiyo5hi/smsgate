@@ -272,6 +272,20 @@ public:
     // the count of deleted slots (-1 if unknown). /flushsim yes invokes it.
     void setFlushSimFn(std::function<int()> fn) { flushSimFn_ = std::move(fn); }
 
+    // RFC-0146: Optional SMS forward fn. When set, /forwardsim <idx> calls
+    // this fn with the SIM index and replies success/failure.
+    void setSmsForwardFn(std::function<bool(int)> fn) { smsForwardFn_ = std::move(fn); }
+
+    // RFC-0147: Change Telegram poll interval directly. The fn called by
+    // /setpollinterval also calls setPollIntervalMs() on this poller.
+    // Range: 1000–300000ms. Takes effect on the next tick.
+    void setPollIntervalMs(uint32_t ms)
+    {
+        if (ms < 1000) ms = 1000;
+        if (ms > 300000) ms = 300000;
+        pollIntervalMs_ = ms;
+    }
+
     // RFC-0144: Optional dedup window setter. When set, /setdedup <seconds>
     // changes the dedup window (0 = disable, max 3600).
     void setDedupWindowFn(std::function<void(uint32_t)> fn) { dedupWindowFn_ = std::move(fn); }
@@ -359,6 +373,8 @@ private:
     std::function<void(const String &)> noteSetFn_; // RFC-0131
     std::function<void(int)> maxFailFn_;  // RFC-0138
     std::function<int()> flushSimFn_;     // RFC-0139
+    std::function<bool(int)> smsForwardFn_;        // RFC-0146
+    uint32_t pollIntervalMs_ = kPollIntervalMs;    // RFC-0147
     std::function<void(uint32_t)> dedupWindowFn_;  // RFC-0144
     std::function<void()> clearDedupFn_;           // RFC-0145
     std::function<void(uint32_t)> concatTtlFn_;    // RFC-0142

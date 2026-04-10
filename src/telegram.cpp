@@ -438,6 +438,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "cleardedup";
         c["description"] = "Clear SMS dedup ring buffer";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "forwardsim";
+        c["description"] = "Force-forward a SIM slot: /forwardsim <idx>";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setpollinterval";
+        c["description"] = "Set Telegram poll interval: /setpollinterval <seconds>";
+    }
     String payload;
     serializeJson(doc, payload);
 

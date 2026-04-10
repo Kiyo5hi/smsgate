@@ -4106,6 +4106,119 @@ void test_TelegramPoller_send_duplicate_gets_already_queued_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0146: /forwardsim <idx> calls fn with index.
+void test_TelegramPoller_forwardsim_calls_fn_with_index()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    int capturedIdx = -1;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSmsForwardFn([&capturedIdx](int idx) -> bool { capturedIdx = idx; return true; });
+
+    bot.queueUpdateBatch({makeUpdate(1030, kAllowedFromId, 0, "/forwardsim 12", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1030, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(12, capturedIdx);
+    bool sawOk = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("12")) >= 0 && m.indexOf(String("orward")) >= 0) { sawOk = true; break; }
+    TEST_ASSERT_TRUE(sawOk);
+}
+
+// RFC-0146: /forwardsim with no arg → usage error.
+void test_TelegramPoller_forwardsim_no_arg_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSmsForwardFn([&fnCalled](int) -> bool { fnCalled = true; return true; });
+
+    bot.queueUpdateBatch({makeUpdate(1031, kAllowedFromId, 0, "/forwardsim", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1031, poller.lastUpdateId());
+    TEST_ASSERT_FALSE(fnCalled);
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Usage")) >= 0) { sawUsage = true; break; }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+// RFC-0147: /setpollinterval 10 sets the poll interval.
+void test_TelegramPoller_setpollinterval_updates_interval()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(1032, kAllowedFromId, 0, "/setpollinterval 10", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1032, poller.lastUpdateId());
+    // After setting to 10s, advancing clock by 5s should not trigger another poll.
+    bot.clearMessages();
+    clk.nowMs += 5000;
+    bot.queueUpdateBatch({makeUpdate(1033, kAllowedFromId, 0, "/ping", kAllowedFromId)});
+    poller.tick();
+    // 5s < 10s interval, so no poll should have occurred.
+    TEST_ASSERT_EQUAL(1032, poller.lastUpdateId()); // watermark unchanged
+}
+
+// RFC-0147: /setpollinterval 0 → validation error.
+void test_TelegramPoller_setpollinterval_zero_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(1033, kAllowedFromId, 0, "/setpollinterval 0", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1033, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Invalid")) >= 0) { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 // RFC-0144: /setdedup <seconds> calls fn.
 void test_TelegramPoller_setdedup_calls_fn()
 {
@@ -4767,6 +4880,12 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setinterval_calls_fn);
     RUN_TEST(test_TelegramPoller_setinterval_zero_disables);
     RUN_TEST(test_TelegramPoller_setinterval_too_large_sends_error);
+    // RFC-0146: /forwardsim command
+    RUN_TEST(test_TelegramPoller_forwardsim_calls_fn_with_index);
+    RUN_TEST(test_TelegramPoller_forwardsim_no_arg_sends_usage);
+    // RFC-0147: /setpollinterval command
+    RUN_TEST(test_TelegramPoller_setpollinterval_updates_interval);
+    RUN_TEST(test_TelegramPoller_setpollinterval_zero_sends_error);
     // RFC-0144: /setdedup command
     RUN_TEST(test_TelegramPoller_setdedup_calls_fn);
     RUN_TEST(test_TelegramPoller_setdedup_zero_disables);

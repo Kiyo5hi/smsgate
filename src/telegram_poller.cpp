@@ -1283,6 +1283,60 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0146: /forwardsim <idx> — force-forward a SIM slot to Telegram.
+        if (lower == "/forwardsim" || lower.startsWith("/forwardsim "))
+        {
+            if (!smsForwardFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(forwardsim not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/forwardsim ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /forwardsim <idx>"));
+                return;
+            }
+            long idx = arg.toInt();
+            if (idx < 1 || idx > 255)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid index (1\xe2\x80\x93 255).")); // ❌
+                return;
+            }
+            if (smsForwardFn_((int)idx))
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 Forwarded slot ") + String((int)idx) + String(".")); // ✅
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Failed to forward slot ") + String((int)idx) + String(".")); // ❌
+            return;
+        }
+
+        // RFC-0147: /setpollinterval <seconds> — change Telegram poll interval.
+        if (lower == "/setpollinterval" || lower.startsWith("/setpollinterval "))
+        {
+            String arg = extractArg(lower, "/setpollinterval ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setpollinterval <seconds>\nRange: 1\xe2\x80\x93 300 seconds")); // –
+                return;
+            }
+            long val = arg.toInt();
+            if (val < 1 || val > 300)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid interval (1\xe2\x80\x93 300 seconds).")); // ❌
+                return;
+            }
+            setPollIntervalMs((uint32_t)val * 1000u);
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Poll interval set to ") // ✅
+                + String((int)val) + String(" seconds."));
+            return;
+        }
+
         // RFC-0144: /setdedup <seconds> — change SMS dedup window at runtime.
         if (lower == "/setdedup" || lower.startsWith("/setdedup "))
         {
@@ -1671,7 +1725,7 @@ void TelegramPoller::tick()
     // boot picks up any queued replies immediately.
     if (firstPollDone_)
     {
-        if (now - lastPollMs_ < kPollIntervalMs)
+        if (now - lastPollMs_ < pollIntervalMs_)
         {
             return;
         }
