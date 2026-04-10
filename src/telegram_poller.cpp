@@ -1283,6 +1283,38 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0152: /resetwatermark — reset Telegram update_id watermark.
+        if (lower == "/resetwatermark")
+        {
+            resetWatermark();
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Watermark reset. " // ✅
+                       "Recent updates will be re-processed on next poll."));
+            return;
+        }
+
+        // RFC-0153: /setforward on|off — toggle SMS forwarding.
+        if (lower == "/setforward on" || lower == "/setforward off")
+        {
+            if (!forwardingEnabledFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setforward not configured)"));
+                return;
+            }
+            bool enable = (lower == "/setforward on");
+            forwardingEnabledFn_(enable);
+            bot_.sendMessageTo(u.chatId,
+                enable
+                    ? String("\xe2\x9c\x85 SMS forwarding enabled.") // ✅
+                    : String("\xe2\x9a\xa0\xef\xb8\x8f SMS forwarding PAUSED. SMS stay in SIM.")); // ⚠️
+            return;
+        }
+        if (lower == "/setforward")
+        {
+            bot_.sendMessageTo(u.chatId, String("Usage: /setforward on\n/setforward off"));
+            return;
+        }
+
         // RFC-0151: /getautoreply — show current SMS auto-reply text.
         if (lower == "/getautoreply")
         {

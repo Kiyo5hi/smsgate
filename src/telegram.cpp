@@ -473,6 +473,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "clearautoreply";
         c["description"] = "Disable SMS auto-reply";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "resetwatermark";
+        c["description"] = "Reset Telegram update_id to re-process recent updates";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setforward";
+        c["description"] = "Toggle SMS forwarding: /setforward on|off";
+    }
     String payload;
     serializeJson(doc, payload);
 

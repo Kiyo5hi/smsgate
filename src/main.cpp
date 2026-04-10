@@ -1085,6 +1085,9 @@ void setup()
             s_lifetimeFwdCount++;                                                // RFC-0060: persist
             realPersist.saveBlob("lifetimefwd", &s_lifetimeFwdCount, sizeof(s_lifetimeFwdCount));
         });
+        telegramPoller->setForwardingEnabledFn([&smsHandler](bool enabled) { // RFC-0153
+            smsHandler.setForwardingEnabled(enabled);
+        });
         smsHandler.setOnSenderFn([&smsSender](const String &phone) { // RFC-0150
             if (s_autoReplyText.length() > 0)
                 smsSender.enqueue(phone, s_autoReplyText);

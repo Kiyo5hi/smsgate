@@ -471,6 +471,12 @@ static bool extractPduHexFromCmgr(const String &raw, String &hex)
 
 void SmsHandler::handleSmsIndex(int idx)
 {
+    if (!forwardingEnabled_) // RFC-0153: forwarding paused, leave SMS in SIM
+    {
+        Serial.print("Forwarding disabled, skipping SMS @ index ");
+        Serial.println(idx);
+        return;
+    }
     Serial.print("-------- SMS @ index ");
     Serial.print(idx);
     Serial.println(" --------");

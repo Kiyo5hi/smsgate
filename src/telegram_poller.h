@@ -276,6 +276,18 @@ public:
     void setAutoReplyGetFn(std::function<String()> fn) { autoReplyGetFn_ = std::move(fn); }
     void setAutoReplySetFn(std::function<void(const String &)> fn) { autoReplySetFn_ = std::move(fn); }
 
+    // RFC-0152: Reset the update_id watermark so Telegram re-delivers
+    // recent updates. Persists immediately.
+    void resetWatermark()
+    {
+        lastUpdateId_ = 0;
+        persist_.saveBlob("last_update_id", &lastUpdateId_, sizeof(lastUpdateId_));
+    }
+
+    // RFC-0153: Optional forward enable/disable fn. When set, /setforward
+    // on|off calls this fn with true/false.
+    void setForwardingEnabledFn(std::function<void(bool)> fn) { forwardingEnabledFn_ = std::move(fn); }
+
     // RFC-0148: Optional SIM sweep fn. When set, /sweepsim calls this fn
     // (which runs smsHandler.sweepExistingSms()) and replies with count.
     void setSweepFn(std::function<int()> fn) { sweepFn_ = std::move(fn); }
@@ -385,8 +397,9 @@ private:
     std::function<void(const String &)> noteSetFn_; // RFC-0131
     std::function<void(int)> maxFailFn_;  // RFC-0138
     std::function<int()> flushSimFn_;     // RFC-0139
-    std::function<String()> autoReplyGetFn_;            // RFC-0151
+    std::function<String()> autoReplyGetFn_;              // RFC-0151
     std::function<void(const String &)> autoReplySetFn_; // RFC-0151
+    std::function<void(bool)> forwardingEnabledFn_;       // RFC-0153
     std::function<int()> sweepFn_;                  // RFC-0148
     std::function<String()> healthFn_;             // RFC-0149
     std::function<bool(int)> smsForwardFn_;        // RFC-0146

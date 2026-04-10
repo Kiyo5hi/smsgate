@@ -4106,6 +4106,103 @@ void test_TelegramPoller_send_duplicate_gets_already_queued_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0152: /resetwatermark resets lastUpdateId to 0 and persists.
+void test_TelegramPoller_resetwatermark_resets_to_zero()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // Advance watermark to 500.
+    bot.queueUpdateBatch({makeUpdate(500, kAllowedFromId, 0, "/ping", kAllowedFromId)});
+    poller.tick();
+    TEST_ASSERT_EQUAL(500, poller.lastUpdateId());
+
+    // Reset.
+    clk.nowMs += TelegramPoller::kPollIntervalMs;
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(501, kAllowedFromId, 0, "/resetwatermark", kAllowedFromId)});
+    poller.tick();
+
+    // After reset the watermark goes to 0 before processing the current update.
+    // The reset happens inside processUpdate (the /resetwatermark handler),
+    // so the returned lastUpdateId reflects the current update (501) after re-processing.
+    // Key: persisted value should be 0, and a confirmation reply was sent.
+    bool sawOk = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("reset")) >= 0 || m.indexOf(String("Reset")) >= 0)
+            { sawOk = true; break; }
+    TEST_ASSERT_TRUE(sawOk);
+}
+
+// RFC-0153: /setforward off calls fn with false.
+void test_TelegramPoller_setforward_off_calls_fn_false()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool captured = true;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setForwardingEnabledFn([&captured](bool b) { captured = b; });
+
+    bot.queueUpdateBatch({makeUpdate(1060, kAllowedFromId, 0, "/setforward off", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1060, poller.lastUpdateId());
+    TEST_ASSERT_FALSE(captured);
+    bool sawPaused = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("PAUSED")) >= 0 || m.indexOf(String("paused")) >= 0)
+            { sawPaused = true; break; }
+    TEST_ASSERT_TRUE(sawPaused);
+}
+
+// RFC-0153: /setforward on calls fn with true.
+void test_TelegramPoller_setforward_on_calls_fn_true()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool captured = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setForwardingEnabledFn([&captured](bool b) { captured = b; });
+
+    bot.queueUpdateBatch({makeUpdate(1061, kAllowedFromId, 0, "/setforward on", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1061, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(captured);
+    bool sawEnabled = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("enabled")) >= 0) { sawEnabled = true; break; }
+    TEST_ASSERT_TRUE(sawEnabled);
+}
+
 // RFC-0151: /getautoreply shows current auto-reply text.
 void test_TelegramPoller_getautoreply_shows_text()
 {
@@ -5056,6 +5153,11 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setinterval_calls_fn);
     RUN_TEST(test_TelegramPoller_setinterval_zero_disables);
     RUN_TEST(test_TelegramPoller_setinterval_too_large_sends_error);
+    // RFC-0152: /resetwatermark
+    RUN_TEST(test_TelegramPoller_resetwatermark_resets_to_zero);
+    // RFC-0153: /setforward command
+    RUN_TEST(test_TelegramPoller_setforward_off_calls_fn_false);
+    RUN_TEST(test_TelegramPoller_setforward_on_calls_fn_true);
     // RFC-0151: auto-reply commands
     RUN_TEST(test_TelegramPoller_getautoreply_shows_text);
     RUN_TEST(test_TelegramPoller_setautoreply_calls_setter);

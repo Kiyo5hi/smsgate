@@ -139,6 +139,11 @@ public:
     // Returns the count of SIM indices dispatched to handleSmsIndex.
     int sweepExistingSms();
 
+    // RFC-0153: Toggle SMS forwarding. When disabled, handleSmsIndex returns
+    // early without forwarding or deleting — messages stay in SIM slots.
+    void setForwardingEnabled(bool enabled) { forwardingEnabled_ = enabled; }
+    bool forwardingEnabled() const { return forwardingEnabled_; }
+
     // RFC-0144: Set the dedup window. 0 = disable dedup entirely.
     void setDedupWindowMs(unsigned long ms) { dedupWindowMs_ = ms; }
     unsigned long dedupWindowMs() const { return dedupWindowMs_; }
@@ -295,6 +300,7 @@ private:
     int blockListCount_ = 0;
     const char (*runtimeList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;
     int runtimeListCount_ = 0;
+    bool forwardingEnabled_ = true;                   // RFC-0153
     unsigned long concatTtlMs_   = CONCAT_TTL_MS;    // RFC-0142
     unsigned long dedupWindowMs_ = kDedupWindowMs;   // RFC-0144
     int maxConsecutiveFailures_ = MAX_CONSECUTIVE_FAILURES; // RFC-0138
