@@ -334,6 +334,53 @@ static const char *resetReasonStr(esp_reset_reason_t r)
     }
 }
 
+// RFC-0250: File-static helper that parses a "+CREG: ..." line, updates
+// cachedRegStatus, and fires the RFC-0082 registration-lost/restored alert.
+// Accepts both the unsolicited format "+CREG: <stat>" (AT+CREG=1 mode) and
+// the solicited format "+CREG: <n>,<stat>" that can piggyback in raw AT
+// response buffers. The alert logic is idempotent via s_regLostAlertSent,
+// so calling this from multiple dispatch paths is harmless.
+static void handleCregUrc(const String &line, const char *logTag)
+{
+    int colon = line.indexOf(':');
+    String rest = line.substring(colon + 1);
+    rest.trim();
+    int comma = rest.indexOf(',');
+    int stat = (comma >= 0) ? rest.substring(comma + 1).toInt() : rest.toInt();
+    switch (stat) {
+        case 1:  cachedRegStatus = REG_OK_HOME;      break;
+        case 5:  cachedRegStatus = REG_OK_ROAMING;   break;
+        case 6:  cachedRegStatus = REG_SMS_ONLY;     break;
+        case 2:  cachedRegStatus = REG_SEARCHING;    break;
+        case 3:  cachedRegStatus = REG_DENIED;       break;
+        case 4:  cachedRegStatus = REG_UNKNOWN;      break;
+        default: cachedRegStatus = REG_UNREGISTERED; break;
+    }
+    bool regOk = (cachedRegStatus == REG_OK_HOME    ||
+                  cachedRegStatus == REG_OK_ROAMING ||
+                  cachedRegStatus == REG_SMS_ONLY);
+    const char *regTxt = (cachedRegStatus == REG_OK_HOME)      ? "home"
+                       : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
+                       : (cachedRegStatus == REG_SMS_ONLY)     ? "sms-only"
+                       : (cachedRegStatus == REG_SEARCHING)    ? "searching"
+                       : (cachedRegStatus == REG_DENIED)       ? "denied"
+                       : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
+                       : (cachedRegStatus == REG_UNKNOWN)      ? "unknown"
+                       :                                         "unknown";
+    Serial.printf("[%s] +CREG URC: stat=%d (%s)\n", logTag, stat, regTxt);
+    if (!regOk && !s_regLostAlertSent && cachedCsq > 0) {
+        if (!alertsMuted())
+            realBot.sendMessage(
+                String("\xF0\x9F\x93\xB5 Network registration lost (") + regTxt + ")"); // 📵
+        s_regLostAlertSent = true;
+    } else if (regOk && s_regLostAlertSent) {
+        if (!alertsMuted())
+            realBot.sendMessage(
+                String("\xE2\x9C\x85 Network registration restored (") + regTxt + ")"); // ✅
+        s_regLostAlertSent = false;
+    }
+}
+
 void setup()
 {
     // RFC-0020: Capture reset reason once at startup (before any code path
@@ -1934,7 +1981,9 @@ void setup()
                             case 1: regDesc = "registered (home)"; break;
                             case 2: regDesc = "searching"; break;
                             case 3: regDesc = "denied"; break;
+                            case 4: regDesc = "unknown (not determined)"; break; // RFC-0251
                             case 5: regDesc = "registered (roaming)"; break;
+                            case 6: regDesc = "sms-only service"; break; // RFC-0251
                         }
                         out += String("  Reg: "); out += regDesc; out += String("\n");
                     }
@@ -2480,46 +2529,10 @@ void loop()
         // Also handles "+CREG: <n>,<stat>" (solicited-response format) which
         // can appear via the RFC-0236 piggybacked-URC dispatch path — safe
         // because the alert logic is idempotent via s_regLostAlertSent.
+        // RFC-0250: shared logic factored into handleCregUrc() helper.
         if (line.startsWith("+CREG:"))
         {
-            int colon = line.indexOf(':');
-            String cregRest = line.substring(colon + 1);
-            cregRest.trim();
-            int cregComma = cregRest.indexOf(',');
-            int cregStat = (cregComma >= 0) ? cregRest.substring(cregComma + 1).toInt()
-                                            : cregRest.toInt();
-            switch (cregStat) {
-                case 1:  cachedRegStatus = REG_OK_HOME;       break;
-                case 5:  cachedRegStatus = REG_OK_ROAMING;    break;
-                case 6:  cachedRegStatus = REG_SMS_ONLY;      break; // SMS-only service
-                case 2:  cachedRegStatus = REG_SEARCHING;     break;
-                case 3:  cachedRegStatus = REG_DENIED;        break;
-                case 4:  cachedRegStatus = REG_UNKNOWN;       break; // state not determined
-                default: cachedRegStatus = REG_UNREGISTERED;  break;
-            }
-            bool cregOk = (cachedRegStatus == REG_OK_HOME    ||
-                           cachedRegStatus == REG_OK_ROAMING ||
-                           cachedRegStatus == REG_SMS_ONLY);
-            const char *cregTxt = (cachedRegStatus == REG_OK_HOME)      ? "home"
-                                : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
-                                : (cachedRegStatus == REG_SMS_ONLY)     ? "sms-only"
-                                : (cachedRegStatus == REG_SEARCHING)    ? "searching"
-                                : (cachedRegStatus == REG_DENIED)       ? "denied"
-                                : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
-                                : (cachedRegStatus == REG_UNKNOWN)      ? "unknown"
-                                :                                         "unknown";
-            Serial.printf("[RFC-0247] +CREG URC: stat=%d (%s)\n", cregStat, cregTxt);
-            if (!cregOk && !s_regLostAlertSent && cachedCsq > 0) {
-                if (!alertsMuted())
-                    realBot.sendMessage(
-                        String("\xF0\x9F\x93\xB5 Network registration lost (") + cregTxt + ")"); // 📵
-                s_regLostAlertSent = true;
-            } else if (cregOk && s_regLostAlertSent) {
-                if (!alertsMuted())
-                    realBot.sendMessage(
-                        String("\xE2\x9C\x85 Network registration restored (") + cregTxt + ")"); // ✅
-                s_regLostAlertSent = false;
-            }
+            handleCregUrc(line, "RFC-0247");
         }
 
         // CallHandler gobbles RING / +CLIP. Feed it every line; it
@@ -2843,42 +2856,8 @@ void loop()
                     // RFC-0247: real-time registration update via piggybacked URC.
                     // Idempotent via s_regLostAlertSent; the 30 s block also checks
                     // AT+CREG? so duplicate processing is harmless.
-                    int c236 = line.indexOf(':');
-                    String r236 = line.substring(c236 + 1);
-                    r236.trim();
-                    int cm236 = r236.indexOf(',');
-                    int st236 = (cm236 >= 0) ? r236.substring(cm236 + 1).toInt() : r236.toInt();
-                    switch (st236) {
-                        case 1:  cachedRegStatus = REG_OK_HOME;       break;
-                        case 5:  cachedRegStatus = REG_OK_ROAMING;    break;
-                        case 6:  cachedRegStatus = REG_SMS_ONLY;      break;
-                        case 2:  cachedRegStatus = REG_SEARCHING;     break;
-                        case 3:  cachedRegStatus = REG_DENIED;        break;
-                        case 4:  cachedRegStatus = REG_UNKNOWN;       break;
-                        default: cachedRegStatus = REG_UNREGISTERED;  break;
-                    }
-                    bool ro236 = (cachedRegStatus == REG_OK_HOME    ||
-                                  cachedRegStatus == REG_OK_ROAMING ||
-                                  cachedRegStatus == REG_SMS_ONLY);
-                    const char *rt236 = (cachedRegStatus == REG_OK_HOME)      ? "home"
-                                     : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
-                                     : (cachedRegStatus == REG_SMS_ONLY)     ? "sms-only"
-                                     : (cachedRegStatus == REG_SEARCHING)    ? "searching"
-                                     : (cachedRegStatus == REG_DENIED)       ? "denied"
-                                     : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
-                                     : (cachedRegStatus == REG_UNKNOWN)      ? "unknown"
-                                     :                                         "unknown";
-                    if (!ro236 && !s_regLostAlertSent && cachedCsq > 0) {
-                        if (!alertsMuted())
-                            realBot.sendMessage(
-                                String("\xF0\x9F\x93\xB5 Network registration lost (") + rt236 + ")"); // 📵
-                        s_regLostAlertSent = true;
-                    } else if (ro236 && s_regLostAlertSent) {
-                        if (!alertsMuted())
-                            realBot.sendMessage(
-                                String("\xE2\x9C\x85 Network registration restored (") + rt236 + ")"); // ✅
-                        s_regLostAlertSent = false;
-                    }
+                    // RFC-0250: shared logic factored into handleCregUrc() helper.
+                    handleCregUrc(line, "RFC-0247/236");
                 }
             }
         }
@@ -3069,43 +3048,8 @@ void loop()
                     callHandler.onUrcLine(l239);
                 } else if (l239.startsWith("+CREG:")) {
                     // RFC-0247: real-time registration update via piggybacked URC.
-                    int c239 = l239.indexOf(':');
-                    String r239 = l239.substring(c239 + 1);
-                    r239.trim();
-                    int cm239b = r239.indexOf(',');
-                    int st239 = (cm239b >= 0) ? r239.substring(cm239b + 1).toInt() : r239.toInt();
-                    switch (st239) {
-                        case 1:  cachedRegStatus = REG_OK_HOME;       break;
-                        case 5:  cachedRegStatus = REG_OK_ROAMING;    break;
-                        case 6:  cachedRegStatus = REG_SMS_ONLY;      break;
-                        case 2:  cachedRegStatus = REG_SEARCHING;     break;
-                        case 3:  cachedRegStatus = REG_DENIED;        break;
-                        case 4:  cachedRegStatus = REG_UNKNOWN;       break;
-                        default: cachedRegStatus = REG_UNREGISTERED;  break;
-                    }
-                    bool ro239 = (cachedRegStatus == REG_OK_HOME    ||
-                                  cachedRegStatus == REG_OK_ROAMING ||
-                                  cachedRegStatus == REG_SMS_ONLY);
-                    const char *rt239 = (cachedRegStatus == REG_OK_HOME)      ? "home"
-                                     : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
-                                     : (cachedRegStatus == REG_SMS_ONLY)     ? "sms-only"
-                                     : (cachedRegStatus == REG_SEARCHING)    ? "searching"
-                                     : (cachedRegStatus == REG_DENIED)       ? "denied"
-                                     : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
-                                     : (cachedRegStatus == REG_UNKNOWN)      ? "unknown"
-                                     :                                         "unknown";
-                    Serial.printf("[RFC-0247/239] +CREG URC: stat=%d (%s)\n", st239, rt239);
-                    if (!ro239 && !s_regLostAlertSent && cachedCsq > 0) {
-                        if (!alertsMuted())
-                            realBot.sendMessage(
-                                String("\xF0\x9F\x93\xB5 Network registration lost (") + rt239 + ")"); // 📵
-                        s_regLostAlertSent = true;
-                    } else if (ro239 && s_regLostAlertSent) {
-                        if (!alertsMuted())
-                            realBot.sendMessage(
-                                String("\xE2\x9C\x85 Network registration restored (") + rt239 + ")"); // ✅
-                        s_regLostAlertSent = false;
-                    }
+                    // RFC-0250: shared logic factored into handleCregUrc() helper.
+                    handleCregUrc(l239, "RFC-0247/239");
                 }
             }
         }
