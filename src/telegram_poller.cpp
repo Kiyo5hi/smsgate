@@ -91,6 +91,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/ntp \xe2\x80\x94 Force NTP time resync\n";
             help += "/status \xe2\x80\x94 Device health & stats\n";
             help += "/last [N] \xe2\x80\x94 Show last N forwarded SMS (default 5)\n";
+            help += "/concat \xe2\x80\x94 Show in-flight concat reassembly groups\n";
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
             help += "/cleardebug \xe2\x80\x94 Clear SMS diagnostic log\n";
             help += "/send <num> <msg> \xe2\x80\x94 Send outbound SMS\n";
@@ -220,6 +221,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             String arg = u.text.length() > 5 ? u.text.substring(5) : String();
             arg.trim();
             bot_.sendMessageTo(u.chatId, arg.length() > 0 ? arg : String("(empty)"));
+            return;
+        }
+
+        // RFC-0069: /concat — show in-flight concat reassembly groups.
+        if (lower == "/concat")
+        {
+            if (concatSummaryFn_)
+                bot_.sendMessageTo(u.chatId, concatSummaryFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(concat summary not configured)"));
             return;
         }
 

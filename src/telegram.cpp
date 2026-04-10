@@ -175,6 +175,11 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "concat";
+        c["description"] = "Show in-flight concat reassembly groups";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "debug";
         c["description"] = "Show SMS diagnostic log";
     }
@@ -278,7 +283,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /debug /cleardebug /status /blocklist /block /unblock /restart /send /queue /cancel");
+        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /restart /send /queue /cancel");
     }
     else
     {

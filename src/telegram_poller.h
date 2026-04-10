@@ -134,6 +134,11 @@ public:
     // Production wires this to syncTime() in main.cpp.
     void setNtpSyncFn(std::function<void()> fn) { ntpSyncFn_ = std::move(fn); }
 
+    // RFC-0069: Optional concat-group summary callback. When set, /concat
+    // calls this function and returns the result. Production wires this to
+    // smsHandler.concatGroupsSummary() in main.cpp.
+    void setConcatSummaryFn(std::function<String()> fn) { concatSummaryFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -161,6 +166,7 @@ private:
 
     SmsDebugLog *debugLog_ = nullptr;
     std::function<void()> ntpSyncFn_;
+    std::function<String()> concatSummaryFn_; // RFC-0069
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

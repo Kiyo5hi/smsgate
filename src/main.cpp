@@ -935,6 +935,7 @@ void setup()
         });
         telegramPoller->setDebugLog(&smsDebugLog);
         telegramPoller->setNtpSyncFn([]() { syncTime(); }); // RFC-0055
+        telegramPoller->setConcatSummaryFn([]() { return smsHandler.concatGroupsSummary(); }); // RFC-0069
         smsSender.setDebugLog(&smsDebugLog); // RFC-0035: log outbound failures
         telegramPoller->begin();
         Serial.print("TG->SMS poller online; reply-target slots in use: ");

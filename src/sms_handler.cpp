@@ -356,6 +356,41 @@ void SmsHandler::noteTelegramFailure()
     }
 }
 
+// ---------- RFC-0069: concat group summary ----------
+
+String SmsHandler::concatGroupsSummary() const
+{
+    if (concatGroups_.empty())
+        return String("(no concat groups in flight)");
+
+    String out;
+    out += String((int)concatGroups_.size());
+    out += " group";
+    if (concatGroups_.size() > 1) out += "s";
+    out += " in flight:\n";
+
+    for (size_t i = 0; i < concatGroups_.size(); i++)
+    {
+        const ConcatGroup &g = concatGroups_[i];
+        out += "  ref=0x";
+        // Print ref as 2-digit hex.
+        char hexbuf[8];
+        snprintf(hexbuf, sizeof(hexbuf), "%02X", (unsigned)g.refNumber);
+        out += String(hexbuf);
+        out += " ";
+        out += g.sender.substring(0, 16);
+        if (g.sender.length() > 16) out += "\xe2\x80\xa6"; // ellipsis
+        out += " \xe2\x80\x94 "; // —
+        out += String((int)g.fragments.size());
+        out += "/";
+        out += String((int)g.totalParts);
+        out += " parts  ";
+        out += String((int)g.byteCount);
+        out += " B\n";
+    }
+    return out;
+}
+
 // ---------- RFC-0061: duplicate suppression ----------
 
 uint32_t SmsHandler::dedupHash(const String &sender, const String &body)

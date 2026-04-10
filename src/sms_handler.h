@@ -127,6 +127,10 @@ public:
     // Test-only accessor — returns number of in-flight concat groups.
     size_t concatKeyCount() const { return concatGroups_.size(); }
 
+    // RFC-0069: Human-readable summary of all in-flight concat groups.
+    // Returns "(no concat groups in flight)" if none.
+    String concatGroupsSummary() const;
+
     // Lifetime counters (RAM only, reset on reboot).
     // smsForwarded_: messages (or assembled concat groups) successfully
     //                delivered to Telegram.
