@@ -1572,6 +1572,20 @@ void setup()
             s += "  SMS age filter: "; // RFC-0190
             int ageh = smsHandler.maxSmsAgeHours();
             s += (ageh > 0 ? (String(ageh) + "h") : "disabled");
+            s += "\n";
+            s += "  Fwd pause: "; // RFC-0192/0194
+            {
+                uint32_t nowMs4 = (uint32_t)millis();
+                if (s_fwdPauseUntilMs != 0 && s_fwdPauseUntilMs > nowMs4)
+                {
+                    uint32_t remMin = (s_fwdPauseUntilMs - nowMs4 + 59999U) / 60000U;
+                    s += String("active (~") + String(remMin) + String(" min remain)");
+                }
+                else
+                {
+                    s += "none";
+                }
+            }
             return s;
         });
         telegramPoller->setGmtOffsetFn([&smsHandler](int m) { // RFC-0169/0175/0182

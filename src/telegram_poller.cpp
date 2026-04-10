@@ -168,6 +168,10 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/clearfwdtag \xe2\x80\x94 Remove custom forward prefix tag\n";
             help += "/fwdtest \xe2\x80\x94 Preview forwarded SMS format with current settings\n";
             help += "/testfmt <phone> <body> \xe2\x80\x94 Format preview with custom sender and body\n";
+            help += "/setsmsagefilter <h> \xe2\x80\x94 Skip SMS older than N hours (0=off, max 8760)\n"; // RFC-0190
+            help += "/testpdu <hex> \xe2\x80\x94 Decode a raw PDU hex string for debugging\n"; // RFC-0191
+            help += "/pausefwd <min> \xe2\x80\x94 Pause SMS forwarding for N minutes (1\xe2\x80\x931440)\n"; // RFC-0192
+            help += "/sendnow \xe2\x80\x94 Immediately fire all scheduled SMS\n"; // RFC-0193
             help += "/settings \xe2\x80\x94 Show all runtime-configurable parameters\n";
             help += "/nvsinfo \xe2\x80\x94 NVS flash storage usage (used/free/total entries)\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
