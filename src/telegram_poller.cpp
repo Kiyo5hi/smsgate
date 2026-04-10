@@ -137,6 +137,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/schedulesend <min> <phone> <msg> \xe2\x80\x94 Schedule SMS for future delivery (1\xe2\x80\x931440 min)\n";
             help += "/schedqueue \xe2\x80\x94 List pending scheduled SMS (up to 5 slots)\n";
             help += "/cancelsched <N> \xe2\x80\x94 Cancel a scheduled SMS slot\n";
+            help += "/clearschedule \xe2\x80\x94 Cancel all pending scheduled SMS\n"; // RFC-0195
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/mute [min] \xe2\x80\x94 Snooze proactive alerts (default 60m)\n";
             help += "/unmute \xe2\x80\x94 Cancel alert snooze\n";
@@ -2608,6 +2609,30 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             scheduledQueue_[n - 1].body     = String();
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Slot ") + String(n) + String(" cancelled.")); // ✅
+            return;
+        }
+
+        // RFC-0195: /clearschedule — cancel all pending scheduled SMS at once.
+        if (lower == "/clearschedule")
+        {
+            int cleared = 0;
+            for (auto &slot : scheduledQueue_)
+            {
+                if (slot.sendAtMs != 0)
+                {
+                    slot.sendAtMs = 0;
+                    slot.phone    = String();
+                    slot.body     = String();
+                    cleared++;
+                }
+            }
+            if (cleared == 0)
+                bot_.sendMessageTo(u.chatId, String("(no scheduled SMS)"));
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 Cleared ") // ✅
+                    + String(cleared)
+                    + String(cleared == 1 ? " scheduled SMS." : " scheduled SMS."));
             return;
         }
 

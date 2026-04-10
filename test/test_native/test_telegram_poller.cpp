@@ -6560,6 +6560,44 @@ void test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot()
     TEST_ASSERT_TRUE(rebootCalled);
 }
 
+// RFC-0195: /clearschedule — cancels all scheduled SMS at once.
+void test_TelegramPoller_clearschedule_clears_all()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs = 1000;
+
+    // Schedule two entries.
+    bot.queueUpdateBatch({makeUpdate(4001, kAllowedFromId, 0, "/schedulesend 60 +1111 First", kAllowedFromId)});
+    poller.tick();
+    clk.nowMs += 4000;
+    bot.queueUpdateBatch({makeUpdate(4002, kAllowedFromId, 0, "/schedulesend 60 +2222 Second", kAllowedFromId)});
+    poller.tick();
+    clk.nowMs += 4000;
+    bot.clearMessages();
+
+    // /clearschedule should clear both.
+    bot.queueUpdateBatch({makeUpdate(4003, kAllowedFromId, 0, "/clearschedule", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(4003, poller.lastUpdateId());
+    bool sawCleared = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Cleared") >= 0 && m.indexOf("2") >= 0) { sawCleared = true; break; }
+    TEST_ASSERT_TRUE(sawCleared);
+}
+
 // RFC-0193: /sendnow — fires all scheduled SMS immediately.
 void test_TelegramPoller_sendnow_fires_scheduled()
 {
@@ -7078,6 +7116,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_testpdu_no_arg_sends_usage);
     // RFC-0192: /pausefwd command
     RUN_TEST(test_TelegramPoller_pausefwd_calls_fn);
+    // RFC-0195: /clearschedule command
+    RUN_TEST(test_TelegramPoller_clearschedule_clears_all);
     // RFC-0193: /sendnow command
     RUN_TEST(test_TelegramPoller_sendnow_fires_scheduled);
 }
