@@ -2855,7 +2855,41 @@ void loop()
     {
         lastModemCheck = millis();
         esp_task_wdt_reset();
-        if (!modem.testAT(3000))
+        // RFC-0239: Use raw AT instead of modem.testAT() so the response
+        // buffer can be scanned for piggybacked +CMTI / RING / +CLIP URCs.
+        // modem.testAT() discards all data it reads; raw waitResponse()
+        // captures it. Same 3 s timeout as before.
+        String atHealthRaw;
+        realModem.sendAT(""); // sends AT\r\n → modem responds OK
+        bool atHealthOk = (realModem.waitResponse(3000UL, atHealthRaw) == 1);
+        // Update silence timer — modem just responded.
+        if (atHealthRaw.length() > 0)
+            s_lastSerialActivityMs = millis();
+        // Dispatch any piggybacked URCs captured during the health check.
+        {
+            int p239 = 0;
+            while (p239 < (int)atHealthRaw.length()) {
+                int e239 = atHealthRaw.indexOf('\n', p239);
+                String l239 = (e239 < 0) ? atHealthRaw.substring(p239) : atHealthRaw.substring(p239, e239);
+                p239 = (e239 < 0) ? (int)atHealthRaw.length() : e239 + 1;
+                l239.trim();
+                if (l239.length() == 0) continue;
+                if (l239.startsWith("+CMTI:")) {
+                    int cm239 = l239.indexOf(',');
+                    if (cm239 > 0) {
+                        int idx239 = l239.substring(cm239 + 1).toInt();
+                        if (idx239 > 0) {
+                            Serial.printf("[RFC-0239] Piggybacked +CMTI idx=%d — dispatching\n", idx239);
+                            esp_task_wdt_reset();
+                            smsHandler.handleSmsIndex(idx239);
+                        }
+                    }
+                } else if (l239.startsWith("RING") || l239.startsWith("+CLIP:")) {
+                    callHandler.onUrcLine(l239);
+                }
+            }
+        }
+        if (!atHealthOk)
         {
             modemFailStreak++;
             Serial.print("Modem health check failed (streak=");
