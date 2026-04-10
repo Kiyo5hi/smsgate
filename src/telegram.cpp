@@ -563,6 +563,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "setgmtoffset";
         c["description"] = "Timezone offset for SMS timestamps (-12 to +14): /setgmtoffset <h>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "loginfo";
+        c["description"] = "Debug log ring buffer status (count/capacity + newest entry)";
+    }
     String payload;
     serializeJson(doc, payload);
 

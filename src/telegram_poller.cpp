@@ -112,6 +112,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/logs [N] \xe2\x80\x94 Show last N SMS log entries (default 10)\n";
             help += "/logsince <hours> \xe2\x80\x94 Show log entries from the past N hours (1\xe2\x80\x93168)\n";
             help += "/logstats \xe2\x80\x94 Aggregate outcome statistics from debug log\n";
+            help += "/loginfo \xe2\x80\x94 Debug log ring buffer status (count/capacity + newest entry)\n";
             help += "/topn [N] \xe2\x80\x94 Top N SMS senders by message count (default 5)\n";
             help += "/logsoutcome <keyword> \xe2\x80\x94 Filter log entries by outcome (fail/fwd/dup/...)\n";
             help += "/simstatus \xe2\x80\x94 SIM card + network status (ICCID, IMSI, operator, CSQ)\n";
@@ -339,6 +340,32 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 return;
             }
             bot_.sendMessageTo(u.chatId, debugLog_->stats());
+            return;
+        }
+
+        // RFC-0170: /loginfo — debug log ring buffer status.
+        if (lower == "/loginfo")
+        {
+            if (!debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+                return;
+            }
+            size_t cnt = debugLog_->count();
+            size_t cap = SmsDebugLog::kMaxEntries;
+            String msg = String("\xF0\x9F\x93\x8A SMS debug log: ") // 📊
+                + String((int)cnt) + "/" + String((int)cap) + " entries\n";
+            if (cnt > 0)
+            {
+                // Show the newest entry via dumpBrief(1).
+                msg += "Newest: ";
+                msg += debugLog_->dumpBrief(1);
+            }
+            else
+            {
+                msg += "(empty \xe2\x80\x94 no SMS received yet)";
+            }
+            bot_.sendMessageTo(u.chatId, msg);
             return;
         }
 
