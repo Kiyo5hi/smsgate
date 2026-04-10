@@ -186,6 +186,8 @@ static time_t s_bootTimestamp = 0;
 static time_t s_lastSmsTimestamp = 0;
 // RFC-0059: Cumulative boot counter, incremented in setup() and persisted to NVS.
 static uint32_t s_bootCount = 0;
+// RFC-0060: Lifetime SMS forward count across all reboots, persisted to NVS.
+static uint32_t s_lifetimeFwdCount = 0;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -654,7 +656,8 @@ void setup()
         }
 
         msg += "\n\xF0\x9F\x93\xA8 SMS\n"; // 📨
-        msg += "  Forwarded: "; msg += String(smsHandler.smsForwarded()); msg += "\n";
+        msg += "  Forwarded: "; msg += String(smsHandler.smsForwarded()); msg += " (session), ";
+        msg += String((int)s_lifetimeFwdCount); msg += " (lifetime)\n";
         // RFC-0041: Last SMS received timestamp.
         if (s_lastSmsTimestamp > 0) {
             time_t lt = s_lastSmsTimestamp + TIMEZONE_OFFSET_SEC;
@@ -879,13 +882,22 @@ void setup()
                 s_lastSmsTimestamp = (time_t)ts;
         }
 
+        // RFC-0060: Restore lifetime forward count from NVS.
+        {
+            uint32_t lf = 0;
+            if (realPersist.loadBlob("lifetimefwd", &lf, sizeof(lf)) == sizeof(lf))
+                s_lifetimeFwdCount = lf;
+        }
+
         replyTargets.load();
         smsHandler.setReplyTargetMap(&replyTargets);
         smsHandler.setDebugLog(&smsDebugLog);
-        smsHandler.setOnForwarded([]() {                                        // RFC-0041/0044
+        smsHandler.setOnForwarded([]() {                                        // RFC-0041/0044/0060
             s_lastSmsTimestamp = time(nullptr);
             uint32_t ts = (uint32_t)s_lastSmsTimestamp;                         // RFC-0044: persist
             realPersist.saveBlob("lastsmsts", &ts, sizeof(ts));
+            s_lifetimeFwdCount++;                                                // RFC-0060: persist
+            realPersist.saveBlob("lifetimefwd", &s_lifetimeFwdCount, sizeof(s_lifetimeFwdCount));
         });
         telegramPoller->setDebugLog(&smsDebugLog);
         telegramPoller->setNtpSyncFn([]() { syncTime(); }); // RFC-0055
