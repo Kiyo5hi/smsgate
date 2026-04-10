@@ -3088,14 +3088,20 @@ void loop()
         else
         {
             modemFailStreak = 0;
-            // RFC-0242: Re-arm URC subscriptions after a silence period.
+            // RFC-0242: Re-arm AT settings after a silence period.
             // Extended silence can follow an internal modem state change
-            // that clears +CNMI/+CLIP without triggering an AT failure.
-            realModem.sendAT("+CNMI=2,1,0,0,0");
+            // that clears settings without triggering a ready indicator.
+            // Re-arm PDU mode and header display in addition to URC
+            // subscriptions — a silent reset reverts all of these.
+            realModem.sendAT("+CMGF=0");          // restore PDU mode
             realModem.waitResponseOk(2000UL);
-            realModem.sendAT("+CLIP=1");
+            realModem.sendAT("+CSDH=1");          // restore text header display
             realModem.waitResponseOk(2000UL);
-            realModem.sendAT("+CREG=1"); // RFC-0247: re-arm CREG URC subscription
+            realModem.sendAT("+CNMI=2,1,0,0,0"); // restore SMS notification
+            realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CLIP=1");           // restore caller-ID presentation
+            realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CREG=1");           // RFC-0247: restore CREG URC subscription
             realModem.waitResponseOk(2000UL);
         }
         esp_task_wdt_reset();
