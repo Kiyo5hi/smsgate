@@ -52,6 +52,16 @@ public:
 
     size_t count() const { return count_; }
 
+    // RFC-0040: Clear all entries from the ring and (if a sink is set)
+    // persist the empty log to NVS so it survives a reboot.
+    void clear()
+    {
+        head_   = 0;
+        count_  = 0;
+        if (persist_)
+            persist(); // writes empty blob to NVS
+    }
+
     // -----------------------------------------------------------------------
     // RFC-0020: NVS blob layout
     // Fields are ordered for natural alignment — no compiler padding expected.

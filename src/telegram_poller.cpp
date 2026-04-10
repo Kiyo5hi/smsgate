@@ -93,6 +93,21 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0040: /cleardebug — wipe the SMS debug log.
+        if (lower == "/cleardebug")
+        {
+            if (debugLog_)
+            {
+                debugLog_->clear();
+                bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x97\x91 Debug log cleared.")); // 🗑
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+            }
+            return;
+        }
+
         if (lower == "/status")
         {
             if (statusFn_)
@@ -273,7 +288,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         Serial.println("TelegramPoller: no reply_to_message_id, dropping");
         {
             String help = "Reply to a forwarded SMS to send a response. ";
-            help += "Commands: /debug, /status, /restart, /send <num> <msg>, /queue";
+            help += "Commands: /debug, /cleardebug, /status, /restart, /send <num> <msg>, /queue";
             if (smsBlockMutator_)
                 help += ", /blocklist, /block <num>, /unblock <num>";
             sendErrorReply(u.chatId, help);
