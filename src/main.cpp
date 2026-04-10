@@ -2420,6 +2420,34 @@ void loop()
             }
         }
 
+        // RFC-0245: Modem soft-reset detection. The A76xx sends one or
+        // more of "RDY", "APP READY", "SMS Ready", "PB DONE" after an
+        // internal reset. These indicate that all AT settings (including
+        // +CNMI and +CLIP) have been cleared. Re-arm them immediately so
+        // SMS notifications resume without waiting for the RFC-0242
+        // periodic re-arm (up to 30 min).
+        if (line == "RDY" || line == "APP READY" || line == "SMS Ready" ||
+            line == "PB DONE")
+        {
+            Serial.printf("[RFC-0245] Modem ready indicator: \"%s\" — re-arming +CNMI/+CLIP\n",
+                          line.c_str());
+            realModem.sendAT("+CMGF=0");          // restore PDU mode
+            realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CSDH=1");          // restore text header display
+            realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CNMI=2,1,0,0,0"); // restore SMS notification
+            realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CLIP=1");           // restore caller-ID presentation
+            realModem.waitResponseOk(2000UL);
+            // Sweep SIM — SMS may have arrived during the reset window.
+            if (activeTransport != ActiveTransport::kNone)
+            {
+                esp_task_wdt_reset();
+                smsHandler.sweepExistingSms();
+                esp_task_wdt_reset();
+            }
+        }
+
         // CallHandler gobbles RING / +CLIP. Feed it every line; it
         // does its own startsWith filtering and ignores anything else.
         callHandler.onUrcLine(line);
