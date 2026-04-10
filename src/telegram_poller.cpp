@@ -95,6 +95,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
             help += "/cleardebug \xe2\x80\x94 Clear SMS diagnostic log\n";
             help += "/send <num> <msg> \xe2\x80\x94 Send outbound SMS\n";
+            help += "/test <num> \xe2\x80\x94 Send a test SMS to verify outbound path\n";
             help += "/queue \xe2\x80\x94 Show pending outbound queue\n";
             help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
@@ -435,6 +436,43 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 replyTargets_.put(confirmId, phone);
             Serial.print("TelegramPoller: /send queued to ");
             Serial.println(phone);
+            return;
+        }
+
+        // RFC-0085: /test <number> — outbound SMS self-test.
+        if (lower == "/test" || lower.startsWith("/test "))
+        {
+            String arg = u.text.substring(strlen("/test"));
+            arg.trim();
+            if (arg.length() == 0) {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /test <number>\nExample: /test +8613800138000"));
+                return;
+            }
+            // arg is the phone number (one word, no body).
+            String phone = sms_codec::normalizePhoneNumber(arg);
+            // Build body with current UTC time if clock is valid.
+            String body = String("Bridge test OK");
+            time_t nowT = time(nullptr);
+            if (nowT > 8 * 3600 * 2) {
+                char tbuf[20];
+                struct tm *t2 = gmtime(&nowT);
+                strftime(tbuf, sizeof(tbuf), " %Y-%m-%dT%H:%MZ", t2);
+                body += tbuf;
+            }
+            int64_t requesterChatId = u.chatId;
+            String capturedPhone = phone;
+            smsSender_.enqueue(phone, body,
+                [this, requesterChatId, capturedPhone]() {
+                    sendErrorReply(requesterChatId,
+                        String("\xE2\x9D\x8C Test SMS to ") + capturedPhone + " failed."); // ❌
+                },
+                [this, requesterChatId, capturedPhone]() {
+                    bot_.sendMessageTo(requesterChatId,
+                        String("\xE2\x9C\x85 Test SMS to ") + capturedPhone + " sent."); // ✅
+                });
+            bot_.sendMessageTo(u.chatId,
+                String("\xF0\x9F\x93\xA4 Test SMS queued to ") + phone); // 📤
             return;
         }
 
