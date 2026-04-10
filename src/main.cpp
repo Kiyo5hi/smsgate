@@ -624,7 +624,15 @@ void setup()
         msg += "\xF0\x9F\x93\xA1 Device\n"; // 📡
         msg += "  Time: ";      msg += timeBuf; msg += " "; msg += tzLabel; msg += "\n";
         msg += "  Uptime: ";    msg += String((int)days); msg += "d "; msg += String((int)hours); msg += "h "; msg += String((int)mins); msg += "m\n";
-        msg += "  WiFi: ";      msg += String(WiFi.RSSI()); msg += " dBm\n";
+        // RFC-0065: Show SSID, RSSI, and IP.
+        msg += "  WiFi: ";
+        if (WiFi.status() == WL_CONNECTED) {
+            msg += WiFi.SSID(); msg += " ("; msg += String(WiFi.RSSI()); msg += " dBm)  ";
+            msg += WiFi.localIP().toString();
+        } else {
+            msg += "disconnected";
+        }
+        msg += "\n";
         msg += "  Modem: CSQ "; msg += String(cachedCsq); msg += " ("; msg += csqLabel; msg += ")  "; msg += regStr;
         if (cachedOperatorName.length() > 0) { msg += " ("; msg += cachedOperatorName; msg += ")"; }
         if (cachedModemFirmware.length() > 0) { msg += "\n  FW: "; msg += cachedModemFirmware; } // RFC-0045
