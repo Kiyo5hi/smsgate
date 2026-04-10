@@ -1452,6 +1452,84 @@ void setup()
             result += String("Body: ") + pdu.content;
             return result;
         });
+        telegramPoller->setSimStatusFn([]() -> String { // RFC-0156
+            // Live AT queries for network/SIM registration state.
+            String out = String("\xF0\x9F\x93\xB6 Live SIM status\n"); // 📶
+            // Registration state: AT+CREG?
+            String creg;
+            realModem.sendAT(String("+CREG?"));
+            realModem.waitResponse(3000UL, creg);
+            {
+                // +CREG: <n>,<stat>[,<lac>,<ci>]
+                int pos = creg.indexOf("+CREG:");
+                if (pos >= 0) {
+                    int comma = creg.indexOf(',', pos + 7);
+                    if (comma > 0) {
+                        int stat = creg.substring(comma + 1, comma + 2).toInt();
+                        const char *regDesc = "unknown";
+                        switch (stat) {
+                            case 0: regDesc = "not registered"; break;
+                            case 1: regDesc = "registered (home)"; break;
+                            case 2: regDesc = "searching"; break;
+                            case 3: regDesc = "denied"; break;
+                            case 5: regDesc = "registered (roaming)"; break;
+                        }
+                        out += String("  Reg: "); out += regDesc; out += String("\n");
+                    }
+                }
+            }
+            // Live signal: AT+CSQ
+            String csqRaw;
+            realModem.sendAT(String("+CSQ"));
+            realModem.waitResponse(2000UL, csqRaw);
+            {
+                int pos = csqRaw.indexOf("+CSQ:");
+                if (pos >= 0) {
+                    int comma = csqRaw.indexOf(',', pos + 5);
+                    String rssi = comma > 0 ? csqRaw.substring(pos + 6, comma) : csqRaw.substring(pos + 6);
+                    rssi.trim();
+                    out += String("  CSQ: "); out += rssi; out += String("\n");
+                }
+            }
+            // Operator: AT+COPS?
+            String cops;
+            realModem.sendAT(String("+COPS?"));
+            realModem.waitResponse(5000UL, cops);
+            {
+                int pos = cops.indexOf("+COPS:");
+                if (pos >= 0) {
+                    // +COPS: <mode>,<format>,<oper>[,<Act>]
+                    // operator string is between second and third commas, quoted
+                    int c2 = cops.indexOf(',', pos + 6);
+                    if (c2 > 0) {
+                        int qOpen = cops.indexOf('"', c2);
+                        int qClose = qOpen >= 0 ? cops.indexOf('"', qOpen + 1) : -1;
+                        if (qOpen >= 0 && qClose > qOpen) {
+                            out += String("  Operator: ");
+                            out += cops.substring(qOpen + 1, qClose);
+                            out += String("\n");
+                        }
+                    }
+                }
+            }
+            // ICCID (live)
+            String iccidRaw;
+            realModem.sendAT(String("+CCID"));
+            realModem.waitResponse(3000UL, iccidRaw);
+            {
+                int pos = iccidRaw.indexOf("+CCID:");
+                if (pos >= 0) {
+                    String icc = iccidRaw.substring(pos + 7);
+                    icc.trim();
+                    // remove trailing OK or extra data
+                    int nl = icc.indexOf('\r'); if (nl > 0) icc = icc.substring(0, nl);
+                    nl = icc.indexOf('\n'); if (nl > 0) icc = icc.substring(0, nl);
+                    icc.trim();
+                    out += String("  ICCID: "); out += icc;
+                }
+            }
+            return out;
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])

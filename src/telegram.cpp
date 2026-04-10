@@ -493,6 +493,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "logsoutcome";
         c["description"] = "Filter SMS log by outcome keyword: /logsoutcome <fail|fwd|dup|...>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "simstatus";
+        c["description"] = "Live SIM + network status (registration, CSQ, operator, ICCID)";
+    }
     String payload;
     serializeJson(doc, payload);
 

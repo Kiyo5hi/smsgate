@@ -112,6 +112,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/logs [N] \xe2\x80\x94 Show last N SMS log entries (default 10)\n";
             help += "/logstats \xe2\x80\x94 Aggregate outcome statistics from debug log\n";
             help += "/logsoutcome <keyword> \xe2\x80\x94 Filter log entries by outcome (fail/fwd/dup/...)\n";
+            help += "/simstatus \xe2\x80\x94 SIM card + network status (ICCID, IMSI, operator, CSQ)\n";
             help += "/history <filter> \xe2\x80\x94 Show log entries matching phone substring\n";
             help += "/concat \xe2\x80\x94 Show in-flight concat reassembly groups\n";
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
@@ -1430,6 +1431,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, healthFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(health not configured)"));
+            return;
+        }
+
+        // RFC-0156: /simstatus — SIM card + network status snapshot.
+        if (lower == "/simstatus")
+        {
+            if (simStatusFn_)
+                bot_.sendMessageTo(u.chatId, simStatusFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(simstatus not configured)"));
             return;
         }
 

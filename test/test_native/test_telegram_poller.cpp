@@ -5176,6 +5176,65 @@ void test_TelegramPoller_logsoutcome_no_arg_sends_usage()
     TEST_ASSERT_TRUE(sawUsage);
 }
 
+// RFC-0156: /simstatus — calls simStatusFn and sends result.
+void test_TelegramPoller_simstatus_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSimStatusFn([&fnCalled]() -> String {
+        fnCalled = true;
+        return String("Reg: registered (home)\nCSQ: 18\nOperator: Test Net");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1067, kAllowedFromId, 0, "/simstatus", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1067, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(fnCalled);
+    bool sawResult = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("registered")) >= 0) { sawResult = true; break; }
+    TEST_ASSERT_TRUE(sawResult);
+}
+
+// RFC-0156: /simstatus without fn configured → placeholder.
+void test_TelegramPoller_simstatus_not_configured_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // No setSimStatusFn call.
+
+    bot.queueUpdateBatch({makeUpdate(1068, kAllowedFromId, 0, "/simstatus", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1068, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("not configured")) >= 0) { sawPlaceholder = true; break; }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5391,6 +5450,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_logsoutcome_returns_matching_entries);
     RUN_TEST(test_TelegramPoller_logsoutcome_no_match_replies_placeholder);
     RUN_TEST(test_TelegramPoller_logsoutcome_no_arg_sends_usage);
+    // RFC-0156: /simstatus command
+    RUN_TEST(test_TelegramPoller_simstatus_calls_fn);
+    RUN_TEST(test_TelegramPoller_simstatus_not_configured_replies_placeholder);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }
