@@ -369,14 +369,18 @@ static void handleCregUrc(const String &line, const char *logTag)
                        :                                         "unknown";
     Serial.printf("[%s] +CREG URC: stat=%d (%s)\n", logTag, stat, regTxt);
     if (!regOk && !s_regLostAlertSent && cachedCsq > 0) {
-        if (!alertsMuted())
+        if (!alertsMuted()) {
+            esp_task_wdt_reset(); // RFC-0252: sendMessage can block ~23 s
             realBot.sendMessage(
                 String("\xF0\x9F\x93\xB5 Network registration lost (") + regTxt + ")"); // 📵
+        }
         s_regLostAlertSent = true;
     } else if (regOk && s_regLostAlertSent) {
-        if (!alertsMuted())
+        if (!alertsMuted()) {
+            esp_task_wdt_reset(); // RFC-0252: sendMessage can block ~23 s
             realBot.sendMessage(
                 String("\xE2\x9C\x85 Network registration restored (") + regTxt + ")"); // ✅
+        }
         s_regLostAlertSent = false;
     }
 }
