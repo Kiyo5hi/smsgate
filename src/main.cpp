@@ -3050,6 +3050,7 @@ void loop()
                     // Two consecutive checks with WiFi down — fall over.
 #if defined(CELLULAR_APN) && defined(TINY_GSM_MODEM_A76XXSSL)
                     Serial.println("WiFi still down; falling over to cellular transport...");
+                    esp_task_wdt_reset(); // gprsConnect can block 60+ s
                     if (modem.gprsConnect(CELLULAR_APN))
                     {
                         if (setupCellularClient(realBot))
@@ -3191,6 +3192,7 @@ void loop()
 #if defined(CELLULAR_APN) && defined(TINY_GSM_MODEM_A76XXSSL)
             if (activeTransport == ActiveTransport::kNone)
             {
+                esp_task_wdt_reset(); // gprsConnect can block 60+ s
                 if (modem.gprsConnect(CELLULAR_APN))
                 {
                     if (setupCellularClient(realBot))
