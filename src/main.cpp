@@ -184,6 +184,8 @@ static int cachedSimTotal = 0;
 static time_t s_bootTimestamp = 0;
 // RFC-0041: Wall-clock time of the most recently forwarded SMS (0 = none yet).
 static time_t s_lastSmsTimestamp = 0;
+// RFC-0059: Cumulative boot counter, incremented in setup() and persisted to NVS.
+static uint32_t s_bootCount = 0;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -264,6 +266,15 @@ void setup()
     // RFC-0020: Capture reset reason once at startup (before any code path
     // can trigger another reset). Used in the /status lambda below.
     static esp_reset_reason_t s_resetReason = esp_reset_reason();
+
+    // RFC-0059: Increment cumulative boot counter in NVS.
+    {
+        uint32_t bc = 0;
+        realPersist.loadBlob("bootcnt", &bc, sizeof(bc));
+        bc++;
+        realPersist.saveBlob("bootcnt", &bc, sizeof(bc));
+        s_bootCount = bc;
+    }
 
     Serial.begin(115200);
 #ifdef BOARD_POWERON_PIN
@@ -631,6 +642,8 @@ void setup()
         msg += "  Flash: ";     msg += String((int)(ESP.getSketchSize() / 1024)); msg += "kB / ";
         msg += String((int)((ESP.getSketchSize() + ESP.getFreeSketchSpace()) / 1024)); msg += "kB\n";
         msg += "  Reset: ";     msg += resetReasonStr(s_resetReason); msg += "\n";
+        // RFC-0059: Cumulative boot count.
+        msg += "  Boots: "; msg += String((int)s_bootCount); msg += " (lifetime)\n";
         // RFC-0038: Show absolute boot timestamp when NTP was available.
         if (s_bootTimestamp > 0) {
             time_t bt = s_bootTimestamp + TIMEZONE_OFFSET_SEC;
