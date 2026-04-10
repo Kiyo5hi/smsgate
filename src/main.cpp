@@ -925,8 +925,9 @@ void setup()
         msg += "  Users: ";      msg += String(allowedIdCount); msg += "\n";
         msg += "  Block list: "; msg += String(sBlockListCount + sRuntimeBlockListCount); msg += "\n";
         msg += "  Aliases: "; msg += String(smsAliasStore.count()); msg += "/"; msg += String(SmsAliasStore::kMaxAliases); msg += "\n"; // RFC-0090
-        // RFC-0099: Show mute state when active.
-        if (s_alertsMutedUntilMs > (uint32_t)millis()) {
+        // RFC-0099: Show mute state when active. RFC-0269: wraparound-safe.
+        if (s_alertsMutedUntilMs != 0 &&
+            (uint32_t)(s_alertsMutedUntilMs - (uint32_t)millis()) < 0x80000000UL) {
             uint32_t remainSec = (s_alertsMutedUntilMs - (uint32_t)millis()) / 1000u;
             msg += "  Alerts: muted (";
             if (remainSec >= 60) { msg += String((int)(remainSec / 60)); msg += "m"; }
@@ -1711,7 +1712,8 @@ void setup()
             s += "  Fwd pause: "; // RFC-0192/0194
             {
                 uint32_t nowMs4 = (uint32_t)millis();
-                if (s_fwdPauseUntilMs != 0 && s_fwdPauseUntilMs > nowMs4)
+                if (s_fwdPauseUntilMs != 0 && // RFC-0269: wraparound-safe "still in future?"
+                    (uint32_t)(s_fwdPauseUntilMs - nowMs4) < 0x80000000UL)
                 {
                     uint32_t remMin = (s_fwdPauseUntilMs - nowMs4 + 59999U) / 60000U;
                     s += String("active (~") + String(remMin) + String(" min remain)");
