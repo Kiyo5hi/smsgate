@@ -390,6 +390,67 @@ String SmsDebugLog::dumpBriefByOutcome(size_t n, const String &keyword) const
     return out;
 }
 
+// RFC-0157: topSenders — top n senders by message count.
+String SmsDebugLog::topSenders(size_t n) const
+{
+    if (count_ == 0)
+        return String("(no SMS logged yet)");
+
+    if (n == 0 || n > 10) n = 10;
+
+    // Simple frequency table: up to kMaxEntries distinct senders.
+    // We use parallel arrays to avoid heap allocation (no std::map on some Arduino targets).
+    static const size_t kMax = kMaxEntries;
+    String senders[kMax];
+    int    counts[kMax];
+    size_t distinct = 0;
+
+    size_t start = (count_ < kMaxEntries) ? 0 : head_;
+    for (size_t i = 0; i < count_; ++i)
+    {
+        size_t idx = (start + i) % kMaxEntries;
+        const String &s = entries_[idx].sender;
+        bool found = false;
+        for (size_t j = 0; j < distinct; ++j)
+        {
+            if (senders[j] == s) { ++counts[j]; found = true; break; }
+        }
+        if (!found && distinct < kMax)
+        {
+            senders[distinct] = s;
+            counts[distinct]  = 1;
+            ++distinct;
+        }
+    }
+
+    // Partial selection sort to find top n.
+    if (n > distinct) n = distinct;
+    for (size_t i = 0; i < n; ++i)
+    {
+        size_t best = i;
+        for (size_t j = i + 1; j < distinct; ++j)
+            if (counts[j] > counts[best]) best = j;
+        if (best != i)
+        {
+            { String tmp = senders[i]; senders[i] = senders[best]; senders[best] = tmp; }
+            { int    tmp = counts[i];  counts[i]  = counts[best];  counts[best]  = tmp; }
+        }
+    }
+
+    String out = String("Top ") + String((int)n) + String(" senders:\n");
+    for (size_t i = 0; i < n; ++i)
+    {
+        out += String("  ");
+        out += senders[i];
+        out += String(": ");
+        out += String(counts[i]);
+        out += String(" msg");
+        if (counts[i] != 1) out += String("s");
+        out += String("\n");
+    }
+    return out;
+}
+
 // RFC-0117: dumpBriefFiltered — same format as dumpBrief but restricted to
 // entries whose sender field contains `filter` as a substring.
 String SmsDebugLog::dumpBriefFiltered(size_t n, const String &filter) const

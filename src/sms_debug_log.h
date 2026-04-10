@@ -73,6 +73,11 @@ public:
     // matches.
     String dumpBriefByOutcome(size_t n, const String &keyword) const;
 
+    // RFC-0157: Return top `n` (max 10) SMS senders sorted by descending
+    // message count over all ring entries. Ties broken by most-recent first.
+    // Returns "(no SMS logged yet)" when the log is empty.
+    String topSenders(size_t n) const;
+
     size_t count() const { return count_; }
 
     // RFC-0040: Clear all entries from the ring and (if a sink is set)

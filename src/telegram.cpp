@@ -498,6 +498,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "simstatus";
         c["description"] = "Live SIM + network status (registration, CSQ, operator, ICCID)";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "topn";
+        c["description"] = "Top N SMS senders by frequency: /topn [N] (default 5)";
+    }
     String payload;
     serializeJson(doc, payload);
 

@@ -111,6 +111,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/last [N] \xe2\x80\x94 Show last N forwarded SMS (default 5)\n";
             help += "/logs [N] \xe2\x80\x94 Show last N SMS log entries (default 10)\n";
             help += "/logstats \xe2\x80\x94 Aggregate outcome statistics from debug log\n";
+            help += "/topn [N] \xe2\x80\x94 Top N SMS senders by message count (default 5)\n";
             help += "/logsoutcome <keyword> \xe2\x80\x94 Filter log entries by outcome (fail/fwd/dup/...)\n";
             help += "/simstatus \xe2\x80\x94 SIM card + network status (ICCID, IMSI, operator, CSQ)\n";
             help += "/history <filter> \xe2\x80\x94 Show log entries matching phone substring\n";
@@ -296,6 +297,26 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 return;
             }
             bot_.sendMessageTo(u.chatId, debugLog_->stats());
+            return;
+        }
+
+        // RFC-0157: /topn [N] — top N senders by message frequency.
+        if (lower == "/topn" || lower.startsWith("/topn "))
+        {
+            if (!debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+                return;
+            }
+            size_t n = 5;
+            String arg = extractArg(u.text, "/topn ");
+            if (arg.length() > 0)
+            {
+                int parsed = arg.toInt();
+                if (parsed >= 1 && parsed <= 10) n = (size_t)parsed;
+                else if (parsed > 10) n = 10;
+            }
+            bot_.sendMessageTo(u.chatId, debugLog_->topSenders(n));
             return;
         }
 

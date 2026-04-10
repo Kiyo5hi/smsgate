@@ -5235,6 +5235,67 @@ void test_TelegramPoller_simstatus_not_configured_replies_placeholder()
     TEST_ASSERT_TRUE(sawPlaceholder);
 }
 
+// RFC-0157: /topn — returns top N senders by frequency.
+void test_TelegramPoller_topn_returns_top_senders()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    SmsDebugLog log;
+    auto push = [&](const char *s) {
+        SmsDebugLog::Entry e; e.sender = String(s); e.outcome = "fwd OK"; log.push(e);
+    };
+    push("+1111"); push("+2222"); push("+1111"); push("+3333"); push("+1111");
+    // +1111: 3, +2222: 1, +3333: 1
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(1069, kAllowedFromId, 0, "/topn 2", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1069, poller.lastUpdateId());
+    bool sawTop = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("+1111")) >= 0 && m.indexOf(String("3")) >= 0)
+            { sawTop = true; break; }
+    TEST_ASSERT_TRUE(sawTop);
+}
+
+// RFC-0157: /topn with no debug log → placeholder.
+void test_TelegramPoller_topn_no_log_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(1070, kAllowedFromId, 0, "/topn", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1070, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("not configured")) >= 0) { sawPlaceholder = true; break; }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5453,6 +5514,9 @@ void run_telegram_poller_tests()
     // RFC-0156: /simstatus command
     RUN_TEST(test_TelegramPoller_simstatus_calls_fn);
     RUN_TEST(test_TelegramPoller_simstatus_not_configured_replies_placeholder);
+    // RFC-0157: /topn command
+    RUN_TEST(test_TelegramPoller_topn_returns_top_senders);
+    RUN_TEST(test_TelegramPoller_topn_no_log_replies_placeholder);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }
