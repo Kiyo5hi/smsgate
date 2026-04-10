@@ -1483,6 +1483,35 @@ void setup()
             int32_t v = h;
             realPersist.saveBlob("sms_age_h", &v, sizeof(v));
         });
+        telegramPoller->setTestPduFn([&smsHandler](const String &hexArg) -> String { // RFC-0191
+            // Strip any whitespace from the input.
+            String hex;
+            for (unsigned i = 0; i < hexArg.length(); i++)
+            {
+                char c = hexArg[i];
+                if (c != ' ' && c != '\t' && c != '\r' && c != '\n') hex += c;
+            }
+            sms_codec::SmsPdu pdu;
+            if (!sms_codec::parseSmsPdu(hex, pdu))
+                return String("\xe2\x9d\x8c Failed to parse PDU."); // ❌
+            String out = String("\xF0\x9F\x93\xA8 PDU decoded:\n"); // 📨
+            out += String("Sender: ") + sms_codec::humanReadablePhoneNumber(pdu.sender) + String("\n");
+            if (pdu.timestamp.length() > 0)
+                out += String("Time: ")
+                       + sms_codec::timestampToRFC3339(pdu.timestamp, smsHandler.gmtOffsetMinutes())
+                       + String("\n");
+            if (pdu.isConcatenated)
+                out += String("Concat: ref=") + String((int)pdu.concatRefNumber)
+                       + String(" part=") + String((int)pdu.concatPartNumber)
+                       + String("/") + String((int)pdu.concatTotalParts) + String("\n");
+            out += String("Body (") + String(pdu.content.length()) + String(" chars): ");
+            // Truncate very long bodies for readability.
+            if (pdu.content.length() <= 300)
+                out += pdu.content;
+            else
+                out += pdu.content.substring(0, 297) + String("...");
+            return out;
+        });
         telegramPoller->setBlockingEnabledFn([&smsHandler](bool enable) { // RFC-0162/0183
             smsHandler.setBlockingEnabled(enable);
             uint8_t v = enable ? 1 : 0;
@@ -1530,6 +1559,10 @@ void setup()
             s += "\n";
             s += "  Forward tag: ";
             s += (smsHandler.fwdTag().length() > 0 ? ("\"" + smsHandler.fwdTag() + "\"") : "(none)");
+            s += "\n";
+            s += "  SMS age filter: "; // RFC-0190
+            int ageh = smsHandler.maxSmsAgeHours();
+            s += (ageh > 0 ? (String(ageh) + "h") : "disabled");
             return s;
         });
         telegramPoller->setGmtOffsetFn([&smsHandler](int m) { // RFC-0169/0175/0182

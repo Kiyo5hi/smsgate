@@ -2607,6 +2607,27 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0191: /testpdu <hex> — decode a raw PDU hex string for debugging.
+        if (lower == "/testpdu" || lower.startsWith("/testpdu "))
+        {
+            if (!testPduFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(testpdu not configured)"));
+                return;
+            }
+            String arg = extractArg(u.text, "/testpdu ");
+            arg.trim();
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /testpdu <hex>\n"
+                           "Paste a raw SMS-DELIVER PDU hex string to decode it."));
+                return;
+            }
+            bot_.sendMessageTo(u.chatId, testPduFn_(arg));
+            return;
+        }
+
         // RFC-0190: /setsmsagefilter <hours> — skip forwarding SMS older than N hours.
         if (lower == "/setsmsagefilter" || lower.startsWith("/setsmsagefilter "))
         {

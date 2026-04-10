@@ -374,6 +374,12 @@ public:
     // max 8760). 0 means forward all SMS regardless of age.
     void setSmsAgeFilterFn(std::function<void(int)> fn) { smsAgeFilterFn_ = std::move(fn); }
 
+    // RFC-0191: Optional PDU decode fn. Signature: (hexPdu) -> formatted String.
+    // Returns a multi-line decode result or an error message starting with "❌".
+    // Production wires this to a lambda calling sms_codec::parseSmsPdu +
+    // sms_codec::timestampToRFC3339 with the handler's current GMT offset.
+    void setTestPduFn(std::function<String(const String &)> fn) { testPduFn_ = std::move(fn); }
+
     // RFC-0173: Optional call status fn. When set, /callstatus calls this
     // fn to get a formatted snapshot of call handler config + state.
     void setCallStatusFn(std::function<String()> fn) { callStatusFn_ = std::move(fn); }
@@ -516,6 +522,7 @@ private:
     std::function<String()> fwdTestFn_;                             // RFC-0181
     std::function<String(const String &, const String &)> fwdTestPhoneBodyFn_; // RFC-0187
     std::function<void(int)> smsAgeFilterFn_;                                  // RFC-0190
+    std::function<String(const String &)> testPduFn_;                          // RFC-0191
     std::function<String()> callStatusFn_;                           // RFC-0173
     std::function<String()> smsHandlerInfoFn_;                       // RFC-0174
     std::function<bool(int)> smsForwardFn_;        // RFC-0146

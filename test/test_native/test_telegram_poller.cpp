@@ -6560,6 +6560,67 @@ void test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot()
     TEST_ASSERT_TRUE(rebootCalled);
 }
 
+// RFC-0191: /testpdu <hex> → calls testPduFn with the hex argument.
+void test_TelegramPoller_testpdu_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    String capturedHex;
+    poller.setTestPduFn([&capturedHex](const String &hex) -> String {
+        capturedHex = hex;
+        return String("decoded: ") + hex.substring(0, 4);
+    });
+
+    bot.queueUpdateBatch({makeUpdate(2001, kAllowedFromId, 0, "/testpdu DEADBEEF", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(2001, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL_STRING("DEADBEEF", capturedHex.c_str());
+    bool sawReply = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("decoded") >= 0) { sawReply = true; break; }
+    TEST_ASSERT_TRUE(sawReply);
+}
+
+// RFC-0191: /testpdu with no argument → usage message.
+void test_TelegramPoller_testpdu_no_arg_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    poller.setTestPduFn([](const String &) -> String { return String("x"); });
+
+    bot.queueUpdateBatch({makeUpdate(2002, kAllowedFromId, 0, "/testpdu", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(2002, poller.lastUpdateId());
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Usage") >= 0) { sawUsage = true; break; }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
 // RFC-0190: /setsmsagefilter 24 → calls smsAgeFilterFn with 24.
 void test_TelegramPoller_setsmsagefilter_calls_fn()
 {
@@ -6941,4 +7002,7 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setsmsagefilter_calls_fn);
     RUN_TEST(test_TelegramPoller_setsmsagefilter_zero_disables);
     RUN_TEST(test_TelegramPoller_setsmsagefilter_out_of_range);
+    // RFC-0191: /testpdu command
+    RUN_TEST(test_TelegramPoller_testpdu_calls_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_testpdu_no_arg_sends_usage);
 }
