@@ -2597,6 +2597,28 @@ void loop()
 #endif
     }
 
+    // RFC-0235: Periodic SIM sweep — recover SMS that failed to forward
+    // during a transient Telegram outage (WiFi was up, Telegram was down).
+    // sweepExistingSms() at boot handles the common case; this handles the
+    // case where Telegram recovers without a WiFi drop/reconnect event.
+    {
+        static unsigned long lastPeriodicSweepMs = 0;
+        const unsigned long kSweepIntervalMs = 30UL * 60UL * 1000UL; // 30 min
+        if (activeTransport != ActiveTransport::kNone &&
+            millis() - lastPeriodicSweepMs >= kSweepIntervalMs &&
+            lastPeriodicSweepMs != 0) // skip first iteration (boot sweep already done)
+        {
+            lastPeriodicSweepMs = millis();
+            esp_task_wdt_reset();
+            smsHandler.sweepExistingSms();
+            esp_task_wdt_reset();
+        }
+        else if (lastPeriodicSweepMs == 0)
+        {
+            lastPeriodicSweepMs = millis(); // initialise without sweeping
+        }
+    }
+
     // Drive the TG->SMS poller (RFC-0003). Rate-limited internally to
     // kPollIntervalMs; uses short polling so it doesn't block the URC
     // drain above. See telegram_poller.h "Implementation note" for
