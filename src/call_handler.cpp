@@ -164,7 +164,7 @@ void CallHandler::maybeExitCooldown(uint32_t now)
 {
     if (state_ != State::Cooldown)
         return;
-    if (now >= cooldownUntilMs_)
+    if ((uint32_t)(now - cooldownUntilMs_) < 0x80000000UL) // RFC-0269: wraparound-safe
     {
         state_ = State::Idle;
         cooldownUntilMs_ = 0;
