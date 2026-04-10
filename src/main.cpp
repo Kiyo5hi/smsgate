@@ -221,6 +221,8 @@ static constexpr uint32_t kStuckQueueCheckIntervalMs = 60UL * 1000UL;    // 1 mi
 // RFC-0098: Alert mute. 0 = not muted; else millis() timestamp until which alerts are silenced.
 static uint32_t s_alertsMutedUntilMs = 0;
 inline bool alertsMuted() { return (uint32_t)millis() < s_alertsMutedUntilMs; }
+// RFC-0102: Boot time for uptime display in /status.
+static uint32_t s_bootMs = 0;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -612,8 +614,8 @@ void setup()
     // loop() for the scheduled heartbeat). The lambda body is identical to
     // the previous inline 7th argument; only the assignment location moves.
     statusFn = []() -> String {
-        // --- uptime ---
-        unsigned long uptimeSec = millis() / 1000UL;
+        // --- uptime (RFC-0102: measured from end of setup(), not ESP power-on) ---
+        unsigned long uptimeSec = ((uint32_t)millis() - s_bootMs) / 1000UL;
         unsigned long days = uptimeSec / 86400UL;
         unsigned long hours = (uptimeSec % 86400UL) / 3600UL;
         unsigned long mins = (uptimeSec % 3600UL) / 60UL;
@@ -1171,6 +1173,9 @@ void setup()
         esp_task_wdt_add(NULL);
         Serial.println("Hardware watchdog armed (120s timeout).");
     }
+
+    // RFC-0102: Record boot time for uptime display in /status.
+    s_bootMs = (uint32_t)millis();
 }
 
 void loop()
@@ -1500,7 +1505,8 @@ void loop()
             esp_task_wdt_reset();  // heartbeat sendMessage can block; pet WDT first
             // RFC-0051: compact one-line heartbeat (uptime | signal | fwd | queue).
             {
-                unsigned long uptimeSec2 = millis() / 1000UL;
+                // RFC-0102: uptime from end of setup(), not ESP power-on.
+                unsigned long uptimeSec2 = ((uint32_t)millis() - s_bootMs) / 1000UL;
                 unsigned long days2  = uptimeSec2 / 86400UL;
                 unsigned long hours2 = (uptimeSec2 % 86400UL) / 3600UL;
                 unsigned long mins2  = (uptimeSec2 % 3600UL) / 60UL;
