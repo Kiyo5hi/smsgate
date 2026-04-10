@@ -4358,6 +4358,11 @@ void TelegramPoller::tick()
                 // RFC-0203: Notify the admin chat that the scheduled SMS was sent.
                 String preview = slot.body;
                 if (preview.length() > 60) preview = preview.substring(0, 60) + String("...");
+                // RFC-0240: kick WDT — multiple overdue slots may fire in one
+                // tick; each bot_.sendMessage() can block up to ~12 s.
+#ifdef ESP_PLATFORM
+                esp_task_wdt_reset();
+#endif
                 bot_.sendMessage(String("\xe2\x9c\x85 Scheduled SMS to ") // ✅
                                  + slot.phone + String(" sent: ") + preview);
                 // RFC-0221: re-arm repeating slots instead of clearing them.
