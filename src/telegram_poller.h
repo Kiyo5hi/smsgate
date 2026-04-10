@@ -369,6 +369,11 @@ public:
         fwdTestPhoneBodyFn_ = std::move(fn);
     }
 
+    // RFC-0190: Optional SMS age filter setter fn. When set,
+    // /setsmsagefilter <hours> calls this fn with the new limit (0 = disable,
+    // max 8760). 0 means forward all SMS regardless of age.
+    void setSmsAgeFilterFn(std::function<void(int)> fn) { smsAgeFilterFn_ = std::move(fn); }
+
     // RFC-0173: Optional call status fn. When set, /callstatus calls this
     // fn to get a formatted snapshot of call handler config + state.
     void setCallStatusFn(std::function<String()> fn) { callStatusFn_ = std::move(fn); }
@@ -510,6 +515,7 @@ private:
     std::function<void(const String &)> fwdTagFn_;                  // RFC-0172
     std::function<String()> fwdTestFn_;                             // RFC-0181
     std::function<String(const String &, const String &)> fwdTestPhoneBodyFn_; // RFC-0187
+    std::function<void(int)> smsAgeFilterFn_;                                  // RFC-0190
     std::function<String()> callStatusFn_;                           // RFC-0173
     std::function<String()> smsHandlerInfoFn_;                       // RFC-0174
     std::function<bool(int)> smsForwardFn_;        // RFC-0146

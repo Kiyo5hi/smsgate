@@ -330,6 +330,52 @@ void test_normalizePhone_strips_dots()
         sms_codec::normalizePhoneNumber("+33.1.23.45.67.89").c_str());
 }
 
+// ---------- RFC-0190: pduTimestampToUnix ----------
+
+// 2000-01-01 00:00:00 UTC, no timezone offset
+// Proleptic Gregorian: 30 years * 365 + 7 leap days = 10957 days = 946684800s
+static void test_pduTimestampToUnix_epoch_2000()
+{
+    // "00/01/01,00:00:00+00" (tz=0 => UTC directly)
+    long got = (long)sms_codec::pduTimestampToUnix(String("00/01/01,00:00:00+00"));
+    TEST_ASSERT_EQUAL_INT32(946684800L, (int32_t)got);
+}
+
+// 2026-04-10 12:00:00 in UTC+8 => UTC = 04:00:00
+// Days from 1970-01-01 to 2026-04-10:
+//   56 years + leap adjustments + day-of-year offset
+// Quick sanity: just verify it returns > 0 and is a reasonable value
+static void test_pduTimestampToUnix_utc8_converts_to_utc()
+{
+    // timestamp "26/04/10,12:00:00+32" — tz=+32 quarter-hours = +8h = +480min
+    long got = (long)sms_codec::pduTimestampToUnix(String("26/04/10,12:00:00+32"));
+    TEST_ASSERT_TRUE(got > 1000000000L); // must be a valid post-2001 Unix time
+    // Local 12:00 UTC+8 = 04:00 UTC; "26/04/10,04:00:00+00" should match
+    long gotUtc = (long)sms_codec::pduTimestampToUnix(String("26/04/10,04:00:00+00"));
+    TEST_ASSERT_EQUAL_INT32((int32_t)gotUtc, (int32_t)got);
+}
+
+static void test_pduTimestampToUnix_negative_tz()
+{
+    // "26/04/10,04:00:00-20" => UTC-5 (20 quarter-hours = 5h)
+    // local 04:00 UTC-5 = 09:00 UTC
+    long got    = (long)sms_codec::pduTimestampToUnix(String("26/04/10,04:00:00-20"));
+    long gotUtc = (long)sms_codec::pduTimestampToUnix(String("26/04/10,09:00:00+00"));
+    TEST_ASSERT_EQUAL_INT32((int32_t)gotUtc, (int32_t)got);
+}
+
+static void test_pduTimestampToUnix_too_short_returns_zero()
+{
+    long got = (long)sms_codec::pduTimestampToUnix(String("26/04/10,12:00"));
+    TEST_ASSERT_EQUAL_INT32(0, (int32_t)got);
+}
+
+static void test_pduTimestampToUnix_empty_returns_zero()
+{
+    long got = (long)sms_codec::pduTimestampToUnix(String(""));
+    TEST_ASSERT_EQUAL_INT32(0, (int32_t)got);
+}
+
 void run_sms_codec_tests()
 {
     RUN_TEST(test_decodeUCS2_plain_ascii_passthrough);
@@ -376,4 +422,10 @@ void run_sms_codec_tests()
     RUN_TEST(test_normalizePhone_local_format_unchanged);
     RUN_TEST(test_normalizePhone_already_clean);
     RUN_TEST(test_normalizePhone_strips_dots);
+    // RFC-0190: pduTimestampToUnix
+    RUN_TEST(test_pduTimestampToUnix_epoch_2000);
+    RUN_TEST(test_pduTimestampToUnix_utc8_converts_to_utc);
+    RUN_TEST(test_pduTimestampToUnix_negative_tz);
+    RUN_TEST(test_pduTimestampToUnix_too_short_returns_zero);
+    RUN_TEST(test_pduTimestampToUnix_empty_returns_zero);
 }

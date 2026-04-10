@@ -181,6 +181,18 @@ public:
     void setDedupWindowMs(unsigned long ms) { dedupWindowMs_ = ms; }
     unsigned long dedupWindowMs() const { return dedupWindowMs_; }
 
+    // RFC-0190: Max SMS age to forward (in hours). 0 = disabled (forward all).
+    // SMS with a PDU timestamp older than this are silently deleted from SIM.
+    // Requires NTP sync — if time() < 1e9 the filter is bypassed.
+    void setMaxSmsAgeHours(int h) { maxSmsAgeHours_ = (h >= 0) ? h : 0; }
+    int maxSmsAgeHours() const { return maxSmsAgeHours_; }
+
+    // RFC-0190: Inject a wall-clock function returning UTC Unix seconds.
+    // Production default is time(nullptr). Tests inject a lambda returning
+    // a fixed value so the age filter is deterministic on the host.
+    using WallClockFn = std::function<long()>;
+    void setWallClockFn(WallClockFn fn) { wallClock_ = std::move(fn); }
+
     // RFC-0145: Clear the dedup ring buffer so recently-seen SMS can
     // be forwarded again immediately.
     void clearDedupBuffer()
@@ -342,6 +354,8 @@ private:
     unsigned long dedupWindowMs_ = kDedupWindowMs;   // RFC-0144
     int maxConsecutiveFailures_ = MAX_CONSECUTIVE_FAILURES; // RFC-0138
     int consecutiveFailures_ = 0;
+    int maxSmsAgeHours_ = 0;                               // RFC-0190 (0 = disabled)
+    WallClockFn wallClock_;                                // RFC-0190 (default: time(nullptr))
     int smsForwarded_ = 0;
     int telegramSendFailures_ = 0;
     int smsBlocked_ = 0;      // RFC-0062

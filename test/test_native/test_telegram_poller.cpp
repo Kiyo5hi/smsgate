@@ -6560,6 +6560,93 @@ void test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot()
     TEST_ASSERT_TRUE(rebootCalled);
 }
 
+// RFC-0190: /setsmsagefilter 24 → calls smsAgeFilterFn with 24.
+void test_TelegramPoller_setsmsagefilter_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    int capturedHours = -1;
+    poller.setSmsAgeFilterFn([&capturedHours](int h) { capturedHours = h; });
+
+    bot.queueUpdateBatch({makeUpdate(1110, kAllowedFromId, 0, "/setsmsagefilter 24", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1110, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL_INT(24, capturedHours);
+    bool sawOk = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("24h") >= 0) { sawOk = true; break; }
+    TEST_ASSERT_TRUE(sawOk);
+}
+
+// RFC-0190: /setsmsagefilter 0 → replies "age filter disabled".
+void test_TelegramPoller_setsmsagefilter_zero_disables()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    int capturedHours = -1;
+    poller.setSmsAgeFilterFn([&capturedHours](int h) { capturedHours = h; });
+
+    bot.queueUpdateBatch({makeUpdate(1111, kAllowedFromId, 0, "/setsmsagefilter 0", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1111, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL_INT(0, capturedHours);
+    bool sawDisabled = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("disabled") >= 0) { sawDisabled = true; break; }
+    TEST_ASSERT_TRUE(sawDisabled);
+}
+
+// RFC-0190: /setsmsagefilter 9999 → out of range, error reply.
+void test_TelegramPoller_setsmsagefilter_out_of_range()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    int capturedHours = -1;
+    poller.setSmsAgeFilterFn([&capturedHours](int h) { capturedHours = h; });
+
+    bot.queueUpdateBatch({makeUpdate(1112, kAllowedFromId, 0, "/setsmsagefilter 9999", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1112, poller.lastUpdateId());
+    // fn not called on error
+    TEST_ASSERT_EQUAL_INT(-1, capturedHours);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -6850,4 +6937,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
+    // RFC-0190: /setsmsagefilter command
+    RUN_TEST(test_TelegramPoller_setsmsagefilter_calls_fn);
+    RUN_TEST(test_TelegramPoller_setsmsagefilter_zero_disables);
+    RUN_TEST(test_TelegramPoller_setsmsagefilter_out_of_range);
 }

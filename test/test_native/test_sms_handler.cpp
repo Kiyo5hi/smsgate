@@ -662,6 +662,95 @@ void test_previewFormat_uses_fwdTag_and_gmtOffset()
     TEST_ASSERT_TRUE(result.indexOf("Hello") >= 0);
 }
 
+// ---------- RFC-0190: SMS age filter ----------
+
+// The test PDU timestamp encodes 2024-01-15 10:30:45 GMT+8 = 02:30:45 UTC.
+// pduTimestampToUnix("24/01/15,10:30:45+32") should equal 1705285845.
+static constexpr long kPduUnix = 1705285845L;
+
+// Wall clock returns a time 25 hours after the PDU => age 25h.
+// With filter = 24h the SMS should be skipped.
+static void test_smsAgeFilter_skips_old_sms()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    SmsHandler handler(modem, bot, [&]() {});
+    handler.setMaxSmsAgeHours(24);
+    // Inject wall clock: 25 hours after PDU
+    handler.setWallClockFn([&]() -> long { return kPduUnix + 25 * 3600L; });
+
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty(); // CMGD response
+
+    handler.handleSmsIndex(1);
+
+    // No Telegram message sent — SMS was filtered.
+    TEST_ASSERT_EQUAL_INT(0, (int)bot.sentMessages().size());
+    // CMGD was called to delete the stale SMS.
+    const auto &cmds = modem.sentCommands();
+    bool deleted = false;
+    for (const auto &cmd : cmds)
+        if (cmd.indexOf("+CMGD=") >= 0) deleted = true;
+    TEST_ASSERT_TRUE(deleted);
+}
+
+// Wall clock returns a time 1 hour after the PDU => age 1h.
+// With filter = 24h the SMS should be forwarded normally.
+static void test_smsAgeFilter_forwards_recent_sms()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    SmsHandler handler(modem, bot, [&]() {});
+    handler.setMaxSmsAgeHours(24);
+    // Inject wall clock: only 1 hour after PDU
+    handler.setWallClockFn([&]() -> long { return kPduUnix + 1 * 3600L; });
+
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty(); // CMGD response on success
+
+    handler.handleSmsIndex(1);
+
+    // SMS was within the filter window — should be forwarded.
+    TEST_ASSERT_EQUAL_INT(1, (int)bot.sentMessages().size());
+}
+
+// filter = 0 means disabled; any age is forwarded.
+static void test_smsAgeFilter_disabled_forwards_very_old_sms()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    SmsHandler handler(modem, bot, [&]() {});
+    handler.setMaxSmsAgeHours(0); // disabled
+    // Wall clock far in the future — would normally trigger the filter.
+    handler.setWallClockFn([&]() -> long { return kPduUnix + 9000 * 3600L; });
+
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty();
+
+    handler.handleSmsIndex(1);
+
+    TEST_ASSERT_EQUAL_INT(1, (int)bot.sentMessages().size());
+}
+
+// If wall clock returns < 1e9 (NTP not synced), the filter is bypassed.
+static void test_smsAgeFilter_bypassed_when_no_ntp()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    SmsHandler handler(modem, bot, [&]() {});
+    handler.setMaxSmsAgeHours(1);
+    // Wall clock returns 0 (no NTP sync)
+    handler.setWallClockFn([&]() -> long { return 0L; });
+
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty();
+
+    handler.handleSmsIndex(1);
+
+    // Filter bypassed — SMS forwarded.
+    TEST_ASSERT_EQUAL_INT(1, (int)bot.sentMessages().size());
+}
+
 // ---------- Unity plumbing ----------
 
 void run_sms_handler_tests()
@@ -694,4 +783,9 @@ void run_sms_handler_tests()
     RUN_TEST(test_alias_prepended_to_forwarded_message_header);
     // RFC-0181: previewFormat
     RUN_TEST(test_previewFormat_uses_fwdTag_and_gmtOffset);
+    // RFC-0190: SMS age filter
+    RUN_TEST(test_smsAgeFilter_skips_old_sms);
+    RUN_TEST(test_smsAgeFilter_forwards_recent_sms);
+    RUN_TEST(test_smsAgeFilter_disabled_forwards_very_old_sms);
+    RUN_TEST(test_smsAgeFilter_bypassed_when_no_ntp);
 }

@@ -1088,6 +1088,12 @@ void setup()
             if (realPersist.loadBlob("dedup_secs", &v, sizeof(v)) == sizeof(v))
                 smsHandler.setDedupWindowMs((unsigned long)v * 1000UL);
         }
+        // RFC-0190: Restore SMS age filter from NVS.
+        {
+            int32_t v = 0;
+            if (realPersist.loadBlob("sms_age_h", &v, sizeof(v)) == sizeof(v) && v >= 0)
+                smsHandler.setMaxSmsAgeHours((int)v);
+        }
 
         // RFC-0150: Load auto-reply text from NVS.
         {
@@ -1471,6 +1477,11 @@ void setup()
             smsSender.setMaxParts(n);
             int32_t v = n;
             realPersist.saveBlob("max_parts", &v, sizeof(v));
+        });
+        telegramPoller->setSmsAgeFilterFn([&smsHandler](int h) { // RFC-0190
+            smsHandler.setMaxSmsAgeHours(h);
+            int32_t v = h;
+            realPersist.saveBlob("sms_age_h", &v, sizeof(v));
         });
         telegramPoller->setBlockingEnabledFn([&smsHandler](bool enable) { // RFC-0162/0183
             smsHandler.setBlockingEnabled(enable);

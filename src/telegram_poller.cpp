@@ -2607,6 +2607,41 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0190: /setsmsagefilter <hours> — skip forwarding SMS older than N hours.
+        if (lower == "/setsmsagefilter" || lower.startsWith("/setsmsagefilter "))
+        {
+            if (!smsAgeFilterFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(smsagefilter not configured)"));
+                return;
+            }
+            String arg = extractArg(u.text, "/setsmsagefilter ");
+            arg.trim();
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setsmsagefilter <hours>\n"
+                           "0 = disable (forward all SMS). Max 8760 (1 year).\n"
+                           "Example: /setsmsagefilter 24"));
+                return;
+            }
+            long h = arg.toInt();
+            if (h < 0 || h > 8760)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Hours must be 0\xe2\x80\x93 8760.")); // ❌
+                return;
+            }
+            smsAgeFilterFn_((int)h);
+            if (h == 0)
+                bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 SMS age filter disabled.")); // ✅
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 SMS age filter set to ") // ✅
+                    + String((int)h) + String("h."));
+            return;
+        }
+
         Serial.println("TelegramPoller: no reply_to_message_id, dropping");
         {
             String help = "Reply to a forwarded SMS to send a response. ";

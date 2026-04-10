@@ -55,6 +55,15 @@ String normalizePhoneNumber(const String &raw);
 // (e.g. 330 for UTC+5:30, -300 for UTC-5). RFC-0169/0175.
 String timestampToRFC3339(const String &timestamp, int gmtOffsetMinutes = 480);
 
+// RFC-0190: Convert a PDU timestamp string ("yy/MM/dd,HH:mm:ss+zz") to a
+// UTC Unix timestamp (seconds since 1970-01-01 00:00:00 UTC).
+// The "+zz" suffix encodes the timezone offset in quarter-hours; the
+// resulting local time is shifted to UTC before returning.
+// Returns 0 if the string is malformed or shorter than 17 chars.
+// The return type is long (not time_t) to avoid #include <time.h> in this
+// pure header — callers cast to time_t as needed.
+long pduTimestampToUnix(const String &timestamp);
+
 // Parse a `+CLIP: "<number>",<type>,...` URC line, extracting the
 // caller number field into `number`. Returns true if the line starts
 // with `+CLIP:` and has a quoted number field (even an empty one);

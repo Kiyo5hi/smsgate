@@ -607,6 +607,28 @@ void SmsHandler::handleSmsIndex(int idx)
             if (debugLog_) { logEntry.outcome = "dup"; debugLog_->push(logEntry); }
             return;
         }
+        // RFC-0190: Age filter — skip and delete SMS older than maxSmsAgeHours_.
+        if (maxSmsAgeHours_ > 0 && pdu.timestamp.length() >= 17)
+        {
+            long wallNow = wallClock_ ? wallClock_() : (long)time(nullptr);
+            if (wallNow > 1000000000L) // NTP synced
+            {
+                long pduUnix = sms_codec::pduTimestampToUnix(pdu.timestamp);
+                if (pduUnix > 0)
+                {
+                    long ageHours = (wallNow - pduUnix) / 3600L;
+                    if (ageHours > (long)maxSmsAgeHours_)
+                    {
+                        Serial.printf("Skipping SMS idx %d: age %ldh > filter %dh\n",
+                                      idx, ageHours, maxSmsAgeHours_);
+                        modem_.sendAT("+CMGD=" + String(idx));
+                        modem_.waitResponseOk(1000UL);
+                        if (debugLog_) { logEntry.outcome = "age skip"; debugLog_->push(logEntry); }
+                        return;
+                    }
+                }
+            }
+        }
         if (forwardSingle(pdu, idx))
         {
             recordDedup(pdu.sender, pdu.content); // RFC-0061
@@ -631,6 +653,29 @@ void SmsHandler::handleSmsIndex(int idx)
     Serial.print((int)pdu.concatPartNumber);
     Serial.print("/");
     Serial.println((int)pdu.concatTotalParts);
+
+    // RFC-0190: Age filter for concat fragments — skip and delete if too old.
+    if (maxSmsAgeHours_ > 0 && pdu.timestamp.length() >= 17)
+    {
+        long wallNow = wallClock_ ? wallClock_() : (long)time(nullptr);
+        if (wallNow > 1000000000L)
+        {
+            long pduUnix = sms_codec::pduTimestampToUnix(pdu.timestamp);
+            if (pduUnix > 0)
+            {
+                long ageHours = (wallNow - pduUnix) / 3600L;
+                if (ageHours > (long)maxSmsAgeHours_)
+                {
+                    Serial.printf("Skipping concat fragment idx %d: age %ldh > filter %dh\n",
+                                  idx, ageHours, maxSmsAgeHours_);
+                    modem_.sendAT("+CMGD=" + String(idx));
+                    modem_.waitResponseOk(1000UL);
+                    if (debugLog_) { logEntry.outcome = "age skip"; debugLog_->push(logEntry); }
+                    return;
+                }
+            }
+        }
+    }
 
     std::vector<int> deleteSlots;
     bool wasDuplicate = false;

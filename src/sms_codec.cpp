@@ -71,6 +71,50 @@ String timestampToRFC3339(const String &timestamp, int gmtOffsetMinutes)
     return year + "-" + month + "-" + day + "T" + hour + ":" + minute + ":" + second + tzBuf;
 }
 
+long pduTimestampToUnix(const String &timestamp)
+{
+    // Input format: "yy/MM/dd,HH:mm:ss[+/-]zz"
+    // "+zz" is timezone offset in quarter-hours (e.g. +32 = UTC+8).
+    // Returns 0 on any parse error.
+    if (timestamp.length() < 17) return 0;
+
+    int yy = timestamp.substring(0, 2).toInt();
+    int mo = timestamp.substring(3, 5).toInt();
+    int dd = timestamp.substring(6, 8).toInt();
+    int hh = timestamp.substring(9, 11).toInt();
+    int mm = timestamp.substring(12, 14).toInt();
+    int ss = timestamp.substring(15, 17).toInt();
+
+    // Validate ranges
+    if (mo < 1 || mo > 12 || dd < 1 || dd > 31 ||
+        hh > 23 || mm > 59 || ss > 60) return 0;
+
+    int year = 2000 + yy;
+
+    // Proleptic Gregorian: days since 1970-01-01.
+    static const uint16_t kMD[12] = {0,31,59,90,120,151,181,212,243,273,304,334};
+    long leaps = (long)((year-1)/4 - (year-1)/100 + (year-1)/400)
+               - (long)(1969/4   - 1969/100   + 1969/400);
+    bool thisLeap = (year%4==0 && (year%100!=0 || year%400==0));
+    long doy = kMD[mo-1] + dd - 1 + (mo > 2 && thisLeap ? 1 : 0);
+    long daysSince1970 = (long)(year - 1970) * 365L + leaps + doy;
+
+    long localUnix = daysSince1970 * 86400L + hh * 3600L + mm * 60L + ss;
+
+    // Parse timezone suffix (optional). Character at index 17 is '+' or '-'.
+    int tzOffsetMin = 0;
+    if (timestamp.length() >= 18)
+    {
+        char sign = timestamp[17];
+        int tzRaw = (int)timestamp.substring(18).toInt();
+        tzOffsetMin = tzRaw * 15; // quarter-hours -> minutes
+        if (sign == '-') tzOffsetMin = -tzOffsetMin;
+    }
+
+    // Subtract local offset to get UTC
+    return localUnix - (long)tzOffsetMin * 60L;
+}
+
 static bool isHexString(const String &s)
 {
     // True iff s is non-empty, even-length, and all chars are [0-9A-Fa-f].
