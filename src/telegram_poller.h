@@ -385,6 +385,11 @@ public:
     // Returns a human-readable confirmation string (e.g. "paused for 30 min").
     void setPauseFwdFn(std::function<String(uint32_t)> fn) { pauseFwdFn_ = std::move(fn); }
 
+    // RFC-0202: Optional wall-time fn. When set, scheduled SMS commands show
+    // absolute UTC timestamps alongside relative minutes (e.g. "in 30m (14:32 UTC)").
+    // Returns Unix seconds (long); 0 or negative means NTP not yet synced.
+    void setWallTimeFn(std::function<long()> fn) { wallTimeFn_ = std::move(fn); }
+
     // RFC-0200: Optional persist-scheduled-queue fn. Called after any mutation
     // to the scheduled queue (schedulesend, cancelsched, clearschedule, scheddelay,
     // schedrename, sendnow, and when a slot fires in tick()). Production wires to
@@ -555,6 +560,7 @@ private:
     std::function<void(int)> smsAgeFilterFn_;                                  // RFC-0190
     std::function<String(const String &)> testPduFn_;                          // RFC-0191
     std::function<String(uint32_t)> pauseFwdFn_;                               // RFC-0192
+    std::function<long()> wallTimeFn_;                                         // RFC-0202
     std::function<void()> persistSchedFn_;                                     // RFC-0200
     std::function<String()> callStatusFn_;                           // RFC-0173
     std::function<String()> smsHandlerInfoFn_;                       // RFC-0174

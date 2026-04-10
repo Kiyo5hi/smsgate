@@ -6,6 +6,36 @@
 #include <memory>
 #include <time.h>
 
+// RFC-0202: Format a scheduled-send ETA string. If wallTimeFn is set and
+// returns a valid epoch (> 1e9), appends the absolute UTC time; otherwise
+// falls back to relative-only. Examples:
+//   "now (overdue)"          — sendAtMs already past
+//   "in 30m (14:32 UTC)"    — fires today
+//   "in 2880m (04/12 09:00 UTC)" — fires more than 24h from now
+static String schedEtaStr(uint32_t sendAtMs, uint32_t nowMs,
+                           const std::function<long()> &wallTimeFn)
+{
+    if (sendAtMs == 0) return String("(free)");
+    if (nowMs >= sendAtMs) {
+        return String("now (overdue)");
+    }
+    uint32_t diffMs = sendAtMs - nowMs;
+    uint32_t diffMin = (diffMs + 59999U) / 60000U;
+    String rel = String("in ") + String((int)diffMin) + String("m");
+    if (!wallTimeFn) return rel;
+    long wallNow = wallTimeFn();
+    if (wallNow <= 1000000000L) return rel; // NTP not synced
+    long sendAtUnix = wallNow + (long)diffMs / 1000L;
+    time_t t = (time_t)sendAtUnix;
+    struct tm *tm_info = gmtime(&t);
+    char buf[20];
+    if (diffMs > 86400000UL)
+        strftime(buf, sizeof(buf), "%m/%d %H:%M UTC", tm_info);
+    else
+        strftime(buf, sizeof(buf), "%H:%M UTC", tm_info);
+    return rel + String(" (") + String(buf) + String(")");
+}
+
 // File-static helper: strips the given prefix from `lower` and returns
 // the trimmed remainder. Returns an empty String if lower does not start
 // with prefix.
@@ -2549,13 +2579,12 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             scheduledQueue_[slotIdx].phone    = phone;
             scheduledQueue_[slotIdx].body     = body;
             if (persistSchedFn_) persistSchedFn_(); // RFC-0200
+            uint32_t nowMsSched = clock_ ? clock_() : 0;
+            String eta = schedEtaStr(sendAt, nowMsSched, wallTimeFn_); // RFC-0202
             String reply = String("\xe2\x8f\xb0 SMS to ") + phone // ⏰
-                         + String(" scheduled in ")
-                         + String((int)delayMin)
-                         + String(delayMin == 1 ? " min (slot " : " min (slot ")
-                         + String(slotIdx + 1) + String("/")
-                         + String((int)kScheduledQueueSize)
-                         + String(").");
+                         + String(" scheduled ") + eta
+                         + String(" (slot ") + String(slotIdx + 1) + String("/")
+                         + String((int)kScheduledQueueSize) + String(").");
             bot_.sendMessageTo(u.chatId, reply);
             return;
         }
@@ -2570,11 +2599,9 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             {
                 if (scheduledQueue_[i].sendAtMs == 0) continue;
                 pending++;
-                uint32_t eta = (nowMs2 < scheduledQueue_[i].sendAtMs)
-                               ? (scheduledQueue_[i].sendAtMs - nowMs2 + 59999) / 60000
-                               : 0;
+                String eta = schedEtaStr(scheduledQueue_[i].sendAtMs, nowMs2, wallTimeFn_); // RFC-0202
                 out += String(i + 1) + String(". ") + scheduledQueue_[i].phone
-                    + String(" in ") + String((int)eta) + String("m: ");
+                    + String(" ") + eta + String(": ");
                 String preview = scheduledQueue_[i].body;
                 if (preview.length() > 40) preview = preview.substring(0, 40) + String("...");
                 out += preview;
@@ -2638,12 +2665,10 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 return;
             }
             uint32_t nowMs4 = clock_ ? clock_() : 0;
-            uint32_t eta = (nowMs4 < scheduledQueue_[n - 1].sendAtMs)
-                           ? (scheduledQueue_[n - 1].sendAtMs - nowMs4 + 59999) / 60000
-                           : 0;
+            String eta = schedEtaStr(scheduledQueue_[n - 1].sendAtMs, nowMs4, wallTimeFn_); // RFC-0202
             String reply = String("\xe2\x8f\xb0 Slot ") + String(n) + String(":\n") // ⏰
                          + String("To: ") + scheduledQueue_[n - 1].phone + String("\n")
-                         + String("ETA: ") + String((int)eta) + String(" min\n")
+                         + String("ETA: ") + eta + String("\n")
                          + String("Body: ") + scheduledQueue_[n - 1].body;
             bot_.sendMessageTo(u.chatId, reply);
             return;

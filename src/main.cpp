@@ -1964,6 +1964,7 @@ void setup()
             s += "  CSQ: "; s += String(cachedCsq); s += " ("; s += csqLabel; s += ")";
             return s;
         });
+        telegramPoller->setWallTimeFn([]() -> long { return (long)time(nullptr); }); // RFC-0202
         // RFC-0200: Serialize scheduled SMS queue to NVS after any mutation.
         // Blob layout: 1 version byte + 5 × 164-byte slots.
         // Slot: uint32_t sendAtUnix (0 = free), char phone[32], char body[128].

@@ -6924,6 +6924,77 @@ void test_TelegramPoller_setsmsagefilter_out_of_range()
     TEST_ASSERT_EQUAL_INT(-1, capturedHours);
 }
 
+// RFC-0202: /schedulesend reply includes absolute time when wallTimeFn set.
+void test_TelegramPoller_schedulesend_shows_abs_time_when_ntpsynced()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // Set wall time fn: return a fixed epoch well past 1e9.
+    poller.setWallTimeFn([]() -> long { return 1744300000L; }); // arbitrary valid epoch
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(9001, kAllowedFromId, 0,
+        "/schedulesend 30 +5555 Hello abs time", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(9001, poller.lastUpdateId());
+    // Reply should contain "UTC" (absolute time appended).
+    bool sawUtc = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("UTC") >= 0) { sawUtc = true; break; }
+    TEST_ASSERT_TRUE(sawUtc);
+}
+
+// RFC-0202: /schedqueue reply includes absolute time when wallTimeFn set.
+void test_TelegramPoller_schedqueue_shows_abs_time_when_ntpsynced()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setWallTimeFn([]() -> long { return 1744300000L; });
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Schedule a slot.
+    bot.queueUpdateBatch({makeUpdate(9002, kAllowedFromId, 0,
+        "/schedulesend 60 +6666 Queue time test", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Query /schedqueue.
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(9003, kAllowedFromId, 0, "/schedqueue", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(9003, poller.lastUpdateId());
+    bool sawUtc = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("UTC") >= 0) { sawUtc = true; break; }
+    TEST_ASSERT_TRUE(sawUtc);
+}
+
 // RFC-0200: persistSchedFn_ is called when a slot fires in tick().
 void test_TelegramPoller_persistSchedFn_called_on_tick_fire()
 {
@@ -7313,6 +7384,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_clearschedule_clears_all);
     // RFC-0193: /sendnow command
     RUN_TEST(test_TelegramPoller_sendnow_fires_scheduled);
+    // RFC-0202: absolute time in scheduled SMS commands
+    RUN_TEST(test_TelegramPoller_schedulesend_shows_abs_time_when_ntpsynced);
+    RUN_TEST(test_TelegramPoller_schedqueue_shows_abs_time_when_ntpsynced);
     // RFC-0200: persist callback + getSchedQueue/setSchedQueue
     RUN_TEST(test_TelegramPoller_persistSchedFn_called_on_tick_fire);
     RUN_TEST(test_TelegramPoller_setSchedQueue_round_trip);
