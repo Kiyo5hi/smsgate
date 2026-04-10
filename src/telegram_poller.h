@@ -385,6 +385,32 @@ public:
     // Returns a human-readable confirmation string (e.g. "paused for 30 min").
     void setPauseFwdFn(std::function<String(uint32_t)> fn) { pauseFwdFn_ = std::move(fn); }
 
+    // RFC-0200: Optional persist-scheduled-queue fn. Called after any mutation
+    // to the scheduled queue (schedulesend, cancelsched, clearschedule, scheddelay,
+    // schedrename, sendnow, and when a slot fires in tick()). Production wires to
+    // a lambda that serializes the queue snapshot and saves to NVS.
+    void setPersistSchedFn(std::function<void()> fn) { persistSchedFn_ = std::move(fn); }
+
+    // RFC-0188/RFC-0200: Scheduled SMS slot — public so getSchedQueue/setSchedQueue
+    // callers (main.cpp, tests) can use the type without naming a private nested type.
+    struct ScheduledSms {
+        uint32_t sendAtMs = 0; // millis() when to fire; 0 = free slot
+        String   phone;
+        String   body;
+    };
+    static constexpr size_t kScheduledQueueSize = 5;
+
+    // RFC-0200: Expose queue snapshot for serialization / tests.
+    const std::array<ScheduledSms, kScheduledQueueSize>& getSchedQueue() const
+    {
+        return scheduledQueue_;
+    }
+    // Set queue from deserialized NVS data (called at boot after NTP sync).
+    void setSchedQueue(const std::array<ScheduledSms, kScheduledQueueSize>& q)
+    {
+        scheduledQueue_ = q;
+    }
+
     // RFC-0173: Optional call status fn. When set, /callstatus calls this
     // fn to get a formatted snapshot of call handler config + state.
     void setCallStatusFn(std::function<String()> fn) { callStatusFn_ = std::move(fn); }
@@ -529,6 +555,7 @@ private:
     std::function<void(int)> smsAgeFilterFn_;                                  // RFC-0190
     std::function<String(const String &)> testPduFn_;                          // RFC-0191
     std::function<String(uint32_t)> pauseFwdFn_;                               // RFC-0192
+    std::function<void()> persistSchedFn_;                                     // RFC-0200
     std::function<String()> callStatusFn_;                           // RFC-0173
     std::function<String()> smsHandlerInfoFn_;                       // RFC-0174
     std::function<bool(int)> smsForwardFn_;        // RFC-0146
@@ -541,13 +568,8 @@ private:
     std::function<String()> simListFn_;   // RFC-0140
     std::function<String(int)> simReadFn_; // RFC-0141
     // RFC-0188: Scheduled SMS queue — up to 5 in-flight slots.
-    // sendAtMs == 0 means the slot is free.
-    struct ScheduledSms {
-        uint32_t sendAtMs = 0;
-        String   phone;
-        String   body;
-    };
-    static constexpr size_t kScheduledQueueSize = 5;
+    // sendAtMs == 0 means the slot is free. Struct and size constant are
+    // public (declared above getSchedQueue/setSchedQueue).
     std::array<ScheduledSms, kScheduledQueueSize> scheduledQueue_{};
 
     int32_t lastUpdateId_ = 0;

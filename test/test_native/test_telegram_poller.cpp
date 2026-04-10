@@ -6924,6 +6924,86 @@ void test_TelegramPoller_setsmsagefilter_out_of_range()
     TEST_ASSERT_EQUAL_INT(-1, capturedHours);
 }
 
+// RFC-0200: persistSchedFn_ is called when a slot fires in tick().
+void test_TelegramPoller_persistSchedFn_called_on_tick_fire()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick(); // consume initial poll
+
+    int persistCalls = 0;
+    poller.setPersistSchedFn([&]() { persistCalls++; });
+
+    // Schedule a 1-minute SMS.
+    bot.queueUpdateBatch({makeUpdate(8001, kAllowedFromId, 0,
+        "/schedulesend 1 +1234 Persist test", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(8001, poller.lastUpdateId());
+    // persistSchedFn_ called once from /schedulesend mutation.
+    TEST_ASSERT_EQUAL(1, persistCalls);
+
+    // Advance past the 1-minute delay; tick() should fire and call persist again.
+    clk.nowMs += 60000UL;
+    poller.tick();
+    TEST_ASSERT_EQUAL(1, sender.queueSize()); // slot fired
+    TEST_ASSERT_EQUAL(2, persistCalls);       // persist called again for drain
+}
+
+// RFC-0200: getSchedQueue/setSchedQueue round-trip preserves phone and body.
+void test_TelegramPoller_setSchedQueue_round_trip()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick(); // consume initial poll
+
+    // Schedule a slot via /schedulesend.
+    bot.queueUpdateBatch({makeUpdate(8002, kAllowedFromId, 0,
+        "/schedulesend 30 +9999 Round-trip body", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(8002, poller.lastUpdateId());
+
+    // Snapshot the queue and verify the slot is populated.
+    const auto& q1 = poller.getSchedQueue();
+    TEST_ASSERT_EQUAL_STRING("+9999", q1[0].phone.c_str());
+    TEST_ASSERT_EQUAL_STRING("Round-trip body", q1[0].body.c_str());
+    TEST_ASSERT_NOT_EQUAL(0U, q1[0].sendAtMs);
+
+    // Copy, modify one field, push back.
+    auto q2 = poller.getSchedQueue();
+    q2[0].phone = String("+1111");
+    poller.setSchedQueue(q2);
+
+    const auto& q3 = poller.getSchedQueue();
+    TEST_ASSERT_EQUAL_STRING("+1111", q3[0].phone.c_str());
+    TEST_ASSERT_EQUAL_STRING("Round-trip body", q3[0].body.c_str());
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -7233,4 +7313,7 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_clearschedule_clears_all);
     // RFC-0193: /sendnow command
     RUN_TEST(test_TelegramPoller_sendnow_fires_scheduled);
+    // RFC-0200: persist callback + getSchedQueue/setSchedQueue
+    RUN_TEST(test_TelegramPoller_persistSchedFn_called_on_tick_fire);
+    RUN_TEST(test_TelegramPoller_setSchedQueue_round_trip);
 }

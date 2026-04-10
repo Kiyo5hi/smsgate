@@ -2548,13 +2548,14 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             scheduledQueue_[slotIdx].sendAtMs = sendAt;
             scheduledQueue_[slotIdx].phone    = phone;
             scheduledQueue_[slotIdx].body     = body;
+            if (persistSchedFn_) persistSchedFn_(); // RFC-0200
             String reply = String("\xe2\x8f\xb0 SMS to ") + phone // ⏰
                          + String(" scheduled in ")
                          + String((int)delayMin)
                          + String(delayMin == 1 ? " min (slot " : " min (slot ")
                          + String(slotIdx + 1) + String("/")
                          + String((int)kScheduledQueueSize)
-                         + String(").\nNote: lost on reboot.");
+                         + String(").");
             bot_.sendMessageTo(u.chatId, reply);
             return;
         }
@@ -2610,6 +2611,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             scheduledQueue_[n - 1].sendAtMs = 0;
             scheduledQueue_[n - 1].phone    = String();
             scheduledQueue_[n - 1].body     = String();
+            if (persistSchedFn_) persistSchedFn_(); // RFC-0200
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Slot ") + String(n) + String(" cancelled.")); // ✅
             return;
@@ -2678,6 +2680,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 return;
             }
             scheduledQueue_[n - 1].phone = newPhone;
+            if (persistSchedFn_) persistSchedFn_(); // RFC-0200
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Slot ") + String(n) // ✅
                 + String(" phone changed to ") + newPhone + String("."));
@@ -2713,6 +2716,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 return;
             }
             scheduledQueue_[n - 1].sendAtMs += (uint32_t)extra * 60000UL;
+            if (persistSchedFn_) persistSchedFn_(); // RFC-0200
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Slot ") + String(n) // ✅
                 + String(" extended by ") + String((int)extra) + String(" min."));
@@ -2733,6 +2737,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     cleared++;
                 }
             }
+            if (cleared > 0 && persistSchedFn_) persistSchedFn_(); // RFC-0200
             if (cleared == 0)
                 bot_.sendMessageTo(u.chatId, String("(no scheduled SMS)"));
             else
@@ -2756,6 +2761,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     fired++;
                 }
             }
+            if (fired > 0 && persistSchedFn_) persistSchedFn_(); // RFC-0200
             if (fired == 0)
                 bot_.sendMessageTo(u.chatId, String("(no scheduled SMS to send)"));
             else
@@ -2926,6 +2932,7 @@ void TelegramPoller::tick()
     uint32_t now = clock_ ? clock_() : 0;
 
     // RFC-0188: Drain scheduled SMS whose sendAtMs has passed.
+    bool schedFired = false;
     for (auto &slot : scheduledQueue_)
     {
         if (slot.sendAtMs != 0 && now >= slot.sendAtMs)
@@ -2933,9 +2940,13 @@ void TelegramPoller::tick()
             // Try to enqueue. SmsSender::enqueue returns false only if the
             // retry queue is full — leave the slot and try again next tick.
             if (smsSender_.enqueue(slot.phone, slot.body))
+            {
                 slot.sendAtMs = 0; // free the slot
+                schedFired = true;
+            }
         }
     }
+    if (schedFired && persistSchedFn_) persistSchedFn_(); // RFC-0200
 
     // Rate-limit the actual poll. First call always polls so a fresh
     // boot picks up any queued replies immediately.

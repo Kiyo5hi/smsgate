@@ -1962,7 +1962,74 @@ void setup()
             s += "  CSQ: "; s += String(cachedCsq); s += " ("; s += csqLabel; s += ")";
             return s;
         });
+        // RFC-0200: Serialize scheduled SMS queue to NVS after any mutation.
+        // Blob layout: 1 version byte + 5 × 164-byte slots.
+        // Slot: uint32_t sendAtUnix (0 = free), char phone[32], char body[128].
+        telegramPoller->setPersistSchedFn([&]() {
+            static const size_t kSlotSize = sizeof(uint32_t) + 32 + 128; // 164
+            static const size_t kNumSlots = 5;
+            uint8_t blob[1 + kNumSlots * kSlotSize] = {};
+            blob[0] = 0x01; // version byte
+            const auto& q = telegramPoller->getSchedQueue();
+            long nowSec = (long)time(nullptr);
+            long nowMs  = (long)(uint32_t)millis();
+            for (size_t i = 0; i < q.size() && i < kNumSlots; i++)
+            {
+                uint8_t *slotPtr = blob + 1 + i * kSlotSize;
+                if (q[i].sendAtMs == 0) continue; // free slot → sendAtUnix stays 0
+                long deltaMs = (long)q[i].sendAtMs - nowMs;
+                uint32_t sendAtUnix = (uint32_t)(nowSec + deltaMs / 1000L);
+                memcpy(slotPtr, &sendAtUnix, 4);
+                q[i].phone.toCharArray((char*)(slotPtr + 4), 32);
+                q[i].body.toCharArray((char*)(slotPtr + 4 + 32), 128);
+            }
+            realPersist.saveBlob("sched_queue", blob, sizeof(blob));
+        });
+
         telegramPoller->begin();
+
+        // RFC-0200: Load persisted scheduled SMS queue. NTP has already synced
+        // above (syncTime()), so time(nullptr) is valid here.
+        {
+            static const size_t kSlotSize = sizeof(uint32_t) + 32 + 128; // 164
+            static const size_t kNumSlots = 5;
+            static const size_t kExpectedSize = 1 + kNumSlots * kSlotSize;
+            uint8_t blob[kExpectedSize] = {};
+            if (realPersist.loadBlob("sched_queue", blob, kExpectedSize) == kExpectedSize
+                && blob[0] == 0x01)
+            {
+                long nowSec = (long)time(nullptr);
+                long nowMs  = (long)(uint32_t)millis();
+                auto q = telegramPoller->getSchedQueue(); // copy
+                int loaded = 0;
+                for (size_t i = 0; i < kNumSlots; i++)
+                {
+                    const uint8_t *slotPtr = blob + 1 + i * kSlotSize;
+                    uint32_t sendAtUnix = 0;
+                    memcpy(&sendAtUnix, slotPtr, 4);
+                    if (sendAtUnix == 0) continue; // free slot
+                    long ageSeconds = nowSec - (long)sendAtUnix;
+                    if (ageSeconds >= 2L * 3600L) continue; // stale (>= 2h past): drop
+                    char phone[33] = {};
+                    char body[129] = {};
+                    memcpy(phone, slotPtr + 4,      32);
+                    memcpy(body,  slotPtr + 4 + 32, 128);
+                    q[i].phone = String(phone);
+                    q[i].body  = String(body);
+                    if (ageSeconds > 0L) {
+                        q[i].sendAtMs = 1; // past due but < 2h: fire on next tick
+                    } else {
+                        long deltaMs = ((long)sendAtUnix - nowSec) * 1000L;
+                        q[i].sendAtMs = (uint32_t)(nowMs + deltaMs);
+                    }
+                    loaded++;
+                }
+                telegramPoller->setSchedQueue(q);
+                if (loaded > 0)
+                    Serial.printf("[RFC-0200] Loaded %d scheduled SMS slot(s) from NVS.\n", loaded);
+            }
+        }
+
         Serial.print("TG->SMS poller online; reply-target slots in use: ");
         Serial.println((unsigned long)replyTargets.occupiedSlots());
     }
