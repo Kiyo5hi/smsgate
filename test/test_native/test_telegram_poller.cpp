@@ -5976,6 +5976,34 @@ void test_TelegramPoller_setfwdtag_calls_fn()
     TEST_ASSERT_EQUAL_STRING("[Home]", captured.c_str());
 }
 
+// RFC-0173: /callstatus command
+void test_TelegramPoller_callstatus_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setCallStatusFn([]() -> String {
+        return "Call notify: ON | Calls: 3";
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1095, kAllowedFromId, 0, "/callstatus", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1095, poller.lastUpdateId());
+    auto msgs = bot.sentMessages();
+    TEST_ASSERT_TRUE(msgs.size() > 0);
+    TEST_ASSERT_TRUE(msgs.back().indexOf("Calls: 3") >= 0);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -6236,6 +6264,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_smsrate_replies_with_rate_info);
     // RFC-0172: /setfwdtag command
     RUN_TEST(test_TelegramPoller_setfwdtag_calls_fn);
+    // RFC-0173: /callstatus command
+    RUN_TEST(test_TelegramPoller_callstatus_calls_fn_and_replies);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

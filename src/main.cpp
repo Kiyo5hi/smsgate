@@ -1437,6 +1437,27 @@ void setup()
         telegramPoller->setFwdTagFn([&smsHandler](const String &tag) { // RFC-0172
             smsHandler.setFwdTag(tag);
         });
+        telegramPoller->setCallStatusFn([&callHandler]() -> String { // RFC-0173
+            String s;
+            s += "\xF0\x9F\x93\x9E Call handler status:\n"; // 📞
+            s += "  State: ";
+            switch (callHandler.state())
+            {
+                case CallHandler::State::Idle:     s += "Idle\n"; break;
+                case CallHandler::State::Ringing:  s += "Ringing\n"; break;
+                case CallHandler::State::Cooldown: s += "Cooldown\n"; break;
+                default:                           s += "Unknown\n"; break;
+            }
+            s += "  Notify: ";
+            s += (callHandler.callNotifyEnabled() ? "ON" : "OFF"); s += "\n";
+            s += "  Dedup window: ";
+            s += String(callHandler.dedupeWindowMs() / 1000); s += "s\n";
+            s += "  Unknown deadline: ";
+            s += String(callHandler.unknownDeadlineMs()); s += "ms\n";
+            s += "  Calls received: ";
+            s += String(callHandler.callsReceived());
+            return s;
+        });
         telegramPoller->setNvsInfoFn([]() -> String { // RFC-0168
             nvs_stats_t stats;
             esp_err_t err = nvs_get_stats(NULL, &stats);

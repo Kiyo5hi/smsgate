@@ -583,6 +583,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "clearfwdtag";
         c["description"] = "Remove custom forward prefix tag";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "callstatus";
+        c["description"] = "Show call handler config (notify, dedup, deadline, call count)";
+    }
     String payload;
     serializeJson(doc, payload);
 
