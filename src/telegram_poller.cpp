@@ -110,6 +110,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/status \xe2\x80\x94 Device health & stats\n";
             help += "/last [N] \xe2\x80\x94 Show last N forwarded SMS (default 5)\n";
             help += "/logs [N] \xe2\x80\x94 Show last N SMS log entries (default 10)\n";
+            help += "/logstats \xe2\x80\x94 Aggregate outcome statistics from debug log\n";
             help += "/history <filter> \xe2\x80\x94 Show log entries matching phone substring\n";
             help += "/concat \xe2\x80\x94 Show in-flight concat reassembly groups\n";
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
@@ -281,6 +282,18 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     n = (size_t)(parsed > 50 ? 50 : parsed);
             }
             bot_.sendMessageTo(u.chatId, debugLog_->dumpBrief(n));
+            return;
+        }
+
+        // RFC-0154: /logstats — aggregate outcome statistics over the debug log.
+        if (lower == "/logstats")
+        {
+            if (!debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+                return;
+            }
+            bot_.sendMessageTo(u.chatId, debugLog_->stats());
             return;
         }
 

@@ -286,6 +286,38 @@ String SmsDebugLog::dumpBrief(size_t n) const
     return out;
 }
 
+// RFC-0154: stats() — aggregate outcome counts over all ring entries.
+String SmsDebugLog::stats() const
+{
+    if (count_ == 0)
+        return String("(no SMS logged yet)");
+
+    int forwarded = 0, failed = 0, buffered = 0, blocked = 0, dup = 0;
+
+    size_t start = (count_ < kMaxEntries) ? 0 : head_;
+    for (size_t i = 0; i < count_; ++i)
+    {
+        size_t idx = (start + i) % kMaxEntries;
+        const String &o = entries_[idx].outcome;
+        if (o.indexOf("fwd OK") >= 0)         ++forwarded;
+        else if (o.indexOf("FAIL") >= 0)      ++failed;
+        else if (o == "buffered")              ++buffered;
+        else if (o == "blocked")              ++blocked;
+        else if (o == "dup")                  ++dup;
+    }
+
+    char buf[128];
+    snprintf(buf, sizeof(buf),
+             "SMS log stats (%d total):\n"
+             "  forwarded : %d\n"
+             "  failed    : %d\n"
+             "  buffered  : %d\n"
+             "  blocked   : %d\n"
+             "  dup       : %d",
+             (int)count_, forwarded, failed, buffered, blocked, dup);
+    return String(buf);
+}
+
 // RFC-0117: dumpBriefFiltered — same format as dumpBrief but restricted to
 // entries whose sender field contains `filter` as a substring.
 String SmsDebugLog::dumpBriefFiltered(size_t n, const String &filter) const

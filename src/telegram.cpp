@@ -483,6 +483,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "setforward";
         c["description"] = "Toggle SMS forwarding: /setforward on|off";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "logstats";
+        c["description"] = "Aggregate outcome statistics from SMS debug log";
+    }
     String payload;
     serializeJson(doc, payload);
 

@@ -62,6 +62,11 @@ public:
     // nothing matches.
     String dumpBriefFiltered(size_t n, const String &filter) const;
 
+    // RFC-0154: Return aggregate outcome statistics over all ring entries.
+    // Counts: forwarded (outcome contains "fwd OK"), failed (contains "FAIL"),
+    // buffered (== "buffered"), blocked (== "blocked"), dup (== "dup").
+    String stats() const;
+
     size_t count() const { return count_; }
 
     // RFC-0040: Clear all entries from the ring and (if a sink is set)
