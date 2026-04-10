@@ -232,6 +232,8 @@ static uint32_t s_alertsMutedUntilMs = 0;
 inline bool alertsMuted() { return (uint32_t)millis() < s_alertsMutedUntilMs; }
 // RFC-0192: Forward pause. 0 = not paused; else millis() timestamp until which forwarding is off.
 static uint32_t s_fwdPauseUntilMs = 0;
+// RFC-0201: Scheduled SMS slots restored from NVS at boot (for boot banner).
+static int s_schedLoadedAtBoot = 0;
 // RFC-0102: Boot time for uptime display in /status.
 static uint32_t s_bootMs = 0;
 
@@ -2026,7 +2028,10 @@ void setup()
                 }
                 telegramPoller->setSchedQueue(q);
                 if (loaded > 0)
+                {
                     Serial.printf("[RFC-0200] Loaded %d scheduled SMS slot(s) from NVS.\n", loaded);
+                    s_schedLoadedAtBoot = loaded; // RFC-0201: include in boot banner
+                }
             }
         }
 
@@ -2134,6 +2139,13 @@ void setup()
             bootMsg += statusFn();
         else
             bootMsg += "(status not available)";
+        // RFC-0201: Append restored-schedule notice if any slots were loaded.
+        if (s_schedLoadedAtBoot > 0)
+        {
+            bootMsg += String("\n\xe2\x8f\xb0 Restored ") // ⏰
+                     + String(s_schedLoadedAtBoot)
+                     + String(" scheduled SMS from NVS. Use /schedqueue to review.");
+        }
         realBot.sendMessage(bootMsg);
     }
 
