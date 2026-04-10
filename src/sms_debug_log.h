@@ -84,6 +84,10 @@ public:
     // nothing qualifies.
     String dumpBriefSince(uint32_t sinceUnix) const;
 
+    // RFC-0171: Count entries with outcome == "fwd OK" whose unixTimestamp is
+    // in [sinceUnix, untilUnix). Entries with unixTimestamp == 0 are excluded.
+    size_t countForwarded(uint32_t sinceUnix, uint32_t untilUnix) const;
+
     size_t count() const { return count_; }
 
     // RFC-0040: Clear all entries from the ring and (if a sink is set)

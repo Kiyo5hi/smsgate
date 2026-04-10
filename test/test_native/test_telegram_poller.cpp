@@ -5915,6 +5915,42 @@ void test_TelegramPoller_loginfo_shows_count_and_capacity()
     TEST_ASSERT_TRUE(msgs.back().indexOf("1/20") >= 0);
 }
 
+// RFC-0171: /smsrate command
+void test_TelegramPoller_smsrate_replies_with_rate_info()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsDebugLog log;
+    // Push a fwd entry with a recent unix timestamp (won't show in rate since
+    // time(nullptr) in native test returns near 0, but command should not crash)
+    SmsDebugLog::Entry e;
+    e.unixTimestamp = 1000;
+    e.outcome = "fwd OK";
+    log.push(e);
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(1093, kAllowedFromId, 0, "/smsrate", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1093, poller.lastUpdateId());
+    auto msgs = bot.sentMessages();
+    TEST_ASSERT_TRUE(msgs.size() > 0);
+    // Reply should mention "1h" and "24h"
+    TEST_ASSERT_TRUE(msgs.back().indexOf("1h") >= 0);
+    TEST_ASSERT_TRUE(msgs.back().indexOf("24h") >= 0);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -6171,6 +6207,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setgmtoffset_calls_fn_with_hours);
     // RFC-0170: /loginfo command
     RUN_TEST(test_TelegramPoller_loginfo_shows_count_and_capacity);
+    // RFC-0171: /smsrate command
+    RUN_TEST(test_TelegramPoller_smsrate_replies_with_rate_info);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

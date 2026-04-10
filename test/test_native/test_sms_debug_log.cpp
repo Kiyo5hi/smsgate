@@ -285,6 +285,34 @@ void test_dumpBriefSince_zero_timestamp_entries_omitted()
 }
 
 // ---------------------------------------------------------------------------
+// RFC-0171: countForwarded tests
+// ---------------------------------------------------------------------------
+void test_countForwarded_counts_fwd_entries_in_range()
+{
+    SmsDebugLog log;
+    // t=1000 fwd
+    { SmsDebugLog::Entry e; e.unixTimestamp = 1000; e.outcome = "fwd OK"; log.push(e); }
+    // t=2000 fwd
+    { SmsDebugLog::Entry e; e.unixTimestamp = 2000; e.outcome = "fwd OK"; log.push(e); }
+    // t=3000 blocked (not fwd)
+    { SmsDebugLog::Entry e; e.unixTimestamp = 3000; e.outcome = "blocked"; log.push(e); }
+    // t=4000 fwd
+    { SmsDebugLog::Entry e; e.unixTimestamp = 4000; e.outcome = "fwd OK"; log.push(e); }
+
+    // [1500, 5000) should include t=2000 and t=4000
+    TEST_ASSERT_EQUAL(2u, log.countForwarded(1500, 5000));
+    // [0, 2500) should include only t=1000 and t=2000
+    TEST_ASSERT_EQUAL(2u, log.countForwarded(0, 2500));
+}
+
+void test_countForwarded_zero_timestamp_excluded()
+{
+    SmsDebugLog log;
+    { SmsDebugLog::Entry e; e.unixTimestamp = 0; e.outcome = "fwd OK"; log.push(e); }
+    TEST_ASSERT_EQUAL(0u, log.countForwarded(0, 9999999));
+}
+
+// ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
 void run_sms_debug_log_tests()
@@ -303,4 +331,7 @@ void run_sms_debug_log_tests()
     RUN_TEST(test_dumpBriefSince_returns_entries_after_cutoff);
     RUN_TEST(test_dumpBriefSince_no_match_returns_placeholder);
     RUN_TEST(test_dumpBriefSince_zero_timestamp_entries_omitted);
+    // RFC-0171: countForwarded
+    RUN_TEST(test_countForwarded_counts_fwd_entries_in_range);
+    RUN_TEST(test_countForwarded_zero_timestamp_excluded);
 }

@@ -568,6 +568,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "loginfo";
         c["description"] = "Debug log ring buffer status (count/capacity + newest entry)";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "smsrate";
+        c["description"] = "SMS forwarding rate (last 1h and 24h from debug log)";
+    }
     String payload;
     serializeJson(doc, payload);
 

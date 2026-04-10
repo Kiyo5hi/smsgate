@@ -113,6 +113,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/logsince <hours> \xe2\x80\x94 Show log entries from the past N hours (1\xe2\x80\x93168)\n";
             help += "/logstats \xe2\x80\x94 Aggregate outcome statistics from debug log\n";
             help += "/loginfo \xe2\x80\x94 Debug log ring buffer status (count/capacity + newest entry)\n";
+            help += "/smsrate \xe2\x80\x94 SMS forwarding rate (last 1h and 24h from debug log)\n";
             help += "/topn [N] \xe2\x80\x94 Top N SMS senders by message count (default 5)\n";
             help += "/logsoutcome <keyword> \xe2\x80\x94 Filter log entries by outcome (fail/fwd/dup/...)\n";
             help += "/simstatus \xe2\x80\x94 SIM card + network status (ICCID, IMSI, operator, CSQ)\n";
@@ -365,6 +366,26 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             {
                 msg += "(empty \xe2\x80\x94 no SMS received yet)";
             }
+            bot_.sendMessageTo(u.chatId, msg);
+            return;
+        }
+
+        // RFC-0171: /smsrate — show SMS forwarding rate from the debug log.
+        if (lower == "/smsrate")
+        {
+            if (!debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+                return;
+            }
+            uint32_t nowUnix = (uint32_t)time(nullptr);
+            size_t in1h  = debugLog_->countForwarded(nowUnix > 3600u ? nowUnix - 3600u : 0, nowUnix);
+            size_t in24h = debugLog_->countForwarded(nowUnix > 86400u ? nowUnix - 86400u : 0, nowUnix);
+            String msg = String("\xF0\x9F\x93\x88 SMS forwarding rate:\n") // 📈
+                + String("  Last 1h:  ") + String((int)in1h)  + String(" fwd\n")
+                + String("  Last 24h: ") + String((int)in24h) + String(" fwd\n")
+                + String("  (based on debug log — ring holds last ")
+                + String((int)SmsDebugLog::kMaxEntries) + String(" entries)");
             bot_.sendMessageTo(u.chatId, msg);
             return;
         }

@@ -508,6 +508,24 @@ String SmsDebugLog::dumpBriefSince(uint32_t sinceUnix) const
     return out;
 }
 
+// RFC-0171: Count forwarded entries whose unixTimestamp is in [sinceUnix, untilUnix).
+// Entries with unixTimestamp == 0 are excluded.
+size_t SmsDebugLog::countForwarded(uint32_t sinceUnix, uint32_t untilUnix) const
+{
+    size_t cnt = 0;
+    size_t newest = (head_ + kMaxEntries - 1) % kMaxEntries;
+    for (size_t i = 0; i < count_; i++)
+    {
+        size_t idx = (newest + kMaxEntries - i) % kMaxEntries;
+        const Entry &e = entries_[idx];
+        if (e.unixTimestamp == 0) continue;
+        if (e.unixTimestamp < sinceUnix || e.unixTimestamp >= untilUnix) continue;
+        if (e.outcome.indexOf("fwd OK") >= 0)
+            ++cnt;
+    }
+    return cnt;
+}
+
 // RFC-0117: dumpBriefFiltered — same format as dumpBrief but restricted to
 // entries whose sender field contains `filter` as a substring.
 String SmsDebugLog::dumpBriefFiltered(size_t n, const String &filter) const
