@@ -3100,6 +3100,10 @@ void loop()
                     {
                         activeTransport = ActiveTransport::kCellular;
                         Serial.println("Cellular transport established (deferred).");
+                        // RFC-0243: sweep SIM now that cellular transport is available.
+                        esp_task_wdt_reset();
+                        smsHandler.sweepExistingSms();
+                        esp_task_wdt_reset();
                     }
                 }
             }
