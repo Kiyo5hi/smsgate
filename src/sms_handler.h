@@ -84,6 +84,11 @@ public:
     // that records time(nullptr) so /status can show the last-received time.
     void setOnForwarded(std::function<void()> cb) { onForwarded_ = std::move(cb); }
 
+    // RFC-0150: Optional callback fired after each successful forward with
+    // the sender's phone number. Used for SMS auto-reply. Does NOT fire for
+    // blocked or deduplicated messages.
+    void setOnSenderFn(std::function<void(const String &)> cb) { onSenderFn_ = std::move(cb); }
+
     // RFC-0070: Set extra Telegram recipients for forwarded SMS. When set,
     // each successfully forwarded SMS (single-part or assembled concat) is
     // also sent to each extra chat ID via sendMessageTo (no reply-routing).
@@ -283,6 +288,7 @@ private:
     ReplyTargetMap *replyTargets_ = nullptr;
     SmsDebugLog *debugLog_ = nullptr;
     std::function<void()> onForwarded_;
+    std::function<void(const String &)> onSenderFn_; // RFC-0150
     const int64_t *extraRecipients_ = nullptr; // RFC-0070
     int extraRecipientCount_ = 0;             // RFC-0070
     const char (*blockList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;

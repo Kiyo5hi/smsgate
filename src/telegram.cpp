@@ -458,6 +458,21 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "health";
         c["description"] = "Quick health check (WiFi/CSQ/heap/uptime)";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setautoreply";
+        c["description"] = "Set SMS auto-reply: /setautoreply <text>";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "getautoreply";
+        c["description"] = "Show current SMS auto-reply text";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "clearautoreply";
+        c["description"] = "Disable SMS auto-reply";
+    }
     String payload;
     serializeJson(doc, payload);
 

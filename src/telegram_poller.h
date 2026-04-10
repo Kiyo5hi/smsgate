@@ -272,6 +272,10 @@ public:
     // the count of deleted slots (-1 if unknown). /flushsim yes invokes it.
     void setFlushSimFn(std::function<int()> fn) { flushSimFn_ = std::move(fn); }
 
+    // RFC-0151: /getautoreply, /setautoreply, /clearautoreply.
+    void setAutoReplyGetFn(std::function<String()> fn) { autoReplyGetFn_ = std::move(fn); }
+    void setAutoReplySetFn(std::function<void(const String &)> fn) { autoReplySetFn_ = std::move(fn); }
+
     // RFC-0148: Optional SIM sweep fn. When set, /sweepsim calls this fn
     // (which runs smsHandler.sweepExistingSms()) and replies with count.
     void setSweepFn(std::function<int()> fn) { sweepFn_ = std::move(fn); }
@@ -381,6 +385,8 @@ private:
     std::function<void(const String &)> noteSetFn_; // RFC-0131
     std::function<void(int)> maxFailFn_;  // RFC-0138
     std::function<int()> flushSimFn_;     // RFC-0139
+    std::function<String()> autoReplyGetFn_;            // RFC-0151
+    std::function<void(const String &)> autoReplySetFn_; // RFC-0151
     std::function<int()> sweepFn_;                  // RFC-0148
     std::function<String()> healthFn_;             // RFC-0149
     std::function<bool(int)> smsForwardFn_;        // RFC-0146

@@ -246,6 +246,9 @@ static uint32_t lastHeartbeatMs = 0;
 // RFC-0137: Runtime-overridable heartbeat interval. Loaded from NVS "hb_interval"
 // at boot; set via /setinterval. 0 = disabled. Defaults to HEARTBEAT_INTERVAL_SEC.
 static uint32_t s_heartbeatIntervalSec = HEARTBEAT_INTERVAL_SEC;
+// RFC-0150: Optional SMS auto-reply text. Loaded from NVS "autoreply" at boot.
+// Empty string = disabled. Set via /setautoreply, cleared via /clearautoreply.
+static String s_autoReplyText;
 
 // Try to connect to WiFi. Returns true if connected within the timeout.
 // Times out after ~15 s (30 retries × 500 ms) so we don't block setup()
@@ -1025,6 +1028,13 @@ void setup()
                 s_heartbeatIntervalSec = hbInterval;
         }
 
+        // RFC-0150: Load auto-reply text from NVS.
+        {
+            char buf[161] = {};
+            size_t got = realPersist.loadBlob("autoreply", buf, sizeof(buf) - 1);
+            if (got > 0) s_autoReplyText = String(buf);
+        }
+
         // RFC-0021: Load runtime SMS block list from NVS.
         {
             struct { int32_t count; char numbers[20][21]; } blob{};
@@ -1074,6 +1084,15 @@ void setup()
             realPersist.saveBlob("lastsmsts", &ts, sizeof(ts));
             s_lifetimeFwdCount++;                                                // RFC-0060: persist
             realPersist.saveBlob("lifetimefwd", &s_lifetimeFwdCount, sizeof(s_lifetimeFwdCount));
+        });
+        smsHandler.setOnSenderFn([&smsSender](const String &phone) { // RFC-0150
+            if (s_autoReplyText.length() > 0)
+                smsSender.enqueue(phone, s_autoReplyText);
+        });
+        telegramPoller->setAutoReplyGetFn([]() -> String { return s_autoReplyText; }); // RFC-0151
+        telegramPoller->setAutoReplySetFn([](const String &text) { // RFC-0151
+            s_autoReplyText = text;
+            realPersist.saveBlob("autoreply", text.c_str(), text.length());
         });
         telegramPoller->setDebugLog(&smsDebugLog);
         telegramPoller->setNtpSyncFn([]() { syncTime(); }); // RFC-0055

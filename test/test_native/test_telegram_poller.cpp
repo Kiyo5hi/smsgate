@@ -4106,6 +4106,93 @@ void test_TelegramPoller_send_duplicate_gets_already_queued_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0151: /getautoreply shows current auto-reply text.
+void test_TelegramPoller_getautoreply_shows_text()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setAutoReplyGetFn([]() -> String { return String("Reply via Telegram"); });
+
+    bot.queueUpdateBatch({makeUpdate(1050, kAllowedFromId, 0, "/getautoreply", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1050, poller.lastUpdateId());
+    bool sawText = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Reply via Telegram")) >= 0) { sawText = true; break; }
+    TEST_ASSERT_TRUE(sawText);
+}
+
+// RFC-0151: /setautoreply <text> calls setter.
+void test_TelegramPoller_setautoreply_calls_setter()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    String captured;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setAutoReplyGetFn([]() -> String { return String(); });
+    poller.setAutoReplySetFn([&captured](const String &t) { captured = t; });
+
+    bot.queueUpdateBatch({makeUpdate(1051, kAllowedFromId, 0,
+        "/setautoreply I will reply soon", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1051, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(captured.indexOf(String("I will reply soon")) >= 0);
+}
+
+// RFC-0151: /clearautoreply clears the text.
+void test_TelegramPoller_clearautoreply_calls_setter_empty()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool setterCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setAutoReplyGetFn([]() -> String { return String(); });
+    poller.setAutoReplySetFn([&setterCalled](const String &t) {
+        if (t.length() == 0) setterCalled = true;
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1052, kAllowedFromId, 0, "/clearautoreply", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1052, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(setterCalled);
+    bool sawOk = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("cleared")) >= 0 || m.indexOf(String("Cleared")) >= 0)
+            { sawOk = true; break; }
+    TEST_ASSERT_TRUE(sawOk);
+}
+
 // RFC-0148: /sweepsim calls fn and reports count.
 void test_TelegramPoller_sweepsim_calls_fn_and_reports()
 {
@@ -4969,6 +5056,10 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setinterval_calls_fn);
     RUN_TEST(test_TelegramPoller_setinterval_zero_disables);
     RUN_TEST(test_TelegramPoller_setinterval_too_large_sends_error);
+    // RFC-0151: auto-reply commands
+    RUN_TEST(test_TelegramPoller_getautoreply_shows_text);
+    RUN_TEST(test_TelegramPoller_setautoreply_calls_setter);
+    RUN_TEST(test_TelegramPoller_clearautoreply_calls_setter_empty);
     // RFC-0148: /sweepsim command
     RUN_TEST(test_TelegramPoller_sweepsim_calls_fn_and_reports);
     RUN_TEST(test_TelegramPoller_sweepsim_zero_sms_replies_placeholder);

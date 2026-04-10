@@ -111,6 +111,7 @@ bool SmsHandler::forwardSingle(const sms_codec::SmsPdu &pdu, int /*simIndex*/)
     }
     smsForwarded_++;
     if (onForwarded_) onForwarded_();
+    if (onSenderFn_) onSenderFn_(pdu.sender); // RFC-0150
     return true;
 }
 
@@ -329,6 +330,7 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
     recordDedup(group->sender, assembled); // RFC-0061: record after success
     smsForwarded_++;
     if (onForwarded_) onForwarded_();
+    if (onSenderFn_) onSenderFn_(group->sender); // RFC-0150
 
     // Success: collect all SIM slots for deletion and drop the group.
     for (const auto &f : sorted)

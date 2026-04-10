@@ -1283,6 +1283,63 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0151: /getautoreply — show current SMS auto-reply text.
+        if (lower == "/getautoreply")
+        {
+            if (!autoReplyGetFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(auto-reply not configured)"));
+                return;
+            }
+            String text = autoReplyGetFn_();
+            bot_.sendMessageTo(u.chatId,
+                text.length() > 0
+                    ? String("Auto-reply: \"") + text + String("\"")
+                    : String("(auto-reply not set)"));
+            return;
+        }
+
+        // RFC-0151: /setautoreply <text> — set SMS auto-reply (max 160 chars).
+        if (lower.startsWith("/setautoreply"))
+        {
+            if (!autoReplySetFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(auto-reply not configured)"));
+                return;
+            }
+            String text = u.text.length() > 14 ? u.text.substring(14) : String();
+            text.trim();
+            if (text.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setautoreply <text>\nMax 160 chars."));
+                return;
+            }
+            if ((int)text.length() > 160)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Text too long (max 160 chars).")); // ❌
+                return;
+            }
+            autoReplySetFn_(text);
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Auto-reply set: \"") + text + String("\"")); // ✅
+            return;
+        }
+
+        // RFC-0151: /clearautoreply — disable SMS auto-reply.
+        if (lower == "/clearautoreply")
+        {
+            if (!autoReplySetFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(auto-reply not configured)"));
+                return;
+            }
+            autoReplySetFn_(String());
+            bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 Auto-reply cleared.")); // ✅
+            return;
+        }
+
         // RFC-0148: /sweepsim — manually trigger a SIM sweep.
         if (lower == "/sweepsim")
         {
