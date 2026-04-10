@@ -140,6 +140,27 @@ public:
     void setPduSendDefault(int mr) { pduSendDefault_ = mr; }
     const std::vector<PduSendCall> &pduSendCalls() const { return pduSendCalls_; }
 
+    // ---- IModem::ussdQuery (RFC-0103) ----
+
+    // Returns the queued USSD response string (empty = timeout/failure).
+    String ussdQuery(const String &code, uint32_t /*timeoutMs*/) override
+    {
+        ussdCodes_.push_back(code);
+        if (!ussdResults_.empty())
+        {
+            String r = ussdResults_.front();
+            ussdResults_.erase(ussdResults_.begin());
+            return r;
+        }
+        return ussdDefault_;
+    }
+
+    // Queue a USSD response string (non-empty = success, empty = timeout).
+    void queueUssdResponse(const String &resp) { ussdResults_.push_back(resp); }
+    // Set the fallback response. Default empty (timeout).
+    void setUssdDefault(const String &resp) { ussdDefault_ = resp; }
+    const std::vector<String> &ussdCodes() const { return ussdCodes_; }
+
     // ---- Inspection helpers for tests ----
 
     const std::vector<String> &sentCommands() const { return sent_; }
@@ -160,4 +181,7 @@ private:
     std::vector<PduSendCall> pduSendCalls_;
     std::vector<int> pduSendResults_;
     int pduSendDefault_ = 0; // default: success, MR=0
+    std::vector<String> ussdResults_;
+    std::vector<String> ussdCodes_;
+    String ussdDefault_; // default: empty (timeout)
 };

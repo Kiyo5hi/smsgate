@@ -171,6 +171,11 @@ public:
     void setMuteFn(std::function<void(uint32_t)> fn)   { muteFn_   = std::move(fn); }
     void setUnmuteFn(std::function<void()> fn)          { unmuteFn_ = std::move(fn); }
 
+    // RFC-0103: Optional USSD relay callback. When set, /ussd <code> calls
+    // ussdFn(code) and replies with the result. Returns an empty string on
+    // failure. Production wires this to a lambda calling realModem.ussdQuery().
+    void setUssdFn(std::function<String(const String &)> fn) { ussdFn_ = std::move(fn); }
+
     // Test introspection.
     int32_t lastUpdateId() const { return lastUpdateId_; }
     int pollAttempts() const { return pollAttempts_; }
@@ -206,6 +211,7 @@ private:
     std::function<String()> csqFn_;          // RFC-0092
     std::function<void(uint32_t)> muteFn_;  // RFC-0098
     std::function<void()> unmuteFn_;        // RFC-0098
+    std::function<String(const String &)> ussdFn_;  // RFC-0103
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

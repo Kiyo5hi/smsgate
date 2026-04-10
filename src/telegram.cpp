@@ -293,6 +293,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "rmalias";
         c["description"] = "Remove an alias: /rmalias <name>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "ussd";
+        c["description"] = "Send USSD code and get response: /ussd *100#";
+    }
 
     String payload;
     serializeJson(doc, payload);
@@ -348,7 +353,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /mute /unmute /heap /csq /version /restart /send /sendall /test /queue /flushqueue /clearqueue /cancel /aliases /addalias /rmalias");
+        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /mute /unmute /heap /csq /ussd /version /restart /send /sendall /test /queue /flushqueue /clearqueue /cancel /aliases /addalias /rmalias");
     }
     else
     {

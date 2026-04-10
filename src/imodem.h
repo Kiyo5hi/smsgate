@@ -61,4 +61,10 @@ public:
     // this method does NOT flip to text mode, so no post-send
     // restoration is needed.
     virtual int sendPduSms(const String &pduHex, int tpduLen) = 0;
+
+    // RFC-0103: Send a USSD code (e.g. "*100#") and wait up to
+    // `timeoutMs` for the carrier's +CUSD response. Returns the carrier
+    // reply text on success (the quoted string from "+CUSD: 0,\"<text>\",15"),
+    // or an empty String on timeout / error.
+    virtual String ussdQuery(const String &code, uint32_t timeoutMs) = 0;
 };

@@ -106,6 +106,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/unmute \xe2\x80\x94 Cancel alert snooze\n";
             help += "/heap \xe2\x80\x94 Show free/min/max-block heap\n";
             help += "/csq \xe2\x80\x94 Quick signal strength snapshot\n";
+            help += "/ussd <code> \xe2\x80\x94 Send USSD code (e.g. *100#) and get response\n";
             help += "/version \xe2\x80\x94 Show firmware build timestamp\n";
             help += "/restart \xe2\x80\x94 Soft reboot\n";
             if (smsBlockMutator_) {
@@ -320,6 +321,52 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, csqFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(signal info not configured)"));
+            return;
+        }
+
+        // RFC-0103: /ussd <code> — relay a USSD code to the modem and return
+        // the carrier's text response.
+        if (lower == "/ussd" || lower.startsWith("/ussd "))
+        {
+            String code = extractArg(lower, "/ussd ");
+            if (code.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /ussd <code>\nExample: /ussd *100#"));
+                return;
+            }
+            // Validate: USSD codes consist of digits, *, and # only.
+            bool codeOk = true;
+            for (unsigned int ci = 0; ci < code.length(); ci++)
+            {
+                char ch = code[ci];
+                if (!((ch >= '0' && ch <= '9') || ch == '*' || ch == '#'))
+                {
+                    codeOk = false;
+                    break;
+                }
+            }
+            if (!codeOk)
+            {
+                sendErrorReply(u.chatId,
+                    String("Invalid USSD code. Use digits, * and # only."));
+                return;
+            }
+            if (!ussdFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(USSD not configured)"));
+                return;
+            }
+            bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x93\xA1 Sending USSD..."));  // 📡
+            String resp = ussdFn_(code);
+            if (resp.length() == 0)
+            {
+                sendErrorReply(u.chatId, String("USSD timed out or no response."));
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x93\xB1 ") + resp);  // 📱
+            }
             return;
         }
 

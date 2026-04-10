@@ -76,6 +76,33 @@ public:
         return -1;
     }
 
+    // RFC-0103: USSD relay. Sends AT+CUSD=1,<code>,15 and waits for the
+    // +CUSD: URC carrying the carrier's response text. Returns the quoted
+    // text field from "+CUSD: 0,\"<text>\",15", or empty string on failure.
+    String ussdQuery(const String &code, uint32_t timeoutMs) override
+    {
+        modem_.sendAT(String("+CUSD=1,") + code + String(",15"));
+        // Wait for either +CUSD: (success) or ERROR. The A76xx returns
+        // +CUSD: synchronously within the AT command response window on
+        // most firmware versions.
+        String resp;
+        int8_t rc = modem_.waitResponse(timeoutMs, resp);
+        if (rc != 1 && rc != 2)
+            return String(); // timeout
+        // Parse "+CUSD: <n>,\"<text>\"" from the response.
+        int cusdIdx = resp.indexOf("+CUSD:");
+        if (cusdIdx < 0)
+            return String(); // ERROR response or unexpected format
+        // Skip past "+CUSD: <n>," to find the opening quote.
+        int quoteOpen = resp.indexOf('"', cusdIdx);
+        if (quoteOpen < 0)
+            return String();
+        int quoteClose = resp.indexOf('"', quoteOpen + 1);
+        if (quoteClose < 0)
+            return String();
+        return resp.substring(quoteOpen + 1, quoteClose);
+    }
+
 private:
     TinyGsm &modem_;
     Stream &stream_;

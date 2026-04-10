@@ -1063,6 +1063,9 @@ void setup()
             s += String(" | WiFi ") + String(WiFi.RSSI()) + String(" dBm");
             return s;
         });
+        telegramPoller->setUssdFn([](const String &code) -> String { // RFC-0103
+            return realModem.ussdQuery(code, 10000UL);
+        });
         telegramPoller->begin();
         Serial.print("TG->SMS poller online; reply-target slots in use: ");
         Serial.println((unsigned long)replyTargets.occupiedSlots());

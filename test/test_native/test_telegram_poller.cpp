@@ -1770,6 +1770,144 @@ void test_TelegramPoller_send_unknown_alias_sends_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// ---------- RFC-0103: /ussd command ----------
+
+void test_TelegramPoller_ussd_calls_ussd_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    poller.setUssdFn([](const String &code) -> String {
+        if (code == "*100#") return String("Your balance is 10.00");
+        return String();
+    });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(800, kAllowedFromId, 0, "/ussd *100#", kAllowedFromId)});
+    poller.tick();
+
+    bool sawResult = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("balance")) >= 0)
+        {
+            sawResult = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawResult);
+    TEST_ASSERT_EQUAL(800, poller.lastUpdateId());
+}
+
+void test_TelegramPoller_ussd_timeout_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    poller.setUssdFn([](const String & /*code*/) -> String {
+        return String(); // timeout
+    });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(801, kAllowedFromId, 0, "/ussd *101#", kAllowedFromId)});
+    poller.tick();
+
+    bool sawError = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("timed out")) >= 0 || m.text.indexOf(String("no response")) >= 0)
+        {
+            sawError = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawError);
+}
+
+void test_TelegramPoller_ussd_invalid_code_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    bool ussdCalled = false;
+    poller.setUssdFn([&](const String & /*code*/) -> String {
+        ussdCalled = true;
+        return String();
+    });
+    poller.begin();
+
+    // Code with invalid chars — should be rejected before calling ussdFn.
+    bot.queueUpdateBatch({makeUpdate(802, kAllowedFromId, 0, "/ussd *100$ evil", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_FALSE(ussdCalled);
+    bool sawError = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("Invalid")) >= 0)
+        {
+            sawError = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawError);
+}
+
+void test_TelegramPoller_ussd_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    // No setUssdFn call.
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(803, kAllowedFromId, 0, "/ussd *100#", kAllowedFromId)});
+    poller.tick();
+
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("not configured")) >= 0)
+        {
+            sawNotConfigured = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
 // ---------- RFC-0101: alias name character validation ----------
 
 void test_SmsAliasStore_isValidName_accepts_alphanumeric_and_symbols()
@@ -1905,6 +2043,11 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_aliases_lists_entries);
     RUN_TEST(test_TelegramPoller_send_expands_at_alias);
     RUN_TEST(test_TelegramPoller_send_unknown_alias_sends_error);
+    // RFC-0103: /ussd command
+    RUN_TEST(test_TelegramPoller_ussd_calls_ussd_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_ussd_timeout_sends_error);
+    RUN_TEST(test_TelegramPoller_ussd_invalid_code_sends_error);
+    RUN_TEST(test_TelegramPoller_ussd_not_configured_replies);
     // RFC-0101: alias name character validation
     RUN_TEST(test_SmsAliasStore_isValidName_accepts_alphanumeric_and_symbols);
     RUN_TEST(test_SmsAliasStore_isValidName_rejects_invalid_chars);
