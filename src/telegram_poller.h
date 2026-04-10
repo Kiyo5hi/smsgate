@@ -58,6 +58,10 @@ public:
     // first tick after construction.
     static constexpr uint32_t kPollIntervalMs = 3000;
 
+    // RFC-0217: Queue stuck alert thresholds (not configurable).
+    static constexpr uint32_t kQueueStuckThresholdMs     = 30U * 60U * 1000U;
+    static constexpr uint32_t kQueueStuckAlertCooldownMs = 60U * 60U * 1000U;
+
     // Telegram-side timeout in seconds, passed as `?timeout=<n>`.
     // 0 = short polling (returns immediately if no updates).
     static constexpr int32_t kPollTimeoutSec = 0;
@@ -608,4 +612,6 @@ private:
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;
     int pollAttempts_ = 0;
+    uint32_t lastQueueStuckAlertMs_ = 0;  // RFC-0217
+    bool     queueWasNonEmpty_      = false; // RFC-0217
 };

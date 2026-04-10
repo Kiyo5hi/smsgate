@@ -3576,6 +3576,57 @@ void TelegramPoller::tick()
     }
     if (schedFired && persistSchedFn_) persistSchedFn_(); // RFC-0200
 
+    // RFC-0217: Stuck outbound-queue alert. Scan for entries that have been
+    // waiting longer than kQueueStuckThresholdMs since their first drain
+    // attempt (queuedAtMs > 0). Fire at most once per kQueueStuckAlertCooldownMs.
+    // Reset the cooldown when the queue fully drains.
+    {
+        int qsz = smsSender_.queueSize();
+        if (qsz == 0)
+        {
+            if (queueWasNonEmpty_)
+            {
+                lastQueueStuckAlertMs_ = 0; // reset so next stuck event alerts immediately
+                queueWasNonEmpty_ = false;
+            }
+        }
+        else
+        {
+            queueWasNonEmpty_ = true;
+            bool cooldownOk = (lastQueueStuckAlertMs_ == 0)
+                || ((now - lastQueueStuckAlertMs_) >= kQueueStuckAlertCooldownMs);
+            if (cooldownOk)
+            {
+                auto snap = smsSender_.getQueueSnapshot();
+                int stuckCount = 0;
+                uint32_t oldestAgeMs = 0;
+                String oldestPhone;
+                for (const auto &e : snap)
+                {
+                    if (e.queuedAtMs > 0 && (now - e.queuedAtMs) >= kQueueStuckThresholdMs)
+                    {
+                        stuckCount++;
+                        uint32_t age = now - e.queuedAtMs;
+                        if (age > oldestAgeMs) { oldestAgeMs = age; oldestPhone = e.phone; }
+                    }
+                }
+                if (stuckCount > 0)
+                {
+                    lastQueueStuckAlertMs_ = now;
+                    uint32_t oldestMin = oldestAgeMs / 60000U;
+                    String alert = String("\xe2\x9a\xa0\xef\xb8\x8f Outbound queue stuck: ") // ⚠️
+                                 + String(stuckCount)
+                                 + String(stuckCount == 1 ? " entry" : " entries")
+                                 + String(" waiting >30min.\n")
+                                 + String("Oldest: ") + oldestPhone
+                                 + String(" (") + String((int)oldestMin) + String(" min).")
+                                 + String(" Use /queueinfo to inspect.");
+                    bot_.sendMessage(alert);
+                }
+            }
+        }
+    }
+
     // Rate-limit the actual poll. First call always polls so a fresh
     // boot picks up any queued replies immediately.
     if (firstPollDone_)
