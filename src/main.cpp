@@ -230,6 +230,8 @@ static constexpr uint32_t kStuckQueueCheckIntervalMs = 60UL * 1000UL;    // 1 mi
 // RFC-0098: Alert mute. 0 = not muted; else millis() timestamp until which alerts are silenced.
 static uint32_t s_alertsMutedUntilMs = 0;
 inline bool alertsMuted() { return (uint32_t)millis() < s_alertsMutedUntilMs; }
+// RFC-0192: Forward pause. 0 = not paused; else millis() timestamp until which forwarding is off.
+static uint32_t s_fwdPauseUntilMs = 0;
 // RFC-0102: Boot time for uptime display in /status.
 static uint32_t s_bootMs = 0;
 
@@ -1154,8 +1156,15 @@ void setup()
         });
         telegramPoller->setForwardingEnabledFn([&smsHandler](bool enabled) { // RFC-0153/0183
             smsHandler.setForwardingEnabled(enabled);
+            if (enabled) s_fwdPauseUntilMs = 0; // RFC-0192: manual /setforward on cancels pause
             uint8_t v = enabled ? 1 : 0;
             realPersist.saveBlob("fwd_enabled", &v, sizeof(v));
+        });
+        telegramPoller->setPauseFwdFn([&smsHandler](uint32_t durMs) -> String { // RFC-0192
+            smsHandler.setForwardingEnabled(false);
+            s_fwdPauseUntilMs = (uint32_t)millis() + durMs;
+            uint32_t mins = (durMs + 59999U) / 60000U;
+            return String("Forwarding paused for ") + String(mins) + String(" min.");
         });
         smsHandler.setOnSenderFn([&smsSender](const String &phone) { // RFC-0150
             if (s_autoReplyText.length() > 0)
@@ -2120,6 +2129,14 @@ void loop()
             Serial.println("WiFi reconnect failed.");
             // No Telegram message possible — we're offline.
         }
+    }
+
+    // RFC-0192: Forward-pause auto-resume.
+    if (s_fwdPauseUntilMs != 0 && (uint32_t)millis() >= s_fwdPauseUntilMs)
+    {
+        s_fwdPauseUntilMs = 0;
+        smsHandler.setForwardingEnabled(true);
+        Serial.println("Forward pause expired, forwarding re-enabled.");
     }
 
     // NOTE: do NOT call modem.maintain() here. On TinyGSM/A76XX it internally

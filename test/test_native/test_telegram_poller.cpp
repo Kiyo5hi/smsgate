@@ -6560,6 +6560,39 @@ void test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot()
     TEST_ASSERT_TRUE(rebootCalled);
 }
 
+// RFC-0192: /pausefwd 30 → calls pauseFwdFn with 30*60000ms, reply contains "30".
+void test_TelegramPoller_pausefwd_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    uint32_t capturedMs = 0;
+    poller.setPauseFwdFn([&capturedMs](uint32_t ms) -> String {
+        capturedMs = ms;
+        return String("Forwarding paused for 30 min.");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(2010, kAllowedFromId, 0, "/pausefwd 30", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(2010, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL_UINT32(30 * 60000UL, capturedMs);
+    bool sawPause = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("paused") >= 0 || m.indexOf("30") >= 0) { sawPause = true; break; }
+    TEST_ASSERT_TRUE(sawPause);
+}
+
 // RFC-0191: /testpdu <hex> → calls testPduFn with the hex argument.
 void test_TelegramPoller_testpdu_calls_fn_and_replies()
 {
@@ -7005,4 +7038,6 @@ void run_telegram_poller_tests()
     // RFC-0191: /testpdu command
     RUN_TEST(test_TelegramPoller_testpdu_calls_fn_and_replies);
     RUN_TEST(test_TelegramPoller_testpdu_no_arg_sends_usage);
+    // RFC-0192: /pausefwd command
+    RUN_TEST(test_TelegramPoller_pausefwd_calls_fn);
 }

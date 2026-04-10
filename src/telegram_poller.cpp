@@ -2607,6 +2607,38 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0192: /pausefwd <minutes> — temporarily pause SMS forwarding.
+        if (lower == "/pausefwd" || lower.startsWith("/pausefwd "))
+        {
+            if (!pauseFwdFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(pausefwd not configured)"));
+                return;
+            }
+            String arg = extractArg(u.text, "/pausefwd ");
+            arg.trim();
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /pausefwd <minutes>\n"
+                           "Range: 1\xe2\x80\x93 1440. Forwarding auto-resumes after the period.\n" // –
+                           "Example: /pausefwd 30"));
+                return;
+            }
+            long mins = arg.toInt();
+            if (mins < 1 || mins > 1440)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Minutes must be 1\xe2\x80\x93 1440.")); // ❌ –
+                return;
+            }
+            uint32_t durMs = (uint32_t)mins * 60000UL;
+            String reply = pauseFwdFn_(durMs);
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x8f\xb8 ") + reply); // ⏸
+            return;
+        }
+
         // RFC-0191: /testpdu <hex> — decode a raw PDU hex string for debugging.
         if (lower == "/testpdu" || lower.startsWith("/testpdu "))
         {
