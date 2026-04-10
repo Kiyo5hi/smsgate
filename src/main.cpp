@@ -2607,6 +2607,16 @@ void loop()
                 hb += String(" | calls "); hb += String(callHandler.callsReceived()); // RFC-0109
                 hb += String(" | q "); hb += String(smsSender.queueSize());
                 hb += String("/"); hb += String(SmsSender::kQueueSize);
+                // RFC-0210: append sched slot count when > 0.
+                {
+                    int schedCount = 0;
+                    const auto& sq = telegramPoller->getSchedQueue();
+                    for (const auto& slot : sq)
+                        if (slot.sendAtMs != 0) schedCount++;
+                    if (schedCount > 0) {
+                        hb += String(" | sched "); hb += String(schedCount);
+                    }
+                }
 #ifdef USSD_BALANCE_CODE
                 // RFC-0106: Append USSD balance check to heartbeat.
                 {
