@@ -5296,6 +5296,64 @@ void test_TelegramPoller_topn_no_log_replies_placeholder()
     TEST_ASSERT_TRUE(sawPlaceholder);
 }
 
+// RFC-0158: /wifiscan — calls wifiScanFn and sends result.
+void test_TelegramPoller_wifiscan_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setWifiScanFn([&fnCalled]() -> String {
+        fnCalled = true;
+        return String("MySSID ch6 -55dBm\nOtherNet ch11 -78dBm");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1071, kAllowedFromId, 0, "/wifiscan", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1071, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(fnCalled);
+    bool sawResult = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("MySSID")) >= 0) { sawResult = true; break; }
+    TEST_ASSERT_TRUE(sawResult);
+}
+
+// RFC-0158: /wifiscan without fn configured → placeholder.
+void test_TelegramPoller_wifiscan_not_configured_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(1072, kAllowedFromId, 0, "/wifiscan", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1072, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("not configured")) >= 0) { sawPlaceholder = true; break; }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -5517,6 +5575,9 @@ void run_telegram_poller_tests()
     // RFC-0157: /topn command
     RUN_TEST(test_TelegramPoller_topn_returns_top_senders);
     RUN_TEST(test_TelegramPoller_topn_no_log_replies_placeholder);
+    // RFC-0158: /wifiscan command
+    RUN_TEST(test_TelegramPoller_wifiscan_calls_fn);
+    RUN_TEST(test_TelegramPoller_wifiscan_not_configured_replies_placeholder);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

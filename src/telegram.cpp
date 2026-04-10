@@ -503,6 +503,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "topn";
         c["description"] = "Top N SMS senders by frequency: /topn [N] (default 5)";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "wifiscan";
+        c["description"] = "Scan nearby WiFi networks (SSID, channel, RSSI)";
+    }
     String payload;
     serializeJson(doc, payload);
 

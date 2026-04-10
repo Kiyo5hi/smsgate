@@ -1530,6 +1530,29 @@ void setup()
             }
             return out;
         });
+        telegramPoller->setWifiScanFn([]() -> String { // RFC-0158
+            int n = WiFi.scanNetworks(/*async=*/false, /*show_hidden=*/true);
+            if (n <= 0)
+                return String("(no networks found)");
+            // Cap at 10 results; WiFi.scanNetworks returns sorted by RSSI desc.
+            if (n > 10) n = 10;
+            String out = String("\xF0\x9F\x93\xA1 WiFi scan ("); // 📡
+            out += String(n); out += String(" networks)\n");
+            for (int i = 0; i < n; ++i)
+            {
+                out += String("  ");
+                String ssid = WiFi.SSID(i);
+                if (ssid.length() == 0) ssid = String("(hidden)");
+                out += ssid;
+                out += String(" ch"); out += String(WiFi.channel(i));
+                out += String(" "); out += String(WiFi.RSSI(i)); out += String("dBm");
+                if (WiFi.encryptionType(i) == WIFI_AUTH_OPEN)
+                    out += String(" [open]");
+                out += String("\n");
+            }
+            WiFi.scanDelete();
+            return out;
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])

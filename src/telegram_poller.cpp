@@ -114,6 +114,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/topn [N] \xe2\x80\x94 Top N SMS senders by message count (default 5)\n";
             help += "/logsoutcome <keyword> \xe2\x80\x94 Filter log entries by outcome (fail/fwd/dup/...)\n";
             help += "/simstatus \xe2\x80\x94 SIM card + network status (ICCID, IMSI, operator, CSQ)\n";
+            help += "/wifiscan \xe2\x80\x94 Scan nearby WiFi networks (SSID, channel, RSSI)\n";
             help += "/history <filter> \xe2\x80\x94 Show log entries matching phone substring\n";
             help += "/concat \xe2\x80\x94 Show in-flight concat reassembly groups\n";
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
@@ -1462,6 +1463,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, simStatusFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(simstatus not configured)"));
+            return;
+        }
+
+        // RFC-0158: /wifiscan — scan nearby WiFi networks.
+        if (lower == "/wifiscan")
+        {
+            if (wifiScanFn_)
+                bot_.sendMessageTo(u.chatId, wifiScanFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(wifiscan not configured)"));
             return;
         }
 
