@@ -252,6 +252,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/schedbody <N> <text> \xe2\x80\x94 Edit the body of scheduled slot N\n"; // RFC-0207
             help += "/schedclone <N> <min> \xe2\x80\x94 Duplicate a scheduled slot with a new delay\n"; // RFC-0215
             help += "/schedrepeat <N> <min> \xe2\x80\x94 Make slot N repeat every <min> min (0=one-shot)\n"; // RFC-0221
+            help += "/recurring <min> <phone> <body> \xe2\x80\x94 Create a repeating scheduled SMS in one step\n"; // RFC-0223
             help += "/schedpause \xe2\x80\x94 Pause all scheduled SMS delivery (volatile)\n"; // RFC-0218
             help += "/schedresume \xe2\x80\x94 Resume scheduled SMS delivery\n"; // RFC-0218
             help += "/snooze <phone> <min> \xe2\x80\x94 Suppress forwarding from a number for N minutes\n"; // RFC-0219
@@ -3358,6 +3359,72 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("\xf0\x9f\x94\x81 Slot ") + String(n) // 🔁
                     + String(" will repeat every ") + String(rmin) + String("m after each send."));
             }
+            return;
+        }
+
+        // RFC-0223: /recurring <interval_min> <phone> <body> — create a repeating
+        // scheduled SMS slot in one step (combines /schedulesend + /schedrepeat).
+        if (lower == "/recurring" || lower.startsWith("/recurring "))
+        {
+            String arg = extractArg(u.text, "/recurring ");
+            arg.trim();
+            int sp1 = arg.indexOf(' ');
+            if (sp1 <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /recurring <interval_min> <phone> <body>\n"
+                           "Example: /recurring 1440 +13800138000 Daily check-in"));
+                return;
+            }
+            long rIntervalMin = arg.substring(0, sp1).toInt();
+            if (rIntervalMin < 1 || rIntervalMin > 10080)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Interval must be 1\xe2\x80\x93 10080 min (7 days).")); // ❌ –
+                return;
+            }
+            String rest2 = arg.substring(sp1 + 1);
+            rest2.trim();
+            int sp2 = rest2.indexOf(' ');
+            if (sp2 <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /recurring <interval_min> <phone> <body>"));
+                return;
+            }
+            String rPhone = sms_codec::normalizePhoneNumber(rest2.substring(0, sp2));
+            String rBody  = rest2.substring(sp2 + 1);
+            rBody.trim();
+            if (rPhone.length() < 5 || rBody.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /recurring <interval_min> <phone> <body>"));
+                return;
+            }
+            if (rBody.length() > 127) rBody = rBody.substring(0, 127);
+            // Find a free slot.
+            int rSlot = -1;
+            uint32_t rNowMs = clock_ ? clock_() : 0;
+            for (int i = 0; i < (int)kScheduledQueueSize; i++)
+                if (scheduledQueue_[i].sendAtMs == 0) { rSlot = i; break; }
+            if (rSlot < 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Scheduled queue full (5 slots). Use /schedqueue to see pending.")); // ❌
+                return;
+            }
+            uint32_t rIntervalMs = (uint32_t)rIntervalMin * 60000UL;
+            scheduledQueue_[rSlot].sendAtMs         = rNowMs + rIntervalMs;
+            scheduledQueue_[rSlot].phone            = rPhone;
+            scheduledQueue_[rSlot].body             = rBody;
+            scheduledQueue_[rSlot].repeatIntervalMs = rIntervalMs; // RFC-0221
+            if (persistSchedFn_) persistSchedFn_(); // RFC-0200
+            bot_.sendMessageTo(u.chatId,
+                String("\xf0\x9f\x94\x81 Recurring SMS to ") + rPhone // 🔁
+                + String(" every ") + String(rIntervalMin) + String("m"
+                  " (slot ") + String(rSlot + 1) + String("/")
+                + String((int)kScheduledQueueSize) + String(")."
+                  " First send in ") + String(rIntervalMin) + String("m."));
             return;
         }
 

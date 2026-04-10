@@ -7803,6 +7803,78 @@ void test_TelegramPoller_schedrepeat_clears_repeat()
     TEST_ASSERT_TRUE(sawOneShot);
 }
 
+// RFC-0223: /recurring creates a slot with sendAtMs and repeatIntervalMs set.
+void test_TelegramPoller_recurring_creates_repeating_slot()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 10000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(24001, kAllowedFromId, 0,
+        "/recurring 30 +5553 Hourly ping", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(24001, poller.lastUpdateId());
+
+    const auto &q = poller.getSchedQueue();
+    TEST_ASSERT_NOT_EQUAL(0U, q[0].sendAtMs);
+    TEST_ASSERT_EQUAL_STRING("+5553", q[0].phone.c_str());
+    TEST_ASSERT_EQUAL_UINT32(30U * 60000U, q[0].repeatIntervalMs);
+    // sendAtMs should be clk.nowMs + 30min
+    uint32_t expectedSendAt = clk.nowMs + 30U * 60000U;
+    TEST_ASSERT_TRUE(q[0].sendAtMs >= expectedSendAt - 5000U);
+    TEST_ASSERT_TRUE(q[0].sendAtMs <= expectedSendAt + 5000U);
+
+    bool sawRecurring = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Recurring") >= 0 || m.indexOf("every") >= 0)
+        { sawRecurring = true; break; }
+    TEST_ASSERT_TRUE(sawRecurring);
+}
+
+// RFC-0223: /recurring with invalid interval replies error.
+void test_TelegramPoller_recurring_invalid_interval_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(24002, kAllowedFromId, 0,
+        "/recurring 99999 +5554 Too long", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(24002, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Interval") >= 0 || m.indexOf("10080") >= 0)
+        { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+    TEST_ASSERT_EQUAL(0U, poller.getSchedQueue()[0].sendAtMs); // no slot allocated
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -8598,6 +8670,9 @@ void run_telegram_poller_tests()
     // RFC-0221: /schedrepeat command
     RUN_TEST(test_TelegramPoller_schedrepeat_fires_and_reschedules);
     RUN_TEST(test_TelegramPoller_schedrepeat_clears_repeat);
+    // RFC-0223: /recurring command
+    RUN_TEST(test_TelegramPoller_recurring_creates_repeating_slot);
+    RUN_TEST(test_TelegramPoller_recurring_invalid_interval_error);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);
