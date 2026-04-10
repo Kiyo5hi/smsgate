@@ -995,9 +995,11 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
     filter["result"][0]["message"]["text"] = true;
     filter["result"][0]["message"]["reply_to_message"]["message_id"] = true;
 
-    // Cap the JSON document; we asked for limit=10 and only keep ~5
-    // ints + 1 string per entry, so 4 KB is comfortable headroom.
-    DynamicJsonDocument doc(4096);
+    // RFC-0262: 16 KB document handles up to 10 updates each with ~1530-char
+    // texts (the RFC-0261 body cap). A 4096-byte document caused NoMemory OOM
+    // when multiple long /schedulesend commands were pending, permanently
+    // blocking the watermark from advancing.
+    DynamicJsonDocument doc(16384);
     DeserializationError err = deserializeJson(doc, body,
                                                DeserializationOption::Filter(filter));
     if (err)
