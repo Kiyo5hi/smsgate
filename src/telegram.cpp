@@ -137,16 +137,50 @@ bool registerBotCommands(RealBotClient &bot)
 
     String url = String("/bot") + botToken + "/setMyCommands";
 
-    // [{"command":"debug","description":"Show SMS diagnostic log"},
-    //  {"command":"status","description":"Show device health and stats"}]
-    DynamicJsonDocument doc(384);
+    // RFC-0022: Register all 8 commands so Telegram's autocomplete menu
+    // shows the full feature set (the / menu IS the /help command).
+    DynamicJsonDocument doc(768);
     JsonArray cmds = doc.createNestedArray("commands");
-    JsonObject cmd = cmds.createNestedObject();
-    cmd["command"] = "debug";
-    cmd["description"] = "Show SMS diagnostic log";
-    JsonObject cmd2 = cmds.createNestedObject();
-    cmd2["command"] = "status";
-    cmd2["description"] = "Show device health and stats";
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "debug";
+        c["description"] = "Show SMS diagnostic log";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "status";
+        c["description"] = "Show device health and stats";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "listusers";
+        c["description"] = "List authorized Telegram users";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "adduser";
+        c["description"] = "Add a Telegram user (admin only)";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "removeuser";
+        c["description"] = "Remove a Telegram user (admin only)";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "blocklist";
+        c["description"] = "Show SMS sender block lists";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "block";
+        c["description"] = "Block an SMS sender (admin only)";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "unblock";
+        c["description"] = "Unblock an SMS sender (admin only)";
+    }
 
     String payload;
     serializeJson(doc, payload);
@@ -202,7 +236,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /debug, /status");
+        Serial.println("Bot commands registered: /debug /status /listusers /adduser /removeuser /blocklist /block /unblock");
     }
     else
     {

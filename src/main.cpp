@@ -611,6 +611,12 @@ void setup()
         msg += String((int)smsDebugLog.count());
         msg += "/";
         msg += String((int)SmsDebugLog::kMaxEntries);                  msg += "\n";
+        msg += "\n";
+        msg += "--- Configuration ---\n";
+        msg += "Users (compile+runtime): ";
+        msg += String(allowedIdCount + runtimeIdCount);                msg += "\n";
+        msg += "Block list (compile+runtime): ";
+        msg += String(sBlockListCount + sRuntimeBlockListCount);       msg += "\n";
         return msg;
     };
 
@@ -906,7 +912,17 @@ void setup()
     // RFC-0021: Apply runtime SMS block list (loaded from NVS above, or empty on first boot).
     smsHandler.setRuntimeBlockList(sRuntimeBlockList, sRuntimeBlockListCount);
 
-    realBot.sendMessage("🚀 Modem SMS to Telegram Bridge is now online!");
+    // RFC-0022: Rich startup notification. Prime cachedCsq so the boot banner
+    // shows a real signal quality (modem is idle here, pre-sweepExistingSms).
+    cachedCsq = modem.getSignalQuality();
+    {
+        String bootMsg = String("\xF0\x9F\x9A\x80 Bridge online\n"); // U+1F680 rocket
+        if (statusFn)
+            bootMsg += statusFn();
+        else
+            bootMsg += "(status not available)";
+        realBot.sendMessage(bootMsg);
+    }
 
     // Drain anything that arrived while we were offline.
     smsHandler.sweepExistingSms();
