@@ -178,6 +178,8 @@ static bool csqHistoryFull = false;
 // RFC-0036: SIM slot usage from AT+CPMS?, refreshed every 30s.
 static int cachedSimUsed  = -1; // -1 = not yet queried
 static int cachedSimTotal = 0;
+// RFC-0038: Boot timestamp — captured once on first successful NTP sync.
+static time_t s_bootTimestamp = 0;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -231,6 +233,9 @@ void syncTime()
         now = time(nullptr);
     }
     Serial.printf("\nCurrent time: %s\n", ctime(&now));
+    // RFC-0038: Record boot timestamp on first NTP sync.
+    if (s_bootTimestamp == 0)
+        s_bootTimestamp = now;
 }
 
 // RFC-0020: Map esp_reset_reason_t to a human-readable string for /status.
@@ -621,6 +626,14 @@ void setup()
         msg += "  Flash: ";     msg += String((int)(ESP.getSketchSize() / 1024)); msg += "kB / ";
         msg += String((int)((ESP.getSketchSize() + ESP.getFreeSketchSpace()) / 1024)); msg += "kB\n";
         msg += "  Reset: ";     msg += resetReasonStr(s_resetReason); msg += "\n";
+        // RFC-0038: Show absolute boot timestamp when NTP was available.
+        if (s_bootTimestamp > 0) {
+            time_t bt = s_bootTimestamp + TIMEZONE_OFFSET_SEC;
+            struct tm *bt2 = gmtime(&bt);
+            char bootBuf[32];
+            strftime(bootBuf, sizeof(bootBuf), "%Y-%m-%d %H:%M", bt2);
+            msg += "  Booted: "; msg += bootBuf; msg += " "; msg += tzLabel; msg += "\n";
+        }
 
         msg += "\n\xF0\x9F\x93\xA8 SMS\n"; // 📨
         msg += "  Forwarded: "; msg += String(smsHandler.smsForwarded()); msg += "\n";
@@ -1090,6 +1103,7 @@ void loop()
     //   switch back to the verified (CA-bundle) path.
     static unsigned long lastTransportCheck = 0;
     static bool wifiDownLastCheck = false;
+    static unsigned long wifiDownSinceMs = 0; // RFC-0039: when WiFi first dropped
     if (millis() - lastTransportCheck > 30000)
     {
         lastTransportCheck = millis();
@@ -1118,10 +1132,22 @@ void loop()
                 else
                 {
                     wifiDownLastCheck = true;
+                    wifiDownSinceMs   = millis(); // RFC-0039: record drop time
                 }
             }
             else
             {
+                // RFC-0039: WiFi was down last check but is now back up.
+                if (wifiDownLastCheck)
+                {
+                    unsigned long downSec = (millis() - wifiDownSinceMs) / 1000UL;
+                    String notif = String("\xF0\x9F\x94\x97 WiFi reconnected"); // 🔗
+                    notif += " (was down ";
+                    if (downSec >= 60) { notif += String((unsigned long)(downSec / 60)); notif += "m "; }
+                    notif += String((unsigned long)(downSec % 60)); notif += "s)";
+                    realBot.sendMessage(notif);
+                    Serial.println(notif);
+                }
                 wifiDownLastCheck = false;
             }
         }
