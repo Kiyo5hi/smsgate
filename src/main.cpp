@@ -538,6 +538,13 @@ void setup()
     modem.sendAT("+CLIP=1");
     modem.waitResponse(2000);
 
+    // RFC-0247: Enable spontaneous +CREG: <stat> URCs so the drain loop
+    // can update cachedRegStatus and fire RFC-0082 alerts in real-time
+    // (within one loop iteration, ~50 ms) rather than waiting up to 30 s
+    // for the next status-refresh block.
+    modem.sendAT("+CREG=1");
+    modem.waitResponse(2000);
+
     // --- Network / Telegram transport setup (RFC-0004) ---
     //
     // Strategy: WiFi primary, cellular fallback.
@@ -2439,12 +2446,57 @@ void loop()
             realModem.waitResponseOk(2000UL);
             realModem.sendAT("+CLIP=1");           // restore caller-ID presentation
             realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CREG=1");           // RFC-0247: restore CREG URC subscription
+            realModem.waitResponseOk(2000UL);
             // Sweep SIM — SMS may have arrived during the reset window.
             if (activeTransport != ActiveTransport::kNone)
             {
                 esp_task_wdt_reset();
                 smsHandler.sweepExistingSms();
                 esp_task_wdt_reset();
+            }
+        }
+
+        // RFC-0247: Real-time registration status update.
+        // AT+CREG=1 causes the modem to emit "+CREG: <stat>" whenever
+        // registration changes. Update cachedRegStatus immediately and fire
+        // the RFC-0082 lost/restored alert without waiting for the 30 s poll.
+        // Also handles "+CREG: <n>,<stat>" (solicited-response format) which
+        // can appear via the RFC-0236 piggybacked-URC dispatch path — safe
+        // because the alert logic is idempotent via s_regLostAlertSent.
+        if (line.startsWith("+CREG:"))
+        {
+            int colon = line.indexOf(':');
+            String cregRest = line.substring(colon + 1);
+            cregRest.trim();
+            int cregComma = cregRest.indexOf(',');
+            int cregStat = (cregComma >= 0) ? cregRest.substring(cregComma + 1).toInt()
+                                            : cregRest.toInt();
+            switch (cregStat) {
+                case 1:  cachedRegStatus = REG_OK_HOME;       break;
+                case 5:  cachedRegStatus = REG_OK_ROAMING;    break;
+                case 2:  cachedRegStatus = REG_SEARCHING;     break;
+                case 3:  cachedRegStatus = REG_DENIED;        break;
+                default: cachedRegStatus = REG_UNREGISTERED;  break;
+            }
+            bool cregOk = (cachedRegStatus == REG_OK_HOME || cachedRegStatus == REG_OK_ROAMING);
+            const char *cregTxt = (cachedRegStatus == REG_OK_HOME)      ? "home"
+                                : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
+                                : (cachedRegStatus == REG_SEARCHING)    ? "searching"
+                                : (cachedRegStatus == REG_DENIED)       ? "denied"
+                                : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
+                                :                                         "unknown";
+            Serial.printf("[RFC-0247] +CREG URC: stat=%d (%s)\n", cregStat, cregTxt);
+            if (!cregOk && !s_regLostAlertSent && cachedCsq > 0) {
+                if (!alertsMuted())
+                    realBot.sendMessage(
+                        String("\xF0\x9F\x93\xB5 Network registration lost (") + cregTxt + ")"); // 📵
+                s_regLostAlertSent = true;
+            } else if (cregOk && s_regLostAlertSent) {
+                if (!alertsMuted())
+                    realBot.sendMessage(
+                        String("\xE2\x9C\x85 Network registration restored (") + cregTxt + ")"); // ✅
+                s_regLostAlertSent = false;
             }
         }
 
@@ -2782,6 +2834,8 @@ void loop()
             realModem.waitResponseOk(2000UL);
             realModem.sendAT("+CLIP=1");
             realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CREG=1"); // RFC-0247: re-arm CREG URC subscription
+            realModem.waitResponseOk(2000UL);
             esp_task_wdt_reset();
             smsHandler.sweepExistingSms();
             esp_task_wdt_reset();
@@ -2963,6 +3017,8 @@ void loop()
             realModem.sendAT("+CNMI=2,1,0,0,0");
             realModem.waitResponseOk(2000UL);
             realModem.sendAT("+CLIP=1");
+            realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CREG=1"); // RFC-0247: re-arm CREG URC subscription
             realModem.waitResponseOk(2000UL);
         }
         esp_task_wdt_reset();
