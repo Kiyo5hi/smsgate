@@ -418,6 +418,41 @@ void test_CallHandler_muted_skips_bot_but_still_hangs_up()
     TEST_ASSERT_TRUE(modem.callHangupCalls() > 0);
 }
 
+// RFC-0180: last-caller tracking
+void test_CallHandler_lastCallerNumber_set_after_commit()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    uint32_t t = 0;
+    CallHandler handler(modem, bot, [&]() -> uint32_t { return t; });
+
+    TEST_ASSERT_EQUAL_STRING("", handler.lastCallerNumber().c_str());
+    TEST_ASSERT_EQUAL(0u, handler.lastCallTimeMs());
+
+    t = 1000;
+    handler.onUrcLine(String("RING"));
+    handler.onUrcLine(String("+CLIP: \"13900139000\",129,\"\",,\"\",0"));
+
+    TEST_ASSERT_EQUAL_STRING("13900139000", handler.lastCallerNumber().c_str());
+    TEST_ASSERT_EQUAL(1000u, handler.lastCallTimeMs());
+}
+
+void test_CallHandler_lastCallerNumber_unknown_for_withheld()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    uint32_t t = 5000;
+    CallHandler handler(modem, bot, [&]() -> uint32_t { return t; });
+
+    // Withheld caller: RING + empty CLIP
+    handler.onUrcLine(String("RING"));
+    handler.onUrcLine(String("+CLIP: \"\",128,\"\",,\"\",0"));
+
+    // Should be "(Unknown)" for withheld number
+    TEST_ASSERT_EQUAL_STRING("(Unknown)", handler.lastCallerNumber().c_str());
+    TEST_ASSERT_EQUAL(5000u, handler.lastCallTimeMs());
+}
+
 void run_call_handler_tests()
 {
     RUN_TEST(test_parseClipLine_standard);
@@ -445,4 +480,7 @@ void run_call_handler_tests()
     RUN_TEST(test_CallHandler_onCallFn_provides_message_id_for_reply_routing);
     // RFC-0164: muted call handling
     RUN_TEST(test_CallHandler_muted_skips_bot_but_still_hangs_up);
+    // RFC-0180: last-caller tracking
+    RUN_TEST(test_CallHandler_lastCallerNumber_set_after_commit);
+    RUN_TEST(test_CallHandler_lastCallerNumber_unknown_for_withheld);
 }

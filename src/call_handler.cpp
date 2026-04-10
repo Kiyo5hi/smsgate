@@ -122,6 +122,8 @@ void CallHandler::commitRinging()
     Serial.println(", posting and hanging up.");
 
     callsReceived_++;  // RFC-0043: track lifetime call count
+    lastCallerNumber_ = (number_.length() == 0) ? String("(Unknown)") : number_; // RFC-0180
+    lastCallTimeMs_   = clock_();                                                  // RFC-0180
 
     // Best-effort notify — skipped when callNotifyEnabled_ is false (RFC-0164).
     // RFC-0108: use sendMessageReturningId so the caller can register the

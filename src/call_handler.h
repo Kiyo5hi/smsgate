@@ -95,6 +95,12 @@ public:
     void setUnknownDeadlineMs(uint32_t ms) { unknownDeadlineMs_ = ms; }
     uint32_t unknownDeadlineMs() const { return unknownDeadlineMs_; }
 
+    // RFC-0180: Last-caller info. Updated on each committed call event.
+    // lastCallerNumber() returns "" if no call has been received yet.
+    // lastCallTimeMs() returns the clock() value at commit time (0 = none).
+    const String &lastCallerNumber() const { return lastCallerNumber_; }
+    uint32_t      lastCallTimeMs()   const { return lastCallTimeMs_; }
+
     // Test-only accessors.
     enum class State
     {
@@ -128,4 +134,6 @@ private:
     uint32_t dedupeWindowMs_ = kDedupeWindowMs;           // RFC-0165: runtime-settable
     uint32_t unknownDeadlineMs_ = kUnknownNumberDeadlineMs; // RFC-0166: runtime-settable
     std::function<void(const String &, int32_t)> onCallFn_; // RFC-0100/0108
+    String   lastCallerNumber_;   // RFC-0180: phone (or "" = none, "(Unknown)" = withheld)
+    uint32_t lastCallTimeMs_ = 0; // RFC-0180: clock() at last commit (0 = none)
 };

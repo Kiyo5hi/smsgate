@@ -1500,7 +1500,20 @@ void setup()
             s += "  Unknown deadline: ";
             s += String(callHandler.unknownDeadlineMs()); s += "ms\n";
             s += "  Calls received: ";
-            s += String(callHandler.callsReceived());
+            s += String(callHandler.callsReceived()); s += "\n";
+            s += "  Last caller: ";
+            s += (callHandler.lastCallerNumber().length() > 0
+                  ? callHandler.lastCallerNumber()
+                  : String("(none yet)"));
+            if (callHandler.lastCallTimeMs() > 0)
+            {
+                uint32_t agoMs = (uint32_t)millis() - callHandler.lastCallTimeMs();
+                uint32_t agoSec = agoMs / 1000;
+                s += " (";
+                if (agoSec < 60)       { s += String(agoSec); s += "s ago)"; }
+                else if (agoSec < 3600){ s += String(agoSec/60); s += "m ago)"; }
+                else                   { s += String(agoSec/3600); s += "h ago)"; }
+            }
             return s;
         });
         telegramPoller->setNvsInfoFn([]() -> String { // RFC-0168
