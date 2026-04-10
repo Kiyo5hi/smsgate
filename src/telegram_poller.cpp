@@ -6,6 +6,10 @@
 #include <memory>
 #include <time.h>
 
+#ifdef ESP_PLATFORM
+#include <esp_task_wdt.h>
+#endif
+
 // RFC-0202: Format a scheduled-send ETA string. If wallTimeFn is set and
 // returns a valid epoch (> 1e9), appends the absolute UTC time; otherwise
 // falls back to relative-only. Examples:
@@ -4477,6 +4481,13 @@ void TelegramPoller::tick()
         {
             continue;
         }
+        // RFC-0240: Kick the WDT before each update. processUpdate() may
+        // call doSendMessage() (up to ~12 s) plus bot_.sendMessage()
+        // for the reply/error ACK. With limit=10 updates per batch,
+        // worst-case batch time is 10×24 s = 240 s > WDT 120 s.
+#ifdef ESP_PLATFORM
+        esp_task_wdt_reset();
+#endif
         processUpdate(u);
         if (u.updateId > highest)
         {
