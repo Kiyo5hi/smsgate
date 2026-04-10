@@ -854,10 +854,21 @@ void setup()
         smsDebugLog.loadFrom(realPersist);
         smsDebugLog.setSink(realPersist);
 
+        // RFC-0044: Restore last-SMS timestamp from NVS.
+        {
+            uint32_t ts = 0;
+            if (realPersist.loadBlob("lastsmsts", &ts, sizeof(ts)) == sizeof(ts) && ts > 0)
+                s_lastSmsTimestamp = (time_t)ts;
+        }
+
         replyTargets.load();
         smsHandler.setReplyTargetMap(&replyTargets);
         smsHandler.setDebugLog(&smsDebugLog);
-        smsHandler.setOnForwarded([]() { s_lastSmsTimestamp = time(nullptr); }); // RFC-0041
+        smsHandler.setOnForwarded([]() {                                        // RFC-0041/0044
+            s_lastSmsTimestamp = time(nullptr);
+            uint32_t ts = (uint32_t)s_lastSmsTimestamp;                         // RFC-0044: persist
+            realPersist.saveBlob("lastsmsts", &ts, sizeof(ts));
+        });
         telegramPoller->setDebugLog(&smsDebugLog);
         smsSender.setDebugLog(&smsDebugLog); // RFC-0035: log outbound failures
         telegramPoller->begin();
