@@ -200,6 +200,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/logcsv \xe2\x80\x94 Export SMS debug log as CSV (unix_ts,sender,outcome,chars)\n";
             help += "/cleardebug \xe2\x80\x94 Clear SMS diagnostic log\n";
             help += "/send <num> <msg> \xe2\x80\x94 Send outbound SMS\n";
+            help += "/multicast <n1,n2,...> <msg> \xe2\x80\x94 Send same SMS to multiple numbers\n"; // RFC-0213
             help += "/sendall <msg> \xe2\x80\x94 Broadcast to all aliases\n";
             help += "/test <num> \xe2\x80\x94 Send a test SMS to verify outbound path\n";
             help += "/queue \xe2\x80\x94 Show pending outbound queue\n";
@@ -1386,6 +1387,115 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             Serial.println(phone);
             return;
         }
+
+        // RFC-0213: /multicast <phone1,phone2,...> <body> — enqueue same SMS to multiple numbers.
+        if (lower == "/multicast" || lower.startsWith("/multicast "))
+        {
+            static constexpr int kMulticastMaxRecipients = 10;
+            String arg = u.text.substring(strlen("/multicast"));
+            arg.trim();
+            int spacePos = arg.indexOf(' ');
+            if (arg.length() == 0 || spacePos <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /multicast <phone1,phone2,...> <message>\n"
+                           "Example: /multicast +111,+222 Hello everyone!"));
+                return;
+            }
+            String phonesStr = arg.substring(0, spacePos);
+            String body = arg.substring(spacePos + 1);
+            body.trim();
+            if (body.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /multicast <phone1,phone2,...> <message>"));
+                return;
+            }
+            int parts = sms_codec::countSmsParts(body);
+            if (parts == 0)
+            {
+                sendErrorReply(u.chatId,
+                    String("Message too long (max ~1530 GSM-7 / ~670 Unicode chars)."));
+                return;
+            }
+            // Parse comma-separated phone numbers.
+            std::vector<String> phones;
+            {
+                String tmp = phonesStr;
+                while (tmp.length() > 0)
+                {
+                    int comma = tmp.indexOf(',');
+                    String tok = (comma >= 0) ? tmp.substring(0, comma) : tmp;
+                    tok.trim();
+                    if (tok.length() > 0)
+                        phones.push_back(sms_codec::normalizePhoneNumber(tok));
+                    if (comma < 0) break;
+                    tmp = tmp.substring(comma + 1);
+                }
+            }
+            if (phones.empty())
+            {
+                sendErrorReply(u.chatId, String("No valid phone numbers found."));
+                return;
+            }
+            if ((int)phones.size() > kMulticastMaxRecipients)
+            {
+                sendErrorReply(u.chatId,
+                    String("\xe2\x9d\x8c Max ") + String(kMulticastMaxRecipients) // ❌
+                    + String(" recipients per /multicast."));
+                return;
+            }
+            int queued = 0;
+            int skipped = 0;
+            String queuedList;
+            int64_t requesterChatId = u.chatId;
+            for (const auto &ph : phones)
+            {
+                if (ph.length() == 0) { skipped++; continue; }
+                String capturedPhone = ph;
+                bool ok = smsSender_.enqueue(ph, body,
+                    [this, requesterChatId, capturedPhone]() {
+                        sendErrorReply(requesterChatId,
+                            String("SMS to ") + capturedPhone + " failed after retries.");
+                    },
+                    [this, requesterChatId, capturedPhone]() {
+                        int32_t delivId = bot_.sendMessageToReturningId(requesterChatId,
+                            String("\xF0\x9F\x93\xA8 Sent to ") + capturedPhone); // 📨
+                        if (delivId > 0)
+                            replyTargets_.put(delivId, capturedPhone);
+                    });
+                if (ok)
+                {
+                    queued++;
+                    if (queuedList.length() > 0) queuedList += String(", ");
+                    queuedList += ph;
+                }
+                else skipped++;
+            }
+            if (queued == 0)
+            {
+                sendErrorReply(u.chatId, String("No messages queued (queue full or all numbers invalid)."));
+                return;
+            }
+            String reply;
+            if (skipped > 0)
+            {
+                reply = String("\xe2\x9a\xa0\xef\xb8\x8f Skipped ") + String(skipped) // ⚠️
+                      + String(" number(s). Queued to ")
+                      + String(queued) + String(": ") + queuedList;
+            }
+            else
+            {
+                reply = String("\xe2\x9c\x85 Multicast queued to ") + String(queued) // ✅
+                      + String(" number") + (queued == 1 ? "" : "s") + String(": ")
+                      + queuedList;
+            }
+            if (parts > 1)
+                reply += String(" (") + String(parts) + String(" parts each)");
+            bot_.sendMessageTo(u.chatId, reply);
+            return;
+        }
+
 
         // RFC-0085: /test <number> — outbound SMS self-test.
         if (lower == "/test" || lower.startsWith("/test "))

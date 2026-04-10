@@ -7309,6 +7309,72 @@ void test_TelegramPoller_schedulesend_warns_quiet_overlap()
     TEST_ASSERT_TRUE(sawWarning);
 }
 
+// RFC-0213: /multicast queues SMS to each number.
+void test_TelegramPoller_multicast_queues_multiple_numbers()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(16001, kAllowedFromId, 0,
+        "/multicast +1111,+2222,+3333 Hello all!", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(16001, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(3, sender.queueSize());
+
+    bool sawConfirm = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Multicast queued to 3") >= 0)
+        { sawConfirm = true; break; }
+    TEST_ASSERT_TRUE(sawConfirm);
+}
+
+// RFC-0213: /multicast with invalid numbers skips them.
+void test_TelegramPoller_multicast_skips_invalid_numbers()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // "+1111" is valid; "abc" normalizes to empty (invalid).
+    bot.queueUpdateBatch({makeUpdate(16002, kAllowedFromId, 0,
+        "/multicast +1111,abc Body text", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(16002, poller.lastUpdateId());
+    // Only 1 valid number queued.
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+
+    bool sawSkipped = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Skipped") >= 0 || m.indexOf("Multicast queued") >= 0)
+        { sawSkipped = true; break; }
+    TEST_ASSERT_TRUE(sawSkipped);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -7975,6 +8041,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_clearquiethours);
     // RFC-0212: quiet-hours overlap warning on schedule
     RUN_TEST(test_TelegramPoller_schedulesend_warns_quiet_overlap);
+    // RFC-0213: /multicast command
+    RUN_TEST(test_TelegramPoller_multicast_queues_multiple_numbers);
+    RUN_TEST(test_TelegramPoller_multicast_skips_invalid_numbers);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);
