@@ -6995,6 +6995,114 @@ void test_TelegramPoller_schedqueue_shows_abs_time_when_ntpsynced()
     TEST_ASSERT_TRUE(sawUtc);
 }
 
+// RFC-0205: /sendafter schedules for a specific UTC time (future time today).
+void test_TelegramPoller_sendafter_schedules_future_slot()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // 1744300000 = 2025-04-10 10:26:40 UTC. "11:00" is 33m20s away.
+    poller.setWallTimeFn([]() -> long { return 1744300000L; });
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(11001, kAllowedFromId, 0,
+        "/sendafter 11:00 +9876 Meeting reminder", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(11001, poller.lastUpdateId());
+
+    // Slot should be occupied.
+    const auto& q = poller.getSchedQueue();
+    TEST_ASSERT_NOT_EQUAL(0U, q[0].sendAtMs);
+    TEST_ASSERT_EQUAL_STRING("+9876", q[0].phone.c_str());
+
+    // Reply should contain "scheduled" and "UTC".
+    bool sawScheduled = false, sawUtc = false;
+    for (const auto &m : bot.sentMessages()) {
+        if (m.indexOf("scheduled") >= 0) sawScheduled = true;
+        if (m.indexOf("UTC") >= 0) sawUtc = true;
+    }
+    TEST_ASSERT_TRUE(sawScheduled);
+    TEST_ASSERT_TRUE(sawUtc);
+}
+
+// RFC-0205: /sendafter with past time schedules for tomorrow.
+void test_TelegramPoller_sendafter_wraps_to_tomorrow()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // 1744300000 = 2025-04-10 15:46:40 UTC. "09:00" is already past → schedule for tomorrow.
+    // 09:00 tomorrow = 15:46:40 + 17h13m20s = 62000s away.
+    poller.setWallTimeFn([]() -> long { return 1744300000L; });
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(11002, kAllowedFromId, 0,
+        "/sendafter 09:00 +5432 Tomorrow msg", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(11002, poller.lastUpdateId());
+
+    // sendAtMs should be ~17h from now (between 16h and 18h).
+    // clk.nowMs is now 9000; sendAt = 9000 + 62000000 = 62009000.
+    const auto& q = poller.getSchedQueue();
+    TEST_ASSERT_NOT_EQUAL(0U, q[0].sendAtMs);
+    TEST_ASSERT_GREATER_THAN(9000U + 16UL * 3600000UL, q[0].sendAtMs); // > 16h
+    TEST_ASSERT_LESS_THAN(9000U + 18UL * 3600000UL, q[0].sendAtMs);    // < 18h
+}
+
+// RFC-0205: /sendafter without NTP replies with error.
+void test_TelegramPoller_sendafter_no_ntp_replies_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // wallTimeFn_ not set.
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(11003, kAllowedFromId, 0,
+        "/sendafter 14:00 +1234 No NTP", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(11003, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("NTP") >= 0) { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 // RFC-0204: /delayall extends all occupied slots.
 void test_TelegramPoller_delayall_extends_all_slots()
 {
@@ -7511,6 +7619,10 @@ void run_telegram_poller_tests()
     // RFC-0202: absolute time in scheduled SMS commands
     RUN_TEST(test_TelegramPoller_schedulesend_shows_abs_time_when_ntpsynced);
     RUN_TEST(test_TelegramPoller_schedqueue_shows_abs_time_when_ntpsynced);
+    // RFC-0205: /sendafter command
+    RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
+    RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);
+    RUN_TEST(test_TelegramPoller_sendafter_no_ntp_replies_error);
     // RFC-0204: /delayall command
     RUN_TEST(test_TelegramPoller_delayall_extends_all_slots);
     RUN_TEST(test_TelegramPoller_delayall_empty_queue);

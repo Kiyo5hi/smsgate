@@ -170,6 +170,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/clearschedule \xe2\x80\x94 Cancel all pending scheduled SMS\n"; // RFC-0195
             help += "/scheddelay <N> <min> \xe2\x80\x94 Extend scheduled slot N by extra minutes\n"; // RFC-0196
             help += "/delayall <min> \xe2\x80\x94 Extend all scheduled slots by extra minutes\n"; // RFC-0204
+            help += "/sendafter <HH:MM> <phone> <body> \xe2\x80\x94 Schedule SMS at a specific UTC time\n"; // RFC-0205
             help += "/schedinfo <N> \xe2\x80\x94 Show full body and ETA of scheduled slot N\n"; // RFC-0198
             help += "/schedrename <N> <phone> \xe2\x80\x94 Change destination phone of scheduled slot N\n"; // RFC-0197
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
@@ -2614,6 +2615,123 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId,
                     String("\xe2\x8f\xb0 Scheduled SMS (") // ⏰
                     + String(pending) + String(" pending):\n") + out);
+            return;
+        }
+
+        // RFC-0205: /sendafter <HH:MM> <phone> <body> — schedule SMS at a wall-clock time.
+        if (lower == "/sendafter" || lower.startsWith("/sendafter "))
+        {
+            if (!wallTimeFn_)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9a\xa0\xef\xb8\x8f NTP not configured. Use /schedulesend <min> instead.")); // ⚠️
+                return;
+            }
+            long wallNow = wallTimeFn_();
+            if (wallNow <= 1000000000L)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9a\xa0\xef\xb8\x8f NTP not synced. Use /schedulesend <min> instead.")); // ⚠️
+                return;
+            }
+            String arg = extractArg(u.text, "/sendafter ");
+            arg.trim();
+            // Parse: first token is HH:MM, rest is "<phone> <body>".
+            int sp1 = arg.indexOf(' ');
+            if (sp1 <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /sendafter <HH:MM> <phone> <body>\n"
+                           "Example: /sendafter 14:30 +13800138000 Hello!"));
+                return;
+            }
+            String timeStr = arg.substring(0, sp1);
+            String rest = arg.substring(sp1 + 1);
+            rest.trim();
+            // Parse HH:MM.
+            int colon = timeStr.indexOf(':');
+            if (colon != 2 || timeStr.length() < 5)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid time format. Use HH:MM (e.g. 14:30).")); // ❌
+                return;
+            }
+            int hh = timeStr.substring(0, 2).toInt();
+            int mm = timeStr.substring(3, 5).toInt();
+            if (hh < 0 || hh > 23 || mm < 0 || mm > 59)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid time. HH must be 0\xe2\x80\x9323, MM must be 0\xe2\x80\x9359.")); // ❌
+                return;
+            }
+            // Parse phone and body from rest.
+            int sp2 = rest.indexOf(' ');
+            if (sp2 <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /sendafter <HH:MM> <phone> <body>"));
+                return;
+            }
+            String rawPhone2 = rest.substring(0, sp2);
+            rawPhone2.trim();
+            String phone2 = sms_codec::normalizePhoneNumber(rawPhone2);
+            if (phone2.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid phone number.")); // ❌
+                return;
+            }
+            String body2 = rest.substring(sp2 + 1);
+            body2.trim();
+            if (body2.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /sendafter <HH:MM> <phone> <body>"));
+                return;
+            }
+            if (body2.length() > 127) body2 = body2.substring(0, 127);
+            // Compute target Unix timestamp (UTC today at HH:MM:00; if past, tomorrow).
+            time_t nowT = (time_t)wallNow;
+            struct tm *tmNow = gmtime(&nowT);
+            struct tm tmTarget = *tmNow;
+            tmTarget.tm_hour = hh;
+            tmTarget.tm_min  = mm;
+            tmTarget.tm_sec  = 0;
+            time_t targetUnix = mktime(&tmTarget); // mktime treats as local; correct for UTC below
+            // mktime interprets tm as local time. To get UTC, use timegm or subtract timezone.
+            // Portable approach: compute offset between mktime and actual UTC.
+            // We know wallNow is UTC epoch. Compute target UTC directly:
+            // days-into-epoch for today UTC + HH:MM offset.
+            {
+                long dayStart = wallNow - (tmNow->tm_hour * 3600L + tmNow->tm_min * 60L + tmNow->tm_sec);
+                targetUnix = (time_t)(dayStart + hh * 3600L + mm * 60L);
+                if (targetUnix <= (time_t)wallNow)
+                    targetUnix += 86400L; // already past → tomorrow
+            }
+            long delayMs = ((long)targetUnix - wallNow) * 1000L;
+            if (delayMs < 60000L) delayMs = 60000L; // minimum 1 min
+            // Find a free slot.
+            int slotIdx2 = -1;
+            uint32_t nowMs5 = clock_ ? clock_() : 0;
+            for (int i = 0; i < (int)kScheduledQueueSize; i++)
+                if (scheduledQueue_[i].sendAtMs == 0) { slotIdx2 = i; break; }
+            if (slotIdx2 < 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Scheduled queue full (5 slots). Use /schedqueue to see pending.")); // ❌
+                return;
+            }
+            uint32_t sendAt2 = nowMs5 + (uint32_t)delayMs;
+            scheduledQueue_[slotIdx2].sendAtMs = sendAt2;
+            scheduledQueue_[slotIdx2].phone    = phone2;
+            scheduledQueue_[slotIdx2].body     = body2;
+            if (persistSchedFn_) persistSchedFn_(); // RFC-0200
+            String eta2 = schedEtaStr(sendAt2, nowMs5, wallTimeFn_); // RFC-0202
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x8f\xb0 SMS to ") + phone2 // ⏰
+                + String(" scheduled ") + eta2
+                + String(" (slot ") + String(slotIdx2 + 1) + String("/")
+                + String((int)kScheduledQueueSize) + String(")."));
             return;
         }
 
