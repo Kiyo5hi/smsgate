@@ -102,7 +102,9 @@ public:
         String phone;
         String bodyPreview; // first ≤20 chars of body
         int attempts;
-        uint32_t queuedAtMs; // RFC-0095: set on first drain; 0 if not yet drained
+        uint32_t queuedAtMs;   // RFC-0095: set on first drain; 0 if not yet drained
+        uint32_t nextRetryMs;  // RFC-0214: millis() when next attempt is allowed; 0 if ready now
+        String   bodyFull;     // RFC-0214: complete body text
     };
     std::vector<QueueSnapshot> getQueueSnapshot() const;
 

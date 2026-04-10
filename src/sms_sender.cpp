@@ -259,10 +259,12 @@ std::vector<SmsSender::QueueSnapshot> SmsSender::getQueueSnapshot() const
         if (!e.occupied)
             continue;
         QueueSnapshot s;
-        s.phone       = e.phone;
-        s.bodyPreview = e.body.substring(0, 20);
-        s.attempts    = e.attempts;
-        s.queuedAtMs  = e.queuedAtMs; // RFC-0095
+        s.phone        = e.phone;
+        s.bodyPreview  = e.body.substring(0, 20);
+        s.attempts     = e.attempts;
+        s.queuedAtMs   = e.queuedAtMs;   // RFC-0095
+        s.nextRetryMs  = e.nextRetryMs;  // RFC-0214
+        s.bodyFull     = e.body;         // RFC-0214
         result.push_back(s);
     }
     return result;

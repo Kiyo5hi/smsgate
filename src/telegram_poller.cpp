@@ -204,6 +204,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/sendall <msg> \xe2\x80\x94 Broadcast to all aliases\n";
             help += "/test <num> \xe2\x80\x94 Send a test SMS to verify outbound path\n";
             help += "/queue \xe2\x80\x94 Show pending outbound queue\n";
+            help += "/queueinfo <N> \xe2\x80\x94 Full details of outbound queue entry N\n"; // RFC-0214
             help += "/flushqueue \xe2\x80\x94 Immediately retry all pending outbound SMS\n";
             help += "/clearqueue \xe2\x80\x94 Discard all pending outbound SMS\n";
             help += "/resetstats \xe2\x80\x94 Reset session counters (SMS fwd/fail, calls)\n";
@@ -1681,6 +1682,54 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     }
                     msg += "\n";
                 }
+            }
+            bot_.sendMessageTo(u.chatId, msg);
+            return;
+        }
+
+        // RFC-0214: /queueinfo <N> — full details of outbound queue entry N.
+        if (lower == "/queueinfo" || lower.startsWith("/queueinfo "))
+        {
+            String arg = extractArg(lower, "/queueinfo ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /queueinfo <N>  (see /queue for numbers)"));
+                return;
+            }
+            int n = (int)arg.toInt();
+            auto entries = smsSender_.getQueueSnapshot();
+            if (n < 1 || n > (int)entries.size())
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c No entry ") + String(n) // ❌
+                    + String(" in queue (") + String((int)entries.size()) + String(" total)."));
+                return;
+            }
+            const auto &e = entries[n - 1];
+            uint32_t nowMs = clock_ ? clock_() : 0;
+            String msg = String("\xf0\x9f\x93\xa4 Queue slot ") + String(n) // 📤
+                       + String("/") + String(SmsSender::kQueueSize) + String("\n");
+            msg += String("Phone:    ") + e.phone + String("\n");
+            msg += String("Body:     ") + e.bodyFull + String("\n");
+            msg += String("Attempts: ") + String(e.attempts) + String("/")
+                 + String(SmsSender::kMaxAttempts) + String("\n");
+            if (e.queuedAtMs > 0 && nowMs >= e.queuedAtMs)
+            {
+                uint32_t ageSec = (nowMs - e.queuedAtMs) / 1000;
+                if (ageSec < 60)
+                    msg += String("Queued:   ") + String((int)ageSec) + String("s ago\n");
+                else
+                    msg += String("Queued:   ") + String((int)(ageSec / 60)) + String("m ago\n");
+            }
+            if (e.nextRetryMs > 0 && nowMs < e.nextRetryMs)
+            {
+                uint32_t waitSec = (e.nextRetryMs - nowMs) / 1000;
+                msg += String("Next retry: in ") + String((int)waitSec) + String("s");
+            }
+            else
+            {
+                msg += String("Next retry: now");
             }
             bot_.sendMessageTo(u.chatId, msg);
             return;

@@ -7375,6 +7375,76 @@ void test_TelegramPoller_multicast_skips_invalid_numbers()
     TEST_ASSERT_TRUE(sawSkipped);
 }
 
+// RFC-0214: /queueinfo shows full body and attempt count.
+void test_TelegramPoller_queueinfo_shows_details()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    // Enqueue an outbound SMS.
+    sender.enqueue(String("+9876"), String("Full body message for queueinfo test"));
+
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(17001, kAllowedFromId, 0,
+        "/queueinfo 1", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(17001, poller.lastUpdateId());
+
+    bool sawBody = false;
+    bool sawPhone = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf("Full body message") >= 0) sawBody = true;
+        if (m.indexOf("+9876") >= 0)             sawPhone = true;
+    }
+    TEST_ASSERT_TRUE(sawBody);
+    TEST_ASSERT_TRUE(sawPhone);
+}
+
+// RFC-0214: /queueinfo with out-of-range N replies error.
+void test_TelegramPoller_queueinfo_out_of_range()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(17002, kAllowedFromId, 0,
+        "/queueinfo 3", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(17002, poller.lastUpdateId());
+
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("No entry") >= 0 || m.indexOf("total") >= 0)
+        { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -8044,6 +8114,9 @@ void run_telegram_poller_tests()
     // RFC-0213: /multicast command
     RUN_TEST(test_TelegramPoller_multicast_queues_multiple_numbers);
     RUN_TEST(test_TelegramPoller_multicast_skips_invalid_numbers);
+    // RFC-0214: /queueinfo command
+    RUN_TEST(test_TelegramPoller_queueinfo_shows_details);
+    RUN_TEST(test_TelegramPoller_queueinfo_out_of_range);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);
