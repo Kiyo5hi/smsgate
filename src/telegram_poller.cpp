@@ -3,6 +3,7 @@
 #include "sms_codec.h"
 
 #include <vector>
+#include <memory>
 #include <time.h>
 
 // File-static helper: strips the given prefix from `lower` and returns
@@ -697,7 +698,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
-        // RFC-0094: /sendall <body> — broadcast to all defined aliases.
+        // RFC-0094 / RFC-0104: /sendall <body> — broadcast to all defined aliases.
+        // RFC-0104 adds a delivery summary: "📊 N/M delivered" when the batch completes.
         if (lower == "/sendall" || lower.startsWith("/sendall "))
         {
             if (!aliasStore_)
@@ -725,18 +727,57 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("Message too long (max ~1530 GSM-7 / ~670 Unicode chars)."));
                 return;
             }
-            int64_t requesterChatId = u.chatId;
+
+            // RFC-0104: shared batch state for the delivery summary.
+            struct BatchState {
+                int total;
+                int succeeded = 0;
+                int failed = 0;
+                bool reported = false;
+                int64_t chatId;
+            };
+            int total = aliasStore_->count();
+            auto batch = std::make_shared<BatchState>();
+            batch->total = total;
+            batch->chatId = u.chatId;
+
             int queued = 0;
             String capturedBody = body;
-            aliasStore_->forEach([this, requesterChatId, capturedBody, &queued](
+            aliasStore_->forEach([this, capturedBody, batch, &queued](
                 const String & /*name*/, const String &aliasPhone) {
-                String capturedPhone = aliasPhone;
                 smsSender_.enqueue(aliasPhone, capturedBody,
-                    [this, requesterChatId, capturedPhone]() {
-                        sendErrorReply(requesterChatId,
-                            String("SMS to ") + capturedPhone + " failed after retries.");
+                    [this, batch]() {
+                        // Failure callback.
+                        batch->failed++;
+                        if (batch->succeeded + batch->failed == batch->total && !batch->reported)
+                        {
+                            batch->reported = true;
+                            String s = String("\xF0\x9F\x93\x8A "); // 📊
+                            s += String(batch->succeeded); s += "/"; s += String(batch->total);
+                            s += String(" delivered");
+                            if (batch->failed > 0)
+                            {
+                                s += String(", "); s += String(batch->failed); s += String(" failed");
+                            }
+                            bot_.sendMessageTo(batch->chatId, s);
+                        }
                     },
-                    nullptr);
+                    [this, batch]() {
+                        // Success callback.
+                        batch->succeeded++;
+                        if (batch->succeeded + batch->failed == batch->total && !batch->reported)
+                        {
+                            batch->reported = true;
+                            String s = String("\xF0\x9F\x93\x8A "); // 📊
+                            s += String(batch->succeeded); s += "/"; s += String(batch->total);
+                            s += String(" delivered");
+                            if (batch->failed > 0)
+                            {
+                                s += String(", "); s += String(batch->failed); s += String(" failed");
+                            }
+                            bot_.sendMessageTo(batch->chatId, s);
+                        }
+                    });
                 queued++;
             });
             String preview = body.substring(0, 30);

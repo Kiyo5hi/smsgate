@@ -1491,6 +1491,98 @@ void test_TelegramPoller_sendall_no_aliases_sends_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// ---------- RFC-0104: /sendall delivery summary ----------
+
+void test_TelegramPoller_sendall_delivery_summary_all_succeed()
+{
+    FakeModem modem;
+    modem.setPduSendDefault(1); // success
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    store.set(String("alice"), String("+447911111111"));
+    store.set(String("bob"),   String("+447922222222"));
+    poller.setAliasStore(&store);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(910, kAllowedFromId, 0, "/sendall Test msg", kAllowedFromId)});
+    poller.tick();
+
+    // Drain both queue entries (one per drainQueue call).
+    sender.drainQueue(0);
+    sender.drainQueue(0);
+
+    // Summary should say "2/2 delivered".
+    bool sawSummary = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("2/2")) >= 0 && m.text.indexOf(String("delivered")) >= 0)
+        {
+            sawSummary = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawSummary);
+}
+
+void test_TelegramPoller_sendall_delivery_summary_partial_failure()
+{
+    FakeModem modem;
+    // First entry succeeds, second always fails (hits max attempts).
+    modem.queuePduSendResult(1);  // alice: success
+    // bob will fail kMaxAttempts times.
+    for (int i = 0; i < SmsSender::kMaxAttempts; i++)
+        modem.queuePduSendResult(-1);
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowAllAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    store.set(String("alice"), String("+447911111111"));
+    store.set(String("bob"),   String("+447922222222"));
+    poller.setAliasStore(&store);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(911, kAllowedFromId, 0, "/sendall Test msg", kAllowedFromId)});
+    poller.tick();
+
+    // Drain alice (success) then all attempts for bob.
+    sender.drainQueue(0); // alice: succeeds
+    for (int i = 0; i < SmsSender::kMaxAttempts; i++)
+    {
+        clk.nowMs += 30000; // advance past retry backoff
+        sender.drainQueue(clk.nowMs);
+    }
+
+    // Summary should mention "1/2" delivered and "1 failed".
+    bool sawSummary = false;
+    for (const auto &m : bot.sentMessagesWithTarget())
+    {
+        if (m.text.indexOf(String("1/2")) >= 0 && m.text.indexOf(String("failed")) >= 0)
+        {
+            sawSummary = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawSummary);
+}
+
 // ---------- RFC-0092: /csq ----------
 
 void test_TelegramPoller_csq_command_calls_csq_fn()
@@ -2033,9 +2125,11 @@ void run_telegram_poller_tests()
     // RFC-0098: /mute and /unmute commands
     RUN_TEST(test_TelegramPoller_mute_calls_mute_fn);
     RUN_TEST(test_TelegramPoller_unmute_calls_unmute_fn);
-    // RFC-0094: /sendall command
+    // RFC-0094 / RFC-0104: /sendall command + delivery summary
     RUN_TEST(test_TelegramPoller_sendall_broadcasts_to_all_aliases);
     RUN_TEST(test_TelegramPoller_sendall_no_aliases_sends_error);
+    RUN_TEST(test_TelegramPoller_sendall_delivery_summary_all_succeed);
+    RUN_TEST(test_TelegramPoller_sendall_delivery_summary_partial_failure);
     // RFC-0088: phone aliases
     RUN_TEST(test_TelegramPoller_addalias_adds_and_replies);
     RUN_TEST(test_TelegramPoller_rmalias_removes_and_replies);
