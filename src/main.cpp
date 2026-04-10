@@ -204,6 +204,8 @@ static bool s_simFullWarnSent = false;
 static bool s_lowHeapWarnSent = false;
 // RFC-0081: CSQ low-signal alert. Hysteresis: alert at ≤5, clear at >10.
 static bool s_lowCsqWarnSent = false;
+// RFC-0082: Network registration loss alert.
+static bool s_regLostAlertSent = false;
 // RFC-0075: Daily stats digest. Initialised to 0 so the first digest sends
 // 24 h after boot (set on first 30-second tick, fire 24 h later).
 static uint32_t s_lastDailyDigestMs = 0;
@@ -1184,6 +1186,25 @@ void loop()
         lastStatusRefreshMs = millis();
         cachedCsq = modem.getSignalQuality();
         cachedRegStatus = modem.getRegistrationStatus();
+        // RFC-0082: Network registration loss / recovery alert.
+        {
+            bool regOk = (cachedRegStatus == REG_OK_HOME || cachedRegStatus == REG_OK_ROAMING);
+            const char *regTxt = (cachedRegStatus == REG_OK_HOME)      ? "home"
+                               : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
+                               : (cachedRegStatus == REG_SEARCHING)    ? "searching"
+                               : (cachedRegStatus == REG_DENIED)       ? "denied"
+                               : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
+                               :                                         "unknown";
+            if (!regOk && !s_regLostAlertSent && cachedCsq > 0) {
+                realBot.sendMessage(
+                    String("\xF0\x9F\x93\xB5 Network registration lost (") + regTxt + ")"); // 📵
+                s_regLostAlertSent = true;
+            } else if (regOk && s_regLostAlertSent) {
+                realBot.sendMessage(
+                    String("\xE2\x9C\x85 Network registration restored (") + regTxt + ")"); // ✅
+                s_regLostAlertSent = false;
+            }
+        }
         // RFC-0031: Record CSQ sample in rolling history.
         csqHistory[csqHistoryIdx] = cachedCsq;
         csqHistoryIdx = (csqHistoryIdx + 1) % 6;
