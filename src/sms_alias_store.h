@@ -9,6 +9,7 @@
 // Persisted via IPersist as a compact binary blob (key: "aliases").
 
 #include <Arduino.h>
+#include <functional>
 #include <stdint.h>
 
 #include "ipersist.h"
@@ -106,6 +107,13 @@ public:
     }
 
     int count() const { return count_; }
+
+    // Enumerate all entries. Callback receives (name, phone) pairs.
+    void forEach(std::function<void(const String &name, const String &phone)> fn) const
+    {
+        for (int i = 0; i < count_; i++)
+            fn(String(entries_[i].name), String(entries_[i].phone));
+    }
 
 private:
     // Case-insensitive ASCII comparison (avoids equalsIgnoreCase which is

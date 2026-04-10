@@ -95,6 +95,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/debug \xe2\x80\x94 Show SMS diagnostic log\n";
             help += "/cleardebug \xe2\x80\x94 Clear SMS diagnostic log\n";
             help += "/send <num> <msg> \xe2\x80\x94 Send outbound SMS\n";
+            help += "/sendall <msg> \xe2\x80\x94 Broadcast to all aliases\n";
             help += "/test <num> \xe2\x80\x94 Send a test SMS to verify outbound path\n";
             help += "/queue \xe2\x80\x94 Show pending outbound queue\n";
             help += "/flushqueue \xe2\x80\x94 Immediately retry all pending outbound SMS\n";
@@ -599,6 +600,56 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 : phone;
             bot_.sendMessageTo(u.chatId,
                 String("\xF0\x9F\x93\xA4 Test SMS queued to ") + displayPhone); // 📤
+            return;
+        }
+
+        // RFC-0094: /sendall <body> — broadcast to all defined aliases.
+        if (lower == "/sendall" || lower.startsWith("/sendall "))
+        {
+            if (!aliasStore_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(aliases not configured)"));
+                return;
+            }
+            if (aliasStore_->count() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("No aliases defined \xe2\x80\x94 use /addalias first.")); // —
+                return;
+            }
+            String body = u.text.substring(strlen("/sendall"));
+            body.trim();
+            if (body.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /sendall <message>"));
+                return;
+            }
+            if (sms_codec::countSmsParts(body) == 0)
+            {
+                sendErrorReply(u.chatId,
+                    String("Message too long (max ~1530 GSM-7 / ~670 Unicode chars)."));
+                return;
+            }
+            int64_t requesterChatId = u.chatId;
+            int queued = 0;
+            String capturedBody = body;
+            aliasStore_->forEach([this, requesterChatId, capturedBody, &queued](
+                const String & /*name*/, const String &aliasPhone) {
+                String capturedPhone = aliasPhone;
+                smsSender_.enqueue(aliasPhone, capturedBody,
+                    [this, requesterChatId, capturedPhone]() {
+                        sendErrorReply(requesterChatId,
+                            String("SMS to ") + capturedPhone + " failed after retries.");
+                    },
+                    nullptr);
+                queued++;
+            });
+            String preview = body.substring(0, 30);
+            if (body.length() > 30) preview += "\xE2\x80\xA6"; // …
+            bot_.sendMessageTo(u.chatId,
+                String("\xE2\x9C\x85 Queued to ") + String(queued) // ✅
+                + String(" recipient") + (queued == 1 ? "" : "s") + String(": ") + preview);
             return;
         }
 
