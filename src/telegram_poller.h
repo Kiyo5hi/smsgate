@@ -190,6 +190,11 @@ public:
     // this to zero all session counters in SmsHandler, CallHandler, SmsSender.
     void setResetStatsFn(std::function<void()> fn) { resetStatsFn_ = std::move(fn); }
 
+    // RFC-0118: Device label get/set. When set, /label replies with the
+    // current label and /setlabel <name> validates and saves a new one.
+    void setLabelGetFn(std::function<String()> fn) { labelGetFn_ = std::move(fn); }
+    void setLabelSetFn(std::function<void(const String &)> fn) { labelSetFn_ = std::move(fn); }
+
     // RFC-0114: Optional balance USSD code provider. Returns the configured
     // USSD balance code (e.g. "*100#") or an empty string if not set.
     // /balance calls ussdFn_ with this code. Production wires to a lambda
@@ -241,6 +246,8 @@ private:
     std::function<String()> simInfoFn_;              // RFC-0105
     std::function<String(int64_t, const String &)> atCmdFn_; // RFC-0107
     std::function<void()> resetStatsFn_;  // RFC-0110
+    std::function<String()> labelGetFn_;                    // RFC-0118
+    std::function<void(const String &)> labelSetFn_;        // RFC-0118
     std::function<String()> balanceCodeFn_; // RFC-0114
     std::function<void(int64_t)> rebootFn_; // RFC-0112
     int32_t lastUpdateId_ = 0;

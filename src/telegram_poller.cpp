@@ -113,6 +113,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/ussd <code> \xe2\x80\x94 Send USSD code (e.g. *100#) and get response\n";
             help += "/balance \xe2\x80\x94 Check SIM balance (shortcut for USSD_BALANCE_CODE)\n";
             help += "/version \xe2\x80\x94 Show firmware build timestamp\n";
+            help += "/label \xe2\x80\x94 Show device label\n";
+            help += "/setlabel <name> \xe2\x80\x94 Set device label (persisted to NVS)\n";
             help += "/reboot \xe2\x80\x94 Soft reboot\n";
             help += "/at <cmd> \xe2\x80\x94 Admin: raw AT command passthrough\n";
             if (smsBlockMutator_) {
@@ -487,6 +489,63 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         if (lower == "/version")
         {
             bot_.sendMessageTo(u.chatId, versionStr_);
+            return;
+        }
+
+        // RFC-0118: /label — show current device label.
+        if (lower == "/label")
+        {
+            if (labelGetFn_)
+            {
+                String lbl = labelGetFn_();
+                if (lbl.length() > 0)
+                    bot_.sendMessageTo(u.chatId,
+                        String("\xF0\x9F\x8F\xB7 Label: ") + lbl); // 🏷
+                else
+                    bot_.sendMessageTo(u.chatId, String("(no label set)"));
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("(label not configured)"));
+            }
+            return;
+        }
+
+        // RFC-0118: /setlabel <name> — set device label (max 32 printable chars).
+        if (lower == "/setlabel" || lower.startsWith("/setlabel "))
+        {
+            if (!labelSetFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(label not configured)"));
+                return;
+            }
+            String name = extractArg(u.text, "/setlabel ");
+            if (name.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setlabel <name>\nExample: /setlabel Office SIM"));
+                return;
+            }
+            if (name.length() > 32)
+            {
+                sendErrorReply(u.chatId,
+                    String("Label too long (max 32 chars)."));
+                return;
+            }
+            // Validate: printable ASCII only.
+            for (unsigned int ci = 0; ci < name.length(); ci++)
+            {
+                char c = name[ci];
+                if (c < 0x20 || c > 0x7E)
+                {
+                    sendErrorReply(u.chatId,
+                        String("Label must contain printable ASCII only."));
+                    return;
+                }
+            }
+            labelSetFn_(name);
+            bot_.sendMessageTo(u.chatId,
+                String("\xE2\x9C\x85 Label set to: ") + name); // ✅
             return;
         }
 

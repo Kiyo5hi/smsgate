@@ -211,6 +211,8 @@ static bool s_lowCsqWarnSent = false;
 static bool s_regLostAlertSent = false;
 // RFC-0113: WiFi low-RSSI alert (< -80 dBm).
 static bool s_lowWifiRssiAlertSent = false;
+// RFC-0118: Custom device label (max 32 chars), loaded from NVS at boot.
+static String s_deviceLabel;
 // RFC-0075: Daily stats digest. Initialised to 0 so the first digest sends
 // 24 h after boot (set on first 30-second tick, fire 24 h later).
 static uint32_t s_lastDailyDigestMs = 0;
@@ -983,6 +985,19 @@ void setup()
     }
     else
     {
+        // RFC-0118: Load device label from NVS.
+        {
+            char labelBuf[33] = {};
+            size_t n = realPersist.loadBlob("device_label", labelBuf, 32);
+            if (n > 0)
+            {
+                labelBuf[n] = '\0';
+                s_deviceLabel = String(labelBuf);
+                Serial.print("Device label loaded: ");
+                Serial.println(s_deviceLabel);
+            }
+        }
+
         // RFC-0021: Load runtime SMS block list from NVS.
         {
             struct { int32_t count; char numbers[20][21]; } blob{};
@@ -1110,6 +1125,13 @@ void setup()
             // can be added here if needed.
             s_pendingRestart = true;
         });
+        telegramPoller->setLabelGetFn([]() -> String {              // RFC-0118
+            return s_deviceLabel;
+        });
+        telegramPoller->setLabelSetFn([](const String &lbl) {       // RFC-0118
+            s_deviceLabel = lbl;
+            realPersist.saveBlob("device_label", lbl.c_str(), lbl.length());
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])
@@ -1226,6 +1248,14 @@ void setup()
         default:
             bootHeader = String("\xF0\x9F\x94\x84 Bridge restarted\n");    // 🔄
             break;
+        }
+        // RFC-0118: Append device label to the header line if set.
+        if (s_deviceLabel.length() > 0)
+        {
+            // Insert label before the trailing newline.
+            if (bootHeader.endsWith("\n"))
+                bootHeader = bootHeader.substring(0, bootHeader.length() - 1)
+                             + String(" [") + s_deviceLabel + String("]\n");
         }
         String bootMsg = bootHeader;
         if (statusFn)

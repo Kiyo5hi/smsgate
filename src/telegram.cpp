@@ -363,7 +363,7 @@ bool registerBotCommands(RealBotClient &bot)
     bool ok = httpOk && body.indexOf("\"ok\":true") != -1;
     if (ok)
     {
-        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /mute /unmute /heap /csq /sim /ussd /balance /at /version /reboot /send /sendall /test /queue /flushqueue /clearqueue /resetstats /cancel /aliases /addalias /rmalias");
+        Serial.println("Bot commands registered: /help /echo /time /ntp /ping /last /concat /debug /cleardebug /status /blocklist /block /unblock /wifi /mute /unmute /heap /csq /sim /ussd /balance /at /version /label /setlabel /reboot /send /sendall /test /queue /flushqueue /clearqueue /resetstats /cancel /aliases /addalias /rmalias");
     }
     else
     {

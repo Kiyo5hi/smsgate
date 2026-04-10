@@ -2465,6 +2465,163 @@ void test_TelegramPoller_balance_ussd_empty_replies_no_response()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0118: /label replies with current device label.
+void test_TelegramPoller_label_replies_with_current_label()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.setLabelGetFn([]() -> String { return String("Office SIM"); });
+    poller.setLabelSetFn([](const String &) {});
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(820, kAllowedFromId, 0, "/label", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(820, poller.lastUpdateId());
+    bool sawLabel = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Office SIM")) >= 0) { sawLabel = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawLabel);
+}
+
+// RFC-0118: /label with no label set replies "(no label set)".
+void test_TelegramPoller_label_no_label_set_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.setLabelGetFn([]() -> String { return String(); }); // empty
+    poller.setLabelSetFn([](const String &) {});
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(821, kAllowedFromId, 0, "/label", kAllowedFromId)});
+    poller.tick();
+
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("no label")) >= 0) { sawPlaceholder = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
+// RFC-0118: /setlabel <name> calls setter and replies confirmation.
+void test_TelegramPoller_setlabel_calls_setter_and_confirms()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    String savedLabel;
+    poller.setLabelGetFn([]() -> String { return String(); });
+    poller.setLabelSetFn([&](const String &lbl) { savedLabel = lbl; });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(822, kAllowedFromId, 0, "/setlabel Site-A", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(822, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL_STRING("Site-A", savedLabel.c_str());
+    bool sawConfirm = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Site-A")) >= 0) { sawConfirm = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawConfirm);
+}
+
+// RFC-0118: /setlabel with no argument sends usage hint.
+void test_TelegramPoller_setlabel_no_arg_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    bool setterCalled = false;
+    poller.setLabelGetFn([]() -> String { return String(); });
+    poller.setLabelSetFn([&](const String &) { setterCalled = true; });
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(823, kAllowedFromId, 0, "/setlabel", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_FALSE(setterCalled);
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Usage")) >= 0 || m.indexOf(String("usage")) >= 0)
+        { sawUsage = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+// RFC-0118: /setlabel with name > 32 chars sends error.
+void test_TelegramPoller_setlabel_too_long_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    bool setterCalled = false;
+    poller.setLabelGetFn([]() -> String { return String(); });
+    poller.setLabelSetFn([&](const String &) { setterCalled = true; });
+    poller.begin();
+
+    // 33-char name
+    bot.queueUpdateBatch({makeUpdate(824, kAllowedFromId, 0,
+        "/setlabel ThisLabelIsWayTooLongForOurLimit!", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_FALSE(setterCalled);
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("long")) >= 0 || m.indexOf(String("max")) >= 0)
+        { sawError = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawError);
+}
+
 // RFC-0117: /history <filter> replies with filtered log entries.
 void test_TelegramPoller_history_filters_debug_log()
 {
@@ -2779,6 +2936,12 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_balance_no_code_fn_replies_not_configured);
     RUN_TEST(test_TelegramPoller_balance_empty_code_replies_not_configured);
     RUN_TEST(test_TelegramPoller_balance_ussd_empty_replies_no_response);
+    // RFC-0118: /label and /setlabel commands
+    RUN_TEST(test_TelegramPoller_label_replies_with_current_label);
+    RUN_TEST(test_TelegramPoller_label_no_label_set_replies_placeholder);
+    RUN_TEST(test_TelegramPoller_setlabel_calls_setter_and_confirms);
+    RUN_TEST(test_TelegramPoller_setlabel_no_arg_sends_usage);
+    RUN_TEST(test_TelegramPoller_setlabel_too_long_sends_error);
     // RFC-0117: /history command
     RUN_TEST(test_TelegramPoller_history_filters_debug_log);
     RUN_TEST(test_TelegramPoller_history_no_arg_sends_usage);
