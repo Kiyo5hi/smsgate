@@ -249,6 +249,15 @@ public:
     using AnnounceFn = std::function<int(const String &msg)>;
     void setAnnounceFn(AnnounceFn fn) { announceFn_ = std::move(fn); }
 
+    // RFC-0130: Optional digest callback. When set, /digest calls this fn
+    // and replies with an on-demand stats digest.
+    // When not set, replies "(digest not configured)".
+    void setDigestFn(std::function<String()> fn) { digestFn_ = std::move(fn); }
+
+    // RFC-0131: /note and /setnote — persistent device note stored in NVS.
+    void setNoteGetFn(std::function<String()> fn) { noteGetFn_ = std::move(fn); }
+    void setNoteSetFn(std::function<void(const String &)> fn) { noteSetFn_ = std::move(fn); }
+
     // RFC-0121: Optional network info callback. When set, /network calls this
     // fn and replies with the result (e.g. "📶 Operator: T-Mobile | Reg: home | CSQ 18 (good)").
     // When not set, replies "(network info not configured)".
@@ -306,6 +315,9 @@ private:
     std::function<String()> smsSlotsFn_;   // RFC-0127
     std::function<String()> lifetimeFn_;  // RFC-0128
     AnnounceFn announceFn_;               // RFC-0129
+    std::function<String()> digestFn_;    // RFC-0130
+    std::function<String()> noteGetFn_;   // RFC-0131
+    std::function<void(const String &)> noteSetFn_; // RFC-0131
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

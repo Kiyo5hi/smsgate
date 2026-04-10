@@ -3546,6 +3546,159 @@ void test_TelegramPoller_announce_not_configured_replies()
     TEST_ASSERT_TRUE(sawNotConfigured);
 }
 
+// RFC-0130: /digest with fn set → replies with fn result.
+void test_TelegramPoller_digest_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setDigestFn([]() -> String {
+        return String("\xF0\x9F\x93\x8A On-demand digest | fwd 5 (session) 42 (lifetime)");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(960, kAllowedFromId, 0, "/digest", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(960, poller.lastUpdateId());
+    bool sawDigest = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("digest")) >= 0 && m.indexOf(String("fwd")) >= 0)
+        {
+            sawDigest = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawDigest);
+}
+
+// RFC-0130: /digest without fn → "(digest not configured)".
+void test_TelegramPoller_digest_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(961, kAllowedFromId, 0, "/digest", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(961, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
+// RFC-0131: /note with fn set → replies with current note.
+void test_TelegramPoller_note_replies_with_note()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setNoteGetFn([]() -> String { return String("SIM changed 2026-04-10"); });
+
+    bot.queueUpdateBatch({makeUpdate(962, kAllowedFromId, 0, "/note", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(962, poller.lastUpdateId());
+    bool sawNote = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("SIM changed")) >= 0) { sawNote = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNote);
+}
+
+// RFC-0131: /note with empty note → "(no note set)".
+void test_TelegramPoller_note_empty_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setNoteGetFn([]() -> String { return String(""); });
+
+    bot.queueUpdateBatch({makeUpdate(963, kAllowedFromId, 0, "/note", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(963, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("no note set")) >= 0) { sawPlaceholder = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
+// RFC-0131: /setnote <text> calls setter and confirms.
+void test_TelegramPoller_setnote_calls_setter_and_confirms()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    String savedNote;
+    poller.setNoteGetFn([&]() -> String { return savedNote; });
+    poller.setNoteSetFn([&](const String &n) { savedNote = n; });
+
+    bot.queueUpdateBatch({makeUpdate(964, kAllowedFromId, 0, "/setnote Office SIM", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(964, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL_STRING("Office SIM", savedNote.c_str());
+    bool sawConfirm = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("saved")) >= 0) { sawConfirm = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawConfirm);
+}
+
 // RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
 void test_TelegramPoller_send_duplicate_gets_already_queued_error()
 {
@@ -3735,6 +3888,13 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_announce_calls_fn_and_replies);
     RUN_TEST(test_TelegramPoller_announce_no_arg_sends_usage);
     RUN_TEST(test_TelegramPoller_announce_not_configured_replies);
+    // RFC-0130: /digest command
+    RUN_TEST(test_TelegramPoller_digest_calls_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_digest_not_configured_replies);
+    // RFC-0131: /note and /setnote commands
+    RUN_TEST(test_TelegramPoller_note_replies_with_note);
+    RUN_TEST(test_TelegramPoller_note_empty_replies_placeholder);
+    RUN_TEST(test_TelegramPoller_setnote_calls_setter_and_confirms);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

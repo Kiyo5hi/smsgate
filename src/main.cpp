@@ -213,6 +213,8 @@ static bool s_regLostAlertSent = false;
 static bool s_lowWifiRssiAlertSent = false;
 // RFC-0118: Custom device label (max 32 chars), loaded from NVS at boot.
 static String s_deviceLabel;
+// RFC-0131: Device note (max 120 chars), loaded from NVS at boot.
+static String s_deviceNote;
 // RFC-0075: Daily stats digest. Initialised to 0 so the first digest sends
 // 24 h after boot (set on first 30-second tick, fire 24 h later).
 static uint32_t s_lastDailyDigestMs = 0;
@@ -998,6 +1000,17 @@ void setup()
             }
         }
 
+        // RFC-0131: Load device note from NVS.
+        {
+            char noteBuf[121] = {};
+            size_t n = realPersist.loadBlob("device_note", noteBuf, 120);
+            if (n > 0)
+            {
+                noteBuf[n] = '\0';
+                s_deviceNote = String(noteBuf);
+            }
+        }
+
         // RFC-0021: Load runtime SMS block list from NVS.
         {
             struct { int32_t count; char numbers[20][21]; } blob{};
@@ -1259,6 +1272,31 @@ void setup()
                     count++;
             }
             return count;
+        });
+        telegramPoller->setDigestFn([&smsHandler, &smsSender, &callHandler]() -> String { // RFC-0130
+            // Same format as the daily digest.
+            String digest;
+            digest += "\xF0\x9F\x93\x8A On-demand digest | "; // 📊
+            digest += "fwd "; digest += String(smsHandler.smsForwarded());
+            digest += " (session) "; digest += String(s_lifetimeFwdCount); digest += " (lifetime)";
+            if (smsHandler.smsBlocked() > 0) {
+                digest += " | blocked "; digest += String(smsHandler.smsBlocked());
+            }
+            if (smsHandler.smsDeduplicated() > 0) {
+                digest += " | deduped "; digest += String(smsHandler.smsDeduplicated());
+            }
+            digest += " | out "; digest += String(smsSender.sentCount());
+            digest += " | calls "; digest += String(callHandler.callsReceived());
+            unsigned long uptimeSec = ((uint32_t)millis() - s_bootMs) / 1000UL;
+            digest += " | up "; digest += String((int)(uptimeSec / 3600)); digest += "h";
+            return digest;
+        });
+        telegramPoller->setNoteGetFn([]() -> String {               // RFC-0131
+            return s_deviceNote;
+        });
+        telegramPoller->setNoteSetFn([](const String &note) {       // RFC-0131
+            s_deviceNote = note;
+            realPersist.saveBlob("device_note", note.c_str(), note.length());
         });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.

@@ -358,6 +358,21 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "announce";
         c["description"] = "Broadcast to all authorized users: /announce <msg>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "digest";
+        c["description"] = "Show on-demand stats digest";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "note";
+        c["description"] = "Show device note";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setnote";
+        c["description"] = "Save device note: /setnote <text> (max 120 chars)";
+    }
 
     String payload;
     serializeJson(doc, payload);

@@ -141,6 +141,9 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/smsslots \xe2\x80\x94 SIM SMS slot usage\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
             help += "/announce <msg> \xe2\x80\x94 Broadcast message to all authorized users\n";
+            help += "/digest \xe2\x80\x94 Show on-demand stats digest\n";
+            help += "/note \xe2\x80\x94 Show device note\n";
+            help += "/setnote <text> \xe2\x80\x94 Save device note (max 120 chars)\n";
             help += "/me \xe2\x80\x94 Show your Telegram fromId and chatId\n";
             help += "/reboot \xe2\x80\x94 Soft reboot\n";
             help += "/at <cmd> \xe2\x80\x94 Admin: raw AT command passthrough\n";
@@ -1191,6 +1194,57 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             reply += String(count);
             reply += String(count == 1 ? " user." : " users.");
             bot_.sendMessageTo(u.chatId, reply);
+            return;
+        }
+
+        // RFC-0130: /digest — on-demand stats digest.
+        if (lower == "/digest")
+        {
+            if (digestFn_)
+                bot_.sendMessageTo(u.chatId, digestFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(digest not configured)"));
+            return;
+        }
+
+        // RFC-0131: /note — show current device note.
+        if (lower == "/note")
+        {
+            if (noteGetFn_)
+            {
+                String n = noteGetFn_();
+                bot_.sendMessageTo(u.chatId, n.length() > 0 ? n : String("(no note set)"));
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("(note not configured)"));
+            }
+            return;
+        }
+
+        // RFC-0131: /setnote <text> — save device note (max 120 chars).
+        if (lower.startsWith("/setnote"))
+        {
+            if (!noteSetFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(note not configured)"));
+                return;
+            }
+            String note = extractArg(u.text, "/setnote ");
+            if (note.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId, String("Usage: /setnote <text>\nMax 120 chars."));
+                return;
+            }
+            if (note.length() > 120)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xE2\x9D\x8C Note too long (") // ❌
+                    + String(note.length()) + String(" chars, max 120)."));
+                return;
+            }
+            noteSetFn_(note);
+            bot_.sendMessageTo(u.chatId, String("\xe2\x9c\x85 Note saved.")); // ✅
             return;
         }
 
