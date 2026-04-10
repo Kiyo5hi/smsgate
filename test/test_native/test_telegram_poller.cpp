@@ -6314,6 +6314,71 @@ void test_TelegramPoller_fwdtest_calls_fn_and_sends_preview()
     TEST_ASSERT_TRUE(sawPreview);
 }
 
+// RFC-0187: /testfmt <phone> <body> — calls fwdTestPhoneBodyFn with parsed args.
+void test_TelegramPoller_testfmt_calls_fn_with_phone_and_body()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    String gotPhone, gotBody;
+    poller.setFwdTestPhoneBodyFn([&](const String &p, const String &b) -> String {
+        gotPhone = p;
+        gotBody  = b;
+        return String(p + " | test preview: " + b);
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1108, kAllowedFromId, 0,
+        "/testfmt +13800138000 Hello world!", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1108, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL_STRING("+13800138000", gotPhone.c_str());
+    TEST_ASSERT_EQUAL_STRING("Hello world!", gotBody.c_str());
+    bool sawPreview = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("preview") >= 0) { sawPreview = true; break; }
+    TEST_ASSERT_TRUE(sawPreview);
+}
+
+// RFC-0187: /testfmt with no body → usage reply.
+void test_TelegramPoller_testfmt_no_body_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setFwdTestPhoneBodyFn([](const String &, const String &) -> String {
+        return String("preview");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1109, kAllowedFromId, 0, "/testfmt +1234", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1109, poller.lastUpdateId());
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Usage") >= 0) { sawUsage = true; break; }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
 // RFC-0184: /factoryreset (no confirm) → warning message, no clearNvsFn call.
 void test_TelegramPoller_factoryreset_without_confirm_sends_warning()
 {
@@ -6651,6 +6716,9 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_smshandlerinfo_calls_fn_and_replies);
     // RFC-0181: /fwdtest command
     RUN_TEST(test_TelegramPoller_fwdtest_calls_fn_and_sends_preview);
+    // RFC-0187: /testfmt command
+    RUN_TEST(test_TelegramPoller_testfmt_calls_fn_with_phone_and_body);
+    RUN_TEST(test_TelegramPoller_testfmt_no_body_sends_usage);
     // RFC-0184: /factoryreset command
     RUN_TEST(test_TelegramPoller_factoryreset_without_confirm_sends_warning);
     RUN_TEST(test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot);

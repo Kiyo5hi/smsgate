@@ -164,6 +164,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/setfwdtag <text> \xe2\x80\x94 Custom prefix tag on forwarded SMS (max 20 chars)\n";
             help += "/clearfwdtag \xe2\x80\x94 Remove custom forward prefix tag\n";
             help += "/fwdtest \xe2\x80\x94 Preview forwarded SMS format with current settings\n";
+            help += "/testfmt <phone> <body> \xe2\x80\x94 Format preview with custom sender and body\n";
             help += "/settings \xe2\x80\x94 Show all runtime-configurable parameters\n";
             help += "/nvsinfo \xe2\x80\x94 NVS flash storage usage (used/free/total entries)\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
@@ -1898,6 +1899,37 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 return;
             }
             String preview = fwdTestFn_();
+            bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x94\x8D Format preview:\n") + preview); // 🔍
+            return;
+        }
+
+        // RFC-0187: /testfmt <phone> <body> — format preview with custom sender.
+        if (lower == "/testfmt" || lower.startsWith("/testfmt "))
+        {
+            if (!fwdTestPhoneBodyFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(fwdtest not configured)"));
+                return;
+            }
+            String arg = extractArg(u.text, "/testfmt ");
+            arg.trim();
+            int spacePos = arg.indexOf(' ');
+            if (arg.length() == 0 || spacePos <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /testfmt <phone> <body>\nExample: /testfmt +13800138000 Hello!"));
+                return;
+            }
+            String phone = arg.substring(0, spacePos);
+            String body  = arg.substring(spacePos + 1);
+            body.trim();
+            if (body.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /testfmt <phone> <body>\nExample: /testfmt +13800138000 Hello!"));
+                return;
+            }
+            String preview = fwdTestPhoneBodyFn_(phone, body);
             bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x94\x8D Format preview:\n") + preview); // 🔍
             return;
         }
