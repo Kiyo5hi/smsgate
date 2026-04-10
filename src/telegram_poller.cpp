@@ -134,6 +134,9 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/resetstats \xe2\x80\x94 Reset session counters (SMS fwd/fail, calls)\n";
             help += "/cancel <N> \xe2\x80\x94 Cancel queued entry N\n";
             help += "/cancelnum <phone> \xe2\x80\x94 Cancel all queued entries for a phone number\n";
+            help += "/schedulesend <min> <phone> <msg> \xe2\x80\x94 Schedule SMS for future delivery (1\xe2\x80\x931440 min)\n";
+            help += "/schedqueue \xe2\x80\x94 List pending scheduled SMS (up to 5 slots)\n";
+            help += "/cancelsched <N> \xe2\x80\x94 Cancel a scheduled SMS slot\n";
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/mute [min] \xe2\x80\x94 Snooze proactive alerts (default 60m)\n";
             help += "/unmute \xe2\x80\x94 Cancel alert snooze\n";
@@ -2482,6 +2485,128 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0188: /schedulesend <delay_min> <phone> <body> — delayed SMS.
+        if (lower == "/schedulesend" || lower.startsWith("/schedulesend "))
+        {
+            String arg = extractArg(u.text, "/schedulesend ");
+            arg.trim();
+            int sp1 = arg.indexOf(' ');
+            if (sp1 <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /schedulesend <delay_min> <phone> <body>\n"
+                           "Example: /schedulesend 30 +13800138000 Hello!"));
+                return;
+            }
+            long delayMin = arg.substring(0, sp1).toInt();
+            if (delayMin < 1 || delayMin > 1440)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Delay must be 1\xe2\x80\x93 1440 minutes.")); // ❌
+                return;
+            }
+            String rest = arg.substring(sp1 + 1);
+            rest.trim();
+            int sp2 = rest.indexOf(' ');
+            if (sp2 <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /schedulesend <delay_min> <phone> <body>"));
+                return;
+            }
+            String phone = sms_codec::normalizePhoneNumber(rest.substring(0, sp2));
+            String body  = rest.substring(sp2 + 1);
+            body.trim();
+            if (phone.length() == 0 || body.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /schedulesend <delay_min> <phone> <body>"));
+                return;
+            }
+            // Find a free slot.
+            uint32_t nowMs   = clock_ ? clock_() : 0;
+            uint32_t sendAt  = nowMs + (uint32_t)delayMin * 60000UL;
+            int slotIdx = -1;
+            for (int i = 0; i < (int)kScheduledQueueSize; i++)
+            {
+                if (scheduledQueue_[i].sendAtMs == 0) { slotIdx = i; break; }
+            }
+            if (slotIdx < 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Scheduled queue full (5 slots). Use /schedqueue to see pending.")); // ❌
+                return;
+            }
+            scheduledQueue_[slotIdx].sendAtMs = sendAt;
+            scheduledQueue_[slotIdx].phone    = phone;
+            scheduledQueue_[slotIdx].body     = body;
+            String reply = String("\xe2\x8f\xb0 SMS to ") + phone // ⏰
+                         + String(" scheduled in ")
+                         + String((int)delayMin)
+                         + String(delayMin == 1 ? " min (slot " : " min (slot ")
+                         + String(slotIdx + 1) + String("/")
+                         + String((int)kScheduledQueueSize)
+                         + String(").\nNote: lost on reboot.");
+            bot_.sendMessageTo(u.chatId, reply);
+            return;
+        }
+
+        // RFC-0188: /schedqueue — list pending scheduled SMS.
+        if (lower == "/schedqueue")
+        {
+            uint32_t nowMs2 = clock_ ? clock_() : 0;
+            int pending = 0;
+            String out;
+            for (int i = 0; i < (int)kScheduledQueueSize; i++)
+            {
+                if (scheduledQueue_[i].sendAtMs == 0) continue;
+                pending++;
+                uint32_t eta = (nowMs2 < scheduledQueue_[i].sendAtMs)
+                               ? (scheduledQueue_[i].sendAtMs - nowMs2 + 59999) / 60000
+                               : 0;
+                out += String(i + 1) + String(". ") + scheduledQueue_[i].phone
+                    + String(" in ") + String((int)eta) + String("m: ");
+                String preview = scheduledQueue_[i].body;
+                if (preview.length() > 40) preview = preview.substring(0, 40) + String("...");
+                out += preview;
+                out += String("\n");
+            }
+            if (pending == 0)
+                bot_.sendMessageTo(u.chatId, String("(no scheduled SMS)"));
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x8f\xb0 Scheduled SMS (") // ⏰
+                    + String(pending) + String(" pending):\n") + out);
+            return;
+        }
+
+        // RFC-0188: /cancelsched <N> — cancel a scheduled SMS slot (1-based).
+        if (lower == "/cancelsched" || lower.startsWith("/cancelsched "))
+        {
+            String arg = extractArg(lower, "/cancelsched ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /cancelsched <slot>\nUse /schedqueue to see slot numbers."));
+                return;
+            }
+            int n = (int)arg.toInt();
+            if (n < 1 || n > (int)kScheduledQueueSize || scheduledQueue_[n - 1].sendAtMs == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Slot ") + String(n) // ❌
+                    + String(" is empty or out of range (1\xe2\x80\x93 ")
+                    + String((int)kScheduledQueueSize) + String(")."));
+                return;
+            }
+            scheduledQueue_[n - 1].sendAtMs = 0;
+            scheduledQueue_[n - 1].phone    = String();
+            scheduledQueue_[n - 1].body     = String();
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Slot ") + String(n) + String(" cancelled.")); // ✅
+            return;
+        }
+
         Serial.println("TelegramPoller: no reply_to_message_id, dropping");
         {
             String help = "Reply to a forwarded SMS to send a response. ";
@@ -2552,6 +2677,18 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
 void TelegramPoller::tick()
 {
     uint32_t now = clock_ ? clock_() : 0;
+
+    // RFC-0188: Drain scheduled SMS whose sendAtMs has passed.
+    for (auto &slot : scheduledQueue_)
+    {
+        if (slot.sendAtMs != 0 && now >= slot.sendAtMs)
+        {
+            // Try to enqueue. SmsSender::enqueue returns false only if the
+            // retry queue is full — leave the slot and try again next tick.
+            if (smsSender_.enqueue(slot.phone, slot.body))
+                slot.sendAtMs = 0; // free the slot
+        }
+    }
 
     // Rate-limit the actual poll. First call always polls so a fresh
     // boot picks up any queued replies immediately.

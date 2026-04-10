@@ -1,6 +1,7 @@
 #pragma once
 
 #include <Arduino.h>
+#include <array>
 #include <functional>
 #include <stdint.h>
 
@@ -520,6 +521,16 @@ private:
     std::function<String()> modemInfoFn_;       // RFC-0143
     std::function<String()> simListFn_;   // RFC-0140
     std::function<String(int)> simReadFn_; // RFC-0141
+    // RFC-0188: Scheduled SMS queue — up to 5 in-flight slots.
+    // sendAtMs == 0 means the slot is free.
+    struct ScheduledSms {
+        uint32_t sendAtMs = 0;
+        String   phone;
+        String   body;
+    };
+    static constexpr size_t kScheduledQueueSize = 5;
+    std::array<ScheduledSms, kScheduledQueueSize> scheduledQueue_{};
+
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

@@ -3895,6 +3895,128 @@ void test_TelegramPoller_cancelnum_no_arg_sends_usage()
     TEST_ASSERT_TRUE(sawUsage);
 }
 
+// RFC-0188: /schedulesend 1 +1234 Hello → slot occupied, fires after delay.
+void test_TelegramPoller_schedulesend_fires_after_delay()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.tick(); // consume initial poll
+    bot.clearMessages();
+
+    bot.queueUpdateBatch({makeUpdate(993, kAllowedFromId, 0,
+        "/schedulesend 1 +13800138000 Delayed message", kAllowedFromId)});
+    clk.nowMs += 4000; // advance past poll interval
+    poller.tick();
+
+    // Should have confirmed scheduling
+    bool sawScheduled = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("scheduled") >= 0) { sawScheduled = true; break; }
+    TEST_ASSERT_TRUE(sawScheduled);
+
+    // Advance past the 1-minute delay (60000ms)
+    bot.clearMessages();
+    clk.nowMs += 60000UL;
+    // tick() drains scheduled queue — this should enqueue the SMS
+    poller.tick();
+
+    // SmsSender should have the entry
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+    auto snaps = sender.getQueueSnapshot();
+    TEST_ASSERT_EQUAL(1, (int)snaps.size());
+    TEST_ASSERT_EQUAL_STRING("+13800138000", snaps[0].phone.c_str());
+}
+
+// RFC-0188: /schedqueue lists pending slots.
+void test_TelegramPoller_schedqueue_lists_pending()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.tick(); // consume initial poll
+
+    // Schedule one SMS
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(994, kAllowedFromId, 0,
+        "/schedulesend 5 +13800138000 Hello", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(995, kAllowedFromId, 0, "/schedqueue", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bool sawPhone = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("+13800138000") >= 0) { sawPhone = true; break; }
+    TEST_ASSERT_TRUE(sawPhone);
+}
+
+// RFC-0188: /cancelsched 1 clears the slot.
+void test_TelegramPoller_cancelsched_clears_slot()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.tick();
+
+    // Schedule one SMS
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(996, kAllowedFromId, 0,
+        "/schedulesend 10 +13800138000 Bye", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Cancel it
+    bot.clearMessages();
+    bot.queueUpdateBatch({makeUpdate(997, kAllowedFromId, 0, "/cancelsched 1", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bool sawCancelled = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("cancelled") >= 0 || m.indexOf("Cancelled") >= 0)
+            { sawCancelled = true; break; }
+    TEST_ASSERT_TRUE(sawCancelled);
+
+    // Advance past delay — nothing should be sent
+    clk.nowMs += 620000UL;
+    poller.tick();
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+}
+
 // RFC-0137: /setinterval 3600 calls fn with 3600.
 void test_TelegramPoller_setinterval_calls_fn()
 {
@@ -6600,6 +6722,10 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_cancelnum_removes_matching_entries);
     RUN_TEST(test_TelegramPoller_cancelnum_no_match_replies_placeholder);
     RUN_TEST(test_TelegramPoller_cancelnum_no_arg_sends_usage);
+    // RFC-0188: /schedulesend, /schedqueue, /cancelsched
+    RUN_TEST(test_TelegramPoller_schedulesend_fires_after_delay);
+    RUN_TEST(test_TelegramPoller_schedqueue_lists_pending);
+    RUN_TEST(test_TelegramPoller_cancelsched_clears_slot);
     // RFC-0137: /setinterval command
     RUN_TEST(test_TelegramPoller_setinterval_calls_fn);
     RUN_TEST(test_TelegramPoller_setinterval_zero_disables);
