@@ -234,6 +234,8 @@ inline bool alertsMuted() { return (uint32_t)millis() < s_alertsMutedUntilMs; }
 static uint32_t s_fwdPauseUntilMs = 0;
 // RFC-0201: Scheduled SMS slots restored from NVS at boot (for boot banner).
 static int s_schedLoadedAtBoot = 0;
+// RFC-0208: Timestamp of last successful Telegram API contact (0 = never this boot).
+static time_t s_lastTelegramOkTime = 0;
 // RFC-0102: Boot time for uptime display in /status.
 static uint32_t s_bootMs = 0;
 
@@ -722,6 +724,21 @@ void setup()
             char ntpBuf[32];
             strftime(ntpBuf, sizeof(ntpBuf), "%Y-%m-%d %H:%M", nt);
             msg += ntpBuf; msg += " "; msg += tzLabel;
+        }
+        msg += "\n";
+        // RFC-0208: Last successful Telegram contact.
+        msg += "  Last TG: ";
+        if (s_lastTelegramOkTime == 0)
+        {
+            msg += "(never this boot)";
+        }
+        else
+        {
+            time_t tgLocal = s_lastTelegramOkTime + TIMEZONE_OFFSET_SEC;
+            struct tm *tg = gmtime(&tgLocal);
+            char tgBuf[32];
+            strftime(tgBuf, sizeof(tgBuf), "%Y-%m-%d %H:%M", tg);
+            msg += tgBuf; msg += " "; msg += tzLabel;
         }
         msg += "\n";
         msg += "  Uptime: ";    msg += String((int)days); msg += "d "; msg += String((int)hours); msg += "h "; msg += String((int)mins); msg += "m\n";
@@ -1977,6 +1994,7 @@ void setup()
             return s;
         });
         telegramPoller->setWallTimeFn([]() -> long { return (long)time(nullptr); }); // RFC-0202
+        telegramPoller->setOnPollSuccessFn([]() { s_lastTelegramOkTime = time(nullptr); }); // RFC-0208
         // RFC-0200: Serialize scheduled SMS queue to NVS after any mutation.
         // Blob layout: 1 version byte + 5 × 164-byte slots.
         // Slot: uint32_t sendAtUnix (0 = free), char phone[32], char body[128].

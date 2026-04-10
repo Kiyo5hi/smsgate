@@ -385,6 +385,11 @@ public:
     // Returns a human-readable confirmation string (e.g. "paused for 30 min").
     void setPauseFwdFn(std::function<String(uint32_t)> fn) { pauseFwdFn_ = std::move(fn); }
 
+    // RFC-0208: Optional callback fired after each successful Telegram poll
+    // (pollUpdates returned true = HTTP 200 + valid envelope). Used by main.cpp
+    // to record "last TG contact" timestamp for /status display.
+    void setOnPollSuccessFn(std::function<void()> fn) { onPollSuccessFn_ = std::move(fn); }
+
     // RFC-0202: Optional wall-time fn. When set, scheduled SMS commands show
     // absolute UTC timestamps alongside relative minutes (e.g. "in 30m (14:32 UTC)").
     // Returns Unix seconds (long); 0 or negative means NTP not yet synced.
@@ -560,6 +565,7 @@ private:
     std::function<void(int)> smsAgeFilterFn_;                                  // RFC-0190
     std::function<String(const String &)> testPduFn_;                          // RFC-0191
     std::function<String(uint32_t)> pauseFwdFn_;                               // RFC-0192
+    std::function<void()> onPollSuccessFn_;                                    // RFC-0208
     std::function<long()> wallTimeFn_;                                         // RFC-0202
     std::function<void()> persistSchedFn_;                                     // RFC-0200
     std::function<String()> callStatusFn_;                           // RFC-0173

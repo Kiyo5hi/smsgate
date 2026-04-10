@@ -3205,6 +3205,9 @@ void TelegramPoller::tick()
         return;
     }
 
+    // RFC-0208: Notify on each successful TCP/TLS contact with Telegram.
+    if (onPollSuccessFn_) onPollSuccessFn_();
+
     if (updates.empty())
     {
         return;
