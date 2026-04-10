@@ -527,6 +527,44 @@ void test_SmsSender_cancel_out_of_range_returns_false()
     TEST_ASSERT_EQUAL(1, sender.queueSize()); // unchanged
 }
 
+// RFC-0087: resetRetryTimers resets all nextRetryMs to 0.
+void test_SmsSender_resetRetryTimers_unblocks_entry()
+{
+    FakeModem modem;
+    SmsSender sender(modem);
+    modem.setPduSendDefault(-1); // fail once to trigger backoff
+
+    sender.enqueue(String("+1"), String("hello"));
+    sender.drainQueue(0); // attempt 1 → fails, sets nextRetryMs > 0
+
+    // Without reset the entry would not be retried until backoff expires.
+    // Reset timers; now it should be retried immediately.
+    sender.resetRetryTimers();
+    modem.setPduSendDefault(1); // next send succeeds
+    bool successCalled = false;
+    // We enqueued already; can't set callback retroactively, but we can
+    // verify drainQueue runs the entry (queueSize decrements on success).
+    sender.drainQueue(0); // should succeed and remove entry
+    TEST_ASSERT_EQUAL(0, sender.queueSize());
+}
+
+// RFC-0086: successful drain logs "out:sent" to debug log.
+void test_SmsSender_success_logs_to_debug_log()
+{
+    FakeModem modem;
+    SmsDebugLog log;
+    SmsSender sender(modem);
+    sender.setDebugLog(&log);
+    modem.setPduSendDefault(1); // always succeed
+
+    sender.enqueue(String("+1"), String("hello success"));
+    sender.drainQueue(0);
+
+    TEST_ASSERT_EQUAL(0, sender.queueSize()); // entry removed
+    TEST_ASSERT_EQUAL(1, (int)log.count());
+    TEST_ASSERT_TRUE(log.dump().indexOf(String("out:sent")) >= 0);
+}
+
 void run_sms_sender_tests()
 {
     RUN_TEST(test_SmsSender_ascii_builds_gsm7_pdu);
@@ -554,4 +592,8 @@ void run_sms_sender_tests()
     RUN_TEST(test_SmsSender_final_failure_logs_to_debug_log);
     RUN_TEST(test_SmsSender_cancel_removes_entry);
     RUN_TEST(test_SmsSender_cancel_out_of_range_returns_false);
+    // RFC-0087: resetRetryTimers
+    RUN_TEST(test_SmsSender_resetRetryTimers_unblocks_entry);
+    // RFC-0086: outbound success log
+    RUN_TEST(test_SmsSender_success_logs_to_debug_log);
 }
