@@ -192,6 +192,8 @@ static int cachedSimUsed  = -1; // -1 = not yet queried
 static int cachedSimTotal = 0;
 // RFC-0038: Boot timestamp — captured once on first successful NTP sync.
 static time_t s_bootTimestamp = 0;
+// RFC-0115: Timestamp of the last successful NTP sync. 0 = never synced.
+static time_t s_lastNtpSyncTime = 0;
 // RFC-0041: Wall-clock time of the most recently forwarded SMS (0 = none yet).
 static time_t s_lastSmsTimestamp = 0;
 // RFC-0059: Cumulative boot counter, incremented in setup() and persisted to NVS.
@@ -281,6 +283,8 @@ void syncTime()
     // RFC-0038: Record boot timestamp on first NTP sync.
     if (s_bootTimestamp == 0)
         s_bootTimestamp = now;
+    // RFC-0115: Track last successful NTP sync time.
+    s_lastNtpSyncTime = now;
 }
 
 // RFC-0020: Map esp_reset_reason_t to a human-readable string for /status.
@@ -691,6 +695,21 @@ void setup()
 
         msg += "\xF0\x9F\x93\xA1 Device\n"; // 📡
         msg += "  Time: ";      msg += timeBuf; msg += " "; msg += tzLabel; msg += "\n";
+        // RFC-0115: Last NTP sync time.
+        msg += "  Last NTP: ";
+        if (s_lastNtpSyncTime == 0)
+        {
+            msg += "(never synced)";
+        }
+        else
+        {
+            time_t ntpLocal = s_lastNtpSyncTime + TIMEZONE_OFFSET_SEC;
+            struct tm *nt = gmtime(&ntpLocal);
+            char ntpBuf[32];
+            strftime(ntpBuf, sizeof(ntpBuf), "%Y-%m-%d %H:%M", nt);
+            msg += ntpBuf; msg += " "; msg += tzLabel;
+        }
+        msg += "\n";
         msg += "  Uptime: ";    msg += String((int)days); msg += "d "; msg += String((int)hours); msg += "h "; msg += String((int)mins); msg += "m\n";
         // RFC-0065: Show SSID, RSSI, and IP.
         msg += "  WiFi: ";
