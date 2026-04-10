@@ -6560,6 +6560,43 @@ void test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot()
     TEST_ASSERT_TRUE(rebootCalled);
 }
 
+// RFC-0198: /schedinfo 1 → shows full body and ETA of slot 1.
+void test_TelegramPoller_schedinfo_shows_full_body()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs = 1000;
+
+    // Schedule with a long body.
+    bot.queueUpdateBatch({makeUpdate(7001, kAllowedFromId, 0,
+        "/schedulesend 30 +1111 This is a very long message body that would be truncated by schedqueue",
+        kAllowedFromId)});
+    poller.tick();
+    clk.nowMs += 4000;
+    bot.clearMessages();
+
+    // /schedinfo 1 should show the full body.
+    bot.queueUpdateBatch({makeUpdate(7002, kAllowedFromId, 0, "/schedinfo 1", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(7002, poller.lastUpdateId());
+    bool sawFullBody = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("truncated") >= 0) { sawFullBody = true; break; }
+    TEST_ASSERT_TRUE(sawFullBody);
+}
+
 // RFC-0197: /schedrename 1 +9999 → changes slot 1 phone to +9999.
 void test_TelegramPoller_schedrename_changes_phone()
 {
@@ -7186,6 +7223,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_testpdu_no_arg_sends_usage);
     // RFC-0192: /pausefwd command
     RUN_TEST(test_TelegramPoller_pausefwd_calls_fn);
+    // RFC-0198: /schedinfo command
+    RUN_TEST(test_TelegramPoller_schedinfo_shows_full_body);
     // RFC-0197: /schedrename command
     RUN_TEST(test_TelegramPoller_schedrename_changes_phone);
     // RFC-0196: /scheddelay command

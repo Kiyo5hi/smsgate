@@ -139,6 +139,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/cancelsched <N> \xe2\x80\x94 Cancel a scheduled SMS slot\n";
             help += "/clearschedule \xe2\x80\x94 Cancel all pending scheduled SMS\n"; // RFC-0195
             help += "/scheddelay <N> <min> \xe2\x80\x94 Extend scheduled slot N by extra minutes\n"; // RFC-0196
+            help += "/schedinfo <N> \xe2\x80\x94 Show full body and ETA of scheduled slot N\n"; // RFC-0198
             help += "/schedrename <N> <phone> \xe2\x80\x94 Change destination phone of scheduled slot N\n"; // RFC-0197
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/mute [min] \xe2\x80\x94 Snooze proactive alerts (default 60m)\n";
@@ -2611,6 +2612,38 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             scheduledQueue_[n - 1].body     = String();
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Slot ") + String(n) + String(" cancelled.")); // ✅
+            return;
+        }
+
+        // RFC-0198: /schedinfo <N> — show full content of a scheduled slot.
+        if (lower == "/schedinfo" || lower.startsWith("/schedinfo "))
+        {
+            String arg = extractArg(lower, "/schedinfo ");
+            arg.trim();
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /schedinfo <slot>\nUse /schedqueue to see slot numbers."));
+                return;
+            }
+            int n = (int)arg.toInt();
+            if (n < 1 || n > (int)kScheduledQueueSize || scheduledQueue_[n - 1].sendAtMs == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Slot ") + String(n) // ❌
+                    + String(" is empty or out of range (1\xe2\x80\x93 ")
+                    + String((int)kScheduledQueueSize) + String(")."));
+                return;
+            }
+            uint32_t nowMs4 = clock_ ? clock_() : 0;
+            uint32_t eta = (nowMs4 < scheduledQueue_[n - 1].sendAtMs)
+                           ? (scheduledQueue_[n - 1].sendAtMs - nowMs4 + 59999) / 60000
+                           : 0;
+            String reply = String("\xe2\x8f\xb0 Slot ") + String(n) + String(":\n") // ⏰
+                         + String("To: ") + scheduledQueue_[n - 1].phone + String("\n")
+                         + String("ETA: ") + String((int)eta) + String(" min\n")
+                         + String("Body: ") + scheduledQueue_[n - 1].body;
+            bot_.sendMessageTo(u.chatId, reply);
             return;
         }
 
