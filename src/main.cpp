@@ -1209,6 +1209,17 @@ void setup()
             }
             return msg;
         });
+        telegramPoller->setCountFn([&smsHandler, &smsSender, &callHandler]() -> String { // RFC-0124
+            // "📊 SMS rcvd: 12 | fwd: 11 | fail: 1 | Outbound: 5 sent, 0 fail | Calls: 3"
+            String msg = String("\xF0\x9F\x93\x8A SMS rcvd: "); // 📊
+            msg += String(smsHandler.smsForwarded() + smsHandler.smsFailed());
+            msg += String(" | fwd: "); msg += String(smsHandler.smsForwarded());
+            msg += String(" | fail: "); msg += String(smsHandler.smsFailed());
+            msg += String(" | Outbound: "); msg += String(smsSender.sentCount());
+            msg += String(" sent, "); msg += String(smsSender.failedCount()); msg += String(" fail");
+            msg += String(" | Calls: "); msg += String(callHandler.callsReceived());
+            return msg;
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])

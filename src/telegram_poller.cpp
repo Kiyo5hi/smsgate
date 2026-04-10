@@ -58,6 +58,23 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         return;
     }
 
+    // RFC-0125: /me — reply with the caller's own fromId and chatId.
+    // Allowed for EVERYONE (even unauthorized) so new users can self-onboard.
+    // Read-only — returns only the caller's own IDs.
+    {
+        String lowerMe = u.text;
+        lowerMe.toLowerCase();
+        if (lowerMe == "/me")
+        {
+            String reply = String("\xF0\x9F\x91\xA4 fromId: "); // 👤
+            reply += String((long)u.fromId);
+            reply += String(" | chatId: ");
+            reply += String((long)u.chatId);
+            bot_.sendMessageTo(u.chatId, reply);
+            return;
+        }
+    }
+
     if (auth_ && !auth_(u.fromId))
     {
         Serial.print("TelegramPoller: rejecting unauthorized from_id=");
@@ -119,6 +136,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/uptime \xe2\x80\x94 Quick uptime one-liner\n";
             help += "/network \xe2\x80\x94 Cellular operator + registration + CSQ\n";
             help += "/boot \xe2\x80\x94 Boot count, reset reason, and boot timestamp\n";
+            help += "/count \xe2\x80\x94 Session SMS/call counter summary\n";
+            help += "/me \xe2\x80\x94 Show your Telegram fromId and chatId\n";
             help += "/reboot \xe2\x80\x94 Soft reboot\n";
             help += "/at <cmd> \xe2\x80\x94 Admin: raw AT command passthrough\n";
             if (smsBlockMutator_) {
@@ -1105,6 +1124,16 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, bootInfoFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(boot info not configured)"));
+            return;
+        }
+
+        // RFC-0124: /count — compact SMS/call counter summary.
+        if (lower == "/count")
+        {
+            if (countFn_)
+                bot_.sendMessageTo(u.chatId, countFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(count not configured)"));
             return;
         }
 

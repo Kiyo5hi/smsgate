@@ -3140,6 +3140,132 @@ void test_TelegramPoller_boot_not_configured_replies()
     TEST_ASSERT_TRUE(sawNotConfigured);
 }
 
+// RFC-0124: /count with fn set → replies with fn result.
+void test_TelegramPoller_count_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setCountFn([]() -> String {
+        return String("\xF0\x9F\x93\x8A SMS rcvd: 12 | fwd: 11 | fail: 1 | Calls: 3");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(930, kAllowedFromId, 0, "/count", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(930, poller.lastUpdateId());
+    bool sawCount = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("rcvd")) >= 0 && m.indexOf(String("Calls")) >= 0)
+        {
+            sawCount = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawCount);
+}
+
+// RFC-0124: /count without fn → "(count not configured)".
+void test_TelegramPoller_count_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // countFn_ NOT set
+
+    bot.queueUpdateBatch({makeUpdate(931, kAllowedFromId, 0, "/count", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(931, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
+// RFC-0125: /me replies with fromId and chatId.
+void test_TelegramPoller_me_replies_with_ids()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(932, kAllowedFromId, 0, "/me", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(932, poller.lastUpdateId());
+    bool sawIds = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("fromId")) >= 0 && m.indexOf(String("chatId")) >= 0)
+        {
+            sawIds = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawIds);
+}
+
+// RFC-0125: /me works even for unauthorized users.
+void test_TelegramPoller_me_works_for_unauthorized_user()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    constexpr int64_t kUnauthorizedId = 99999;
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth); // kAllowedFromId != kUnauthorizedId
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(933, kUnauthorizedId, 0, "/me", kUnauthorizedId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(933, poller.lastUpdateId());
+    bool sawIds = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("fromId")) >= 0) { sawIds = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawIds);
+}
+
 // RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
 void test_TelegramPoller_send_duplicate_gets_already_queued_error()
 {
@@ -3310,6 +3436,12 @@ void run_telegram_poller_tests()
     // RFC-0123: /boot command
     RUN_TEST(test_TelegramPoller_boot_calls_fn_and_replies);
     RUN_TEST(test_TelegramPoller_boot_not_configured_replies);
+    // RFC-0124: /count command
+    RUN_TEST(test_TelegramPoller_count_calls_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_count_not_configured_replies);
+    // RFC-0125: /me command
+    RUN_TEST(test_TelegramPoller_me_replies_with_ids);
+    RUN_TEST(test_TelegramPoller_me_works_for_unauthorized_user);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

@@ -222,6 +222,11 @@ public:
     // When not set, replies "(boot info not configured)".
     void setBootInfoFn(std::function<String()> fn) { bootInfoFn_ = std::move(fn); }
 
+    // RFC-0124: Optional session counter callback. When set, /count calls
+    // this fn and replies with a compact summary of SMS/call counters.
+    // When not set, replies "(count not configured)".
+    void setCountFn(std::function<String()> fn) { countFn_ = std::move(fn); }
+
     // RFC-0121: Optional network info callback. When set, /network calls this
     // fn and replies with the result (e.g. "📶 Operator: T-Mobile | Reg: home | CSQ 18 (good)").
     // When not set, replies "(network info not configured)".
@@ -274,6 +279,7 @@ private:
     std::function<String()> uptimeFn_;     // RFC-0120
     std::function<String()> networkFn_;    // RFC-0121
     std::function<String()> bootInfoFn_;   // RFC-0123
+    std::function<String()> countFn_;      // RFC-0124
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

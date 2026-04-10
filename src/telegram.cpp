@@ -328,6 +328,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "boot";
         c["description"] = "Show boot count, reset reason, and boot timestamp";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "count";
+        c["description"] = "Session SMS/call counter summary";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "me";
+        c["description"] = "Show your Telegram fromId and chatId";
+    }
 
     String payload;
     serializeJson(doc, payload);
