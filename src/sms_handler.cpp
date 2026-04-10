@@ -639,7 +639,7 @@ void SmsHandler::handleSmsIndex(int idx)
     }
 }
 
-void SmsHandler::sweepExistingSms()
+int SmsHandler::sweepExistingSms()
 {
     String data;
     modem_.sendAT("+CMGL=\"ALL\"");
@@ -647,10 +647,11 @@ void SmsHandler::sweepExistingSms()
     if (res != 1)
     {
         Serial.println("Initial CMGL sweep failed");
-        return;
+        return 0;
     }
 
     int search = 0;
+    int count = 0;
     while (true)
     {
         int start = data.indexOf("+CMGL:", search);
@@ -665,6 +666,8 @@ void SmsHandler::sweepExistingSms()
         if (idx > 0)
         {
             handleSmsIndex(idx);
+            count++;
         }
     }
+    return count;
 }

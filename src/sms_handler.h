@@ -130,7 +130,8 @@ public:
 
     // Drain every SMS currently on the SIM via AT+CMGL. Used at startup
     // to catch up on messages that arrived while the bridge was offline.
-    void sweepExistingSms();
+    // Returns the count of SIM indices dispatched to handleSmsIndex.
+    int sweepExistingSms();
 
     // Test-only accessor — no runtime caller.
     int consecutiveFailures() const { return consecutiveFailures_; }

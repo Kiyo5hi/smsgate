@@ -1116,7 +1116,16 @@ void setup()
     }
 
     // Drain anything that arrived while we were offline.
-    smsHandler.sweepExistingSms();
+    {
+        int swept = smsHandler.sweepExistingSms(); // RFC-0097
+        if (swept > 0) {
+            String drainMsg = String("\xF0\x9F\x93\xA8 Drained ") + String(swept) // 📨
+                + String(" offline SMS");
+            if (swept == 1) drainMsg += ".";
+            else            drainMsg += ".";
+            realBot.sendMessage(drainMsg);
+        }
+    }
 
     // Hardware watchdog (RFC-0015). Initialized at the end of setup() so
     // unbounded startup sections (modem probe, network registration, NTP)
