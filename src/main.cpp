@@ -778,6 +778,14 @@ void setup()
         msg += "  Users: ";      msg += String(allowedIdCount); msg += "\n";
         msg += "  Block list: "; msg += String(sBlockListCount + sRuntimeBlockListCount); msg += "\n";
         msg += "  Aliases: "; msg += String(smsAliasStore.count()); msg += "/"; msg += String(SmsAliasStore::kMaxAliases); msg += "\n"; // RFC-0090
+        // RFC-0099: Show mute state when active.
+        if (s_alertsMutedUntilMs > (uint32_t)millis()) {
+            uint32_t remainSec = (s_alertsMutedUntilMs - (uint32_t)millis()) / 1000u;
+            msg += "  Alerts: muted (";
+            if (remainSec >= 60) { msg += String((int)(remainSec / 60)); msg += "m"; }
+            else                  { msg += String((int)remainSec); msg += "s"; }
+            msg += " remaining)\n";
+        }
         // RFC-0048: Build timestamp (compile-time).
         msg += "  Build: "; msg += String(__DATE__); msg += " "; msg += String(__TIME__); msg += "\n";
         return msg;
