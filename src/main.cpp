@@ -198,6 +198,9 @@ static uint32_t s_lifetimeFwdCount = 0;
 static bool s_simFullWarnSent = false;
 // RFC-0066: Low heap warning. Hysteresis: alert at <15 KB, clear at >25 KB.
 static bool s_lowHeapWarnSent = false;
+// RFC-0075: Daily stats digest. Initialised to 0 so the first digest sends
+// 24 h after boot (set on first 30-second tick, fire 24 h later).
+static uint32_t s_lastDailyDigestMs = 0;
 
 // RFC-0017: StatusFn promoted to file scope so loop() can call it for
 // the scheduled heartbeat. Assigned in setup() before TelegramPoller is
@@ -1228,6 +1231,28 @@ void loop()
                 s_lowHeapWarnSent = false;
             }
         }
+        // RFC-0075: Daily stats digest. First tick initialises the timer;
+        // subsequent ticks check whether 24 hours have elapsed.
+        {
+            if (s_lastDailyDigestMs == 0) {
+                s_lastDailyDigestMs = millis(); // arm the timer without sending
+            } else if (millis() - s_lastDailyDigestMs >= 24UL * 3600UL * 1000UL) {
+                s_lastDailyDigestMs = millis();
+                String digest;
+                digest += "\xF0\x9F\x93\x8A 24 h digest | "; // 📊
+                digest += "fwd "; digest += String(smsHandler.smsForwarded());
+                digest += " (session) "; digest += String(s_lifetimeFwdCount); digest += " (lifetime)";
+                if (smsHandler.smsBlocked() > 0) {
+                    digest += " | blocked "; digest += String(smsHandler.smsBlocked());
+                }
+                if (smsHandler.smsDeduplicated() > 0) {
+                    digest += " | deduped "; digest += String(smsHandler.smsDeduplicated());
+                }
+                digest += " | heap "; digest += String((int)(ESP.getFreeHeap() / 1024)); digest += " KB free";
+                realBot.sendMessage(digest);
+            }
+        }
+
 #ifdef ENABLE_DELIVERY_REPORTS
         // Evict delivery report map entries older than 1 hour (RFC-0011).
         deliveryReportMap.evictExpired((uint32_t)millis());
