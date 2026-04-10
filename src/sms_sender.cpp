@@ -152,7 +152,11 @@ void SmsSender::drainQueue(uint32_t nowMs)
         if (nowMs < e.nextRetryMs)
             continue;
 
-        // This entry is due — attempt to send it.
+        // This entry is due — record first-drain timestamp (RFC-0095).
+        if (e.queuedAtMs == 0)
+            e.queuedAtMs = nowMs;
+
+        // Attempt to send.
         bool ok = send(e.phone, e.body);
         if (ok)
         {
@@ -246,6 +250,7 @@ std::vector<SmsSender::QueueSnapshot> SmsSender::getQueueSnapshot() const
         s.phone       = e.phone;
         s.bodyPreview = e.body.substring(0, 20);
         s.attempts    = e.attempts;
+        s.queuedAtMs  = e.queuedAtMs; // RFC-0095
         result.push_back(s);
     }
     return result;

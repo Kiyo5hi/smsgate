@@ -664,6 +664,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             }
             else
             {
+                uint32_t nowMs = clock_ ? clock_() : 0;
                 msg = String("\xF0\x9F\x93\xA4 Queue: ") + String((int)entries.size()) + String(" pending\n");
                 int n = 1;
                 for (const auto &e : entries)
@@ -674,7 +675,17 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                         msg += String("\xE2\x80\xA6"); // U+2026 ellipsis
                     msg += String("\xe2\x80\x9d"); // "
                     msg += String(" (attempt ") + String(e.attempts + 1)
-                        + String("/") + String(SmsSender::kMaxAttempts) + String(")\n");
+                        + String("/") + String(SmsSender::kMaxAttempts) + String(")");
+                    // RFC-0095: show age since first drain attempt.
+                    if (e.queuedAtMs > 0 && nowMs >= e.queuedAtMs)
+                    {
+                        uint32_t ageSec = (nowMs - e.queuedAtMs) / 1000;
+                        if (ageSec < 60)
+                            msg += String(" ") + String((int)ageSec) + String("s");
+                        else
+                            msg += String(" ") + String((int)(ageSec / 60)) + String("m");
+                    }
+                    msg += "\n";
                 }
             }
             bot_.sendMessageTo(u.chatId, msg);

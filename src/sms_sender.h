@@ -39,6 +39,7 @@ struct OutboundEntry {
     String body;
     int attempts;           // how many send attempts have been made so far
     uint32_t nextRetryMs;   // drainQueue(nowMs) only acts when nowMs >= this
+    uint32_t queuedAtMs;    // RFC-0095: set to nowMs on first drain attempt
     std::function<void()> onFinalFailure; // called once on final drop; may be nullptr
     std::function<void()> onSuccess;      // called once on successful send; may be nullptr
     bool occupied;          // true when this slot is in use
@@ -99,6 +100,7 @@ public:
         String phone;
         String bodyPreview; // first ≤20 chars of body
         int attempts;
+        uint32_t queuedAtMs; // RFC-0095: set on first drain; 0 if not yet drained
     };
     std::vector<QueueSnapshot> getQueueSnapshot() const;
 
