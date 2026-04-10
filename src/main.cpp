@@ -2397,12 +2397,25 @@ void loop()
                 int idx = line.substring(comma + 1).toInt();
                 if (idx > 0)
                 {
-                    // RFC-0241: kick WDT — handleSmsIndex can take ~10 s
-                    // per SMS (Telegram roundtrip). If multiple +CMTI URCs
-                    // pile up in the buffer the loop would exceed 120 s
-                    // without a reset (e.g. burst on module wake-up).
-                    esp_task_wdt_reset();
-                    smsHandler.handleSmsIndex(idx);
+                    // RFC-0244: skip forwarding when there is no transport.
+                    // handleSmsIndex calls doSendMessage which would fail and
+                    // increment noteTelegramFailure(). With no transport, a
+                    // burst of 8+ SMS would exhaust the 8-failure limit and
+                    // trigger a reboot loop. Leave the SMS on the SIM — it
+                    // will be swept when transport becomes available (RFC-0243).
+                    if (activeTransport == ActiveTransport::kNone)
+                    {
+                        Serial.printf("[RFC-0244] +CMTI idx=%d skipped (no transport) — will sweep on connect\n", idx);
+                    }
+                    else
+                    {
+                        // RFC-0241: kick WDT — handleSmsIndex can take ~10 s
+                        // per SMS (Telegram roundtrip). If multiple +CMTI URCs
+                        // pile up in the buffer the loop would exceed 120 s
+                        // without a reset (e.g. burst on module wake-up).
+                        esp_task_wdt_reset();
+                        smsHandler.handleSmsIndex(idx);
+                    }
                 }
             }
         }
