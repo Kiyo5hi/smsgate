@@ -32,6 +32,7 @@
 #include <esp_system.h>
 #include <esp_task_wdt.h>
 #include <nvs.h>
+#include <memory>
 
 #ifdef TINY_GSM_MODEM_SIM7080
 #error "This modem has no SMS function"
@@ -2146,14 +2147,18 @@ void setup()
             static const size_t kBodyLen  = 1531;
             static const size_t kSlotSize = sizeof(uint32_t) + 32 + kBodyLen + sizeof(uint32_t); // 1571
             static const size_t kNumSlots = 5;
-            uint8_t blob[1 + kNumSlots * kSlotSize] = {};
+            // RFC-0263: heap-allocate; 7856 bytes would overflow the 8192-byte
+            // loop task stack if allocated as a local array.
+            const size_t blobSize = 1 + kNumSlots * kSlotSize;
+            auto blob = std::make_unique<uint8_t[]>(blobSize);
+            memset(blob.get(), 0, blobSize);
             blob[0] = 0x03; // version byte (bumped for RFC-0261)
             const auto& q = telegramPoller->getSchedQueue();
             long nowSec = (long)time(nullptr);
             long nowMs  = (long)(uint32_t)millis();
             for (size_t i = 0; i < q.size() && i < kNumSlots; i++)
             {
-                uint8_t *slotPtr = blob + 1 + i * kSlotSize;
+                uint8_t *slotPtr = blob.get() + 1 + i * kSlotSize;
                 if (q[i].sendAtMs == 0) continue; // free slot → sendAtUnix stays 0
                 long deltaMs = (long)q[i].sendAtMs - nowMs;
                 uint32_t sendAtUnix = (uint32_t)(nowSec + deltaMs / 1000L);
@@ -2163,7 +2168,7 @@ void setup()
                 uint32_t repeatSec = q[i].repeatIntervalMs / 1000U; // RFC-0221
                 memcpy(slotPtr + 4 + 32 + kBodyLen, &repeatSec, 4);
             }
-            realPersist.saveBlob("sched_queue", blob, sizeof(blob));
+            realPersist.saveBlob("sched_queue", blob.get(), blobSize);
         });
 
         telegramPoller->begin();
@@ -2176,8 +2181,10 @@ void setup()
             static const size_t kSlotSize = sizeof(uint32_t) + 32 + kBodyLen + sizeof(uint32_t); // 1571
             static const size_t kNumSlots = 5;
             static const size_t kExpectedSize = 1 + kNumSlots * kSlotSize;
-            uint8_t blob[kExpectedSize] = {};
-            if (realPersist.loadBlob("sched_queue", blob, kExpectedSize) == kExpectedSize
+            // RFC-0263: heap-allocate; 7856 bytes would overflow the stack.
+            auto blob = std::make_unique<uint8_t[]>(kExpectedSize);
+            memset(blob.get(), 0, kExpectedSize);
+            if (realPersist.loadBlob("sched_queue", blob.get(), kExpectedSize) == kExpectedSize
                 && blob[0] == 0x03)
             {
                 long nowSec = (long)time(nullptr);
@@ -2186,7 +2193,7 @@ void setup()
                 int loaded = 0;
                 for (size_t i = 0; i < kNumSlots; i++)
                 {
-                    const uint8_t *slotPtr = blob + 1 + i * kSlotSize;
+                    const uint8_t *slotPtr = blob.get() + 1 + i * kSlotSize;
                     uint32_t sendAtUnix = 0;
                     memcpy(&sendAtUnix, slotPtr, 4);
                     if (sendAtUnix == 0) continue; // free slot
@@ -2198,12 +2205,14 @@ void setup()
                     memcpy(&repeatSec, slotPtr + 4 + 32 + kBodyLen, 4);
                     if (ageSeconds >= 2L * 3600L && repeatSec == 0) continue; // stale one-shot: drop
                     char phone[33] = {};
-                    char body[kBodyLen + 1] = {};
+                    // RFC-0263: heap-allocate body buffer (1532 bytes).
+                    auto bodyBuf = std::make_unique<char[]>(kBodyLen + 1);
+                    memset(bodyBuf.get(), 0, kBodyLen + 1);
                     memcpy(phone, slotPtr + 4,      32);
-                    memcpy(body,  slotPtr + 4 + 32, kBodyLen);
-                    body[kBodyLen] = '\0'; // always NUL-terminate
+                    memcpy(bodyBuf.get(), slotPtr + 4 + 32, kBodyLen);
+                    bodyBuf[kBodyLen] = '\0'; // always NUL-terminate
                     q[i].phone = String(phone);
-                    q[i].body  = String(body);
+                    q[i].body  = String(bodyBuf.get());
                     q[i].repeatIntervalMs = repeatSec * 1000U; // RFC-0221
                     if (ageSeconds > 0L) {
                         q[i].sendAtMs = 1; // past due: fire on next tick
