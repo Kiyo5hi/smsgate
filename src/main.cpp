@@ -171,6 +171,8 @@ static int cachedCsq = 0;
 static RegStatus cachedRegStatus = REG_NO_RESULT;
 // RFC-0027: Operator name (AT+COPS?), refreshed every 30s alongside CSQ.
 static String cachedOperatorName;
+// RFC-0045: Modem firmware version (AT+CGMR), queried once at boot.
+static String cachedModemFirmware;
 // RFC-0031: CSQ trend — last 6 readings (one per 30s refresh = 3 min window).
 static int csqHistory[6] = {0, 0, 0, 0, 0, 0};
 static int csqHistoryIdx = 0;
@@ -609,6 +611,7 @@ void setup()
         msg += "  WiFi: ";      msg += String(WiFi.RSSI()); msg += " dBm\n";
         msg += "  Modem: CSQ "; msg += String(cachedCsq); msg += " ("; msg += csqLabel; msg += ")  "; msg += regStr;
         if (cachedOperatorName.length() > 0) { msg += " ("; msg += cachedOperatorName; msg += ")"; }
+        if (cachedModemFirmware.length() > 0) { msg += "\n  FW: "; msg += cachedModemFirmware; } // RFC-0045
         // RFC-0031: Append CSQ trend (oldest→newest, only if we have history).
         if (csqHistoryFull || csqHistoryIdx > 0)
         {
@@ -903,6 +906,16 @@ void setup()
         cachedOperatorName = (q1 >= 0 && q2 > q1)
                              ? copsResp.substring(q1 + 1, q2)
                              : String();
+    }
+    // RFC-0045: Query modem firmware version once at boot (doesn't change).
+    {
+        modem.sendAT("+CGMR");
+        modem.waitResponse(1000UL, cachedModemFirmware);
+        cachedModemFirmware.trim();
+        // Strip leading "+CGMR: " prefix if present.
+        if (cachedModemFirmware.startsWith("+CGMR: "))
+            cachedModemFirmware = cachedModemFirmware.substring(7);
+        cachedModemFirmware.trim();
     }
     // RFC-0036: Prime SIM slot usage at boot.
     {
