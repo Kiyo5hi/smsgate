@@ -190,6 +190,11 @@ public:
     // this to zero all session counters in SmsHandler, CallHandler, SmsSender.
     void setResetStatsFn(std::function<void()> fn) { resetStatsFn_ = std::move(fn); }
 
+    // RFC-0119: Optional /ping summary callback. When set, /ping replies with
+    // this fn's result (e.g. "🏓 Pong [label] | ⏱ 1d 2h | CSQ 18").
+    // When not set, falls back to the simple "🏓 Pong" reply.
+    void setPingSummaryFn(std::function<String()> fn) { pingSummaryFn_ = std::move(fn); }
+
     // RFC-0118: Device label get/set. When set, /label replies with the
     // current label and /setlabel <name> validates and saves a new one.
     void setLabelGetFn(std::function<String()> fn) { labelGetFn_ = std::move(fn); }
@@ -246,6 +251,7 @@ private:
     std::function<String()> simInfoFn_;              // RFC-0105
     std::function<String(int64_t, const String &)> atCmdFn_; // RFC-0107
     std::function<void()> resetStatsFn_;  // RFC-0110
+    std::function<String()> pingSummaryFn_;                  // RFC-0119
     std::function<String()> labelGetFn_;                    // RFC-0118
     std::function<void(const String &)> labelSetFn_;        // RFC-0118
     std::function<String()> balanceCodeFn_; // RFC-0114

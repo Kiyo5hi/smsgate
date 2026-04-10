@@ -1132,6 +1132,30 @@ void setup()
             s_deviceLabel = lbl;
             realPersist.saveBlob("device_label", lbl.c_str(), lbl.length());
         });
+        telegramPoller->setPingSummaryFn([]() -> String {           // RFC-0119
+            // "🏓 Pong [label] | ⏱ 2d 3h 15m | CSQ 18 (good)"
+            String msg = String("\xF0\x9F\x8F\x93 Pong"); // 🏓
+            if (s_deviceLabel.length() > 0) {
+                msg += String(" ["); msg += s_deviceLabel; msg += String("]");
+            }
+            unsigned long uptimeSec = ((uint32_t)millis() - s_bootMs) / 1000UL;
+            unsigned long days  = uptimeSec / 86400UL;
+            unsigned long hours = (uptimeSec % 86400UL) / 3600UL;
+            unsigned long mins  = (uptimeSec % 3600UL) / 60UL;
+            msg += String(" | \xE2\x8F\xB1 "); // ⏱
+            if (days > 0)  { msg += String(days);  msg += String("d "); }
+            if (hours > 0) { msg += String(hours); msg += String("h "); }
+            msg += String(mins); msg += String("m");
+            const char *csqLabel;
+            if (cachedCsq == 99)      csqLabel = "none";
+            else if (cachedCsq <= 9)  csqLabel = "marginal";
+            else if (cachedCsq <= 14) csqLabel = "ok";
+            else if (cachedCsq <= 19) csqLabel = "good";
+            else                      csqLabel = "excellent";
+            msg += String(" | CSQ "); msg += String(cachedCsq);
+            msg += String(" ("); msg += String(csqLabel); msg += String(")");
+            return msg;
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])

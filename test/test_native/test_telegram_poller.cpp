@@ -2795,6 +2795,70 @@ void test_TelegramPoller_reboot_not_configured_replies()
     TEST_ASSERT_TRUE(sawNotConfigured);
 }
 
+// RFC-0119: /ping with pingSummaryFn set → replies with fn result.
+void test_TelegramPoller_ping_uses_summary_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setPingSummaryFn([]() -> String {
+        return String("\xF0\x9F\x8F\x93 Pong [Office] | \xE2\x8F\xB1 1d 2h 15m | CSQ 18 (good)");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(900, kAllowedFromId, 0, "/ping", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(900, poller.lastUpdateId());
+    bool sawSummary = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Office")) >= 0 && m.indexOf(String("CSQ")) >= 0)
+        {
+            sawSummary = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawSummary);
+}
+
+// RFC-0119: /ping without pingSummaryFn → falls back to plain "Pong".
+void test_TelegramPoller_ping_fallback_without_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // pingSummaryFn_ NOT set
+
+    bot.queueUpdateBatch({makeUpdate(901, kAllowedFromId, 0, "/ping", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(901, poller.lastUpdateId());
+    bool sawPong = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Pong")) >= 0) { sawPong = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawPong);
+}
+
 // RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
 void test_TelegramPoller_send_duplicate_gets_already_queued_error()
 {
@@ -2949,6 +3013,9 @@ void run_telegram_poller_tests()
     // RFC-0112: /reboot command
     RUN_TEST(test_TelegramPoller_reboot_calls_fn_and_replies);
     RUN_TEST(test_TelegramPoller_reboot_not_configured_replies);
+    // RFC-0119: /ping enhanced summary
+    RUN_TEST(test_TelegramPoller_ping_uses_summary_fn);
+    RUN_TEST(test_TelegramPoller_ping_fallback_without_fn);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

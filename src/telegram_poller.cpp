@@ -162,9 +162,13 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         }
 
         // RFC-0042: /ping — instant liveness check.
+        // RFC-0119: if pingSummaryFn_ is set, use its result; else plain "🏓 Pong".
         if (lower == "/ping")
         {
-            bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x8F\x93 Pong")); // 🏓
+            if (pingSummaryFn_)
+                bot_.sendMessageTo(u.chatId, pingSummaryFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x8F\x93 Pong")); // 🏓
             return;
         }
 
