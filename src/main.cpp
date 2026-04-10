@@ -791,6 +791,18 @@ void setup()
         // RFC-0034: show outbound retry queue depth.
         msg += "  Outbound queue: "; msg += String(smsSender.queueSize()); msg += "/"; msg += String(SmsSender::kQueueSize); msg += "\n";
         msg += "  Outbound: "; msg += String(smsSender.sentCount()); msg += " sent, "; msg += String(smsSender.failedCount()); msg += " failed\n"; // RFC-0091
+        // RFC-0206: Scheduled SMS count (show only when non-zero).
+        if (telegramPoller) {
+            int schedPending = 0;
+            const auto& sq = telegramPoller->getSchedQueue();
+            for (size_t si = 0; si < sq.size(); si++)
+                if (sq[si].sendAtMs != 0) schedPending++;
+            if (schedPending > 0) {
+                msg += "  Sched: "; msg += String(schedPending);
+                msg += "/"; msg += String((int)TelegramPoller::kScheduledQueueSize);
+                msg += " pending\n";
+            }
+        }
         // RFC-0036: SIM slot usage (reflects SMS still on SIM — fragments + sweep backlog).
         if (cachedSimUsed >= 0) {
             msg += "  SIM: "; msg += String(cachedSimUsed); msg += "/"; msg += String(cachedSimTotal); msg += " slots\n";
