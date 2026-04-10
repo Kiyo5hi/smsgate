@@ -6995,6 +6995,90 @@ void test_TelegramPoller_schedqueue_shows_abs_time_when_ntpsynced()
     TEST_ASSERT_TRUE(sawUtc);
 }
 
+// RFC-0204: /delayall extends all occupied slots.
+void test_TelegramPoller_delayall_extends_all_slots()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Schedule two slots.
+    bot.queueUpdateBatch({makeUpdate(10001, kAllowedFromId, 0,
+        "/schedulesend 10 +1111 Msg one", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    bot.queueUpdateBatch({makeUpdate(10002, kAllowedFromId, 0,
+        "/schedulesend 20 +2222 Msg two", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Record sendAtMs before delay.
+    const auto& q_before = poller.getSchedQueue();
+    uint32_t t0 = q_before[0].sendAtMs;
+    uint32_t t1 = q_before[1].sendAtMs;
+    TEST_ASSERT_NOT_EQUAL(0U, t0);
+    TEST_ASSERT_NOT_EQUAL(0U, t1);
+
+    // /delayall 5 should add 300000ms to both.
+    bot.queueUpdateBatch({makeUpdate(10003, kAllowedFromId, 0,
+        "/delayall 5", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(10003, poller.lastUpdateId());
+
+    const auto& q_after = poller.getSchedQueue();
+    TEST_ASSERT_EQUAL(t0 + 300000U, q_after[0].sendAtMs);
+    TEST_ASSERT_EQUAL(t1 + 300000U, q_after[1].sendAtMs);
+
+    // Reply should mention count.
+    bool sawExtended = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Extended") >= 0 || m.indexOf("slot") >= 0)
+        { sawExtended = true; break; }
+    TEST_ASSERT_TRUE(sawExtended);
+}
+
+// RFC-0204: /delayall with empty queue replies with no-op message.
+void test_TelegramPoller_delayall_empty_queue()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(10004, kAllowedFromId, 0,
+        "/delayall 10", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(10004, poller.lastUpdateId());
+    bool sawNoOp = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("no scheduled") >= 0) { sawNoOp = true; break; }
+    TEST_ASSERT_TRUE(sawNoOp);
+}
+
 // RFC-0203: tick() sends a Telegram confirmation when a scheduled slot fires.
 void test_TelegramPoller_tick_sends_confirmation_on_sched_fire()
 {
@@ -7427,6 +7511,9 @@ void run_telegram_poller_tests()
     // RFC-0202: absolute time in scheduled SMS commands
     RUN_TEST(test_TelegramPoller_schedulesend_shows_abs_time_when_ntpsynced);
     RUN_TEST(test_TelegramPoller_schedqueue_shows_abs_time_when_ntpsynced);
+    // RFC-0204: /delayall command
+    RUN_TEST(test_TelegramPoller_delayall_extends_all_slots);
+    RUN_TEST(test_TelegramPoller_delayall_empty_queue);
     // RFC-0203: delivery confirmation on scheduled fire
     RUN_TEST(test_TelegramPoller_tick_sends_confirmation_on_sched_fire);
     // RFC-0200: persist callback + getSchedQueue/setSchedQueue

@@ -169,6 +169,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/cancelsched <N> \xe2\x80\x94 Cancel a scheduled SMS slot\n";
             help += "/clearschedule \xe2\x80\x94 Cancel all pending scheduled SMS\n"; // RFC-0195
             help += "/scheddelay <N> <min> \xe2\x80\x94 Extend scheduled slot N by extra minutes\n"; // RFC-0196
+            help += "/delayall <min> \xe2\x80\x94 Extend all scheduled slots by extra minutes\n"; // RFC-0204
             help += "/schedinfo <N> \xe2\x80\x94 Show full body and ETA of scheduled slot N\n"; // RFC-0198
             help += "/schedrename <N> <phone> \xe2\x80\x94 Change destination phone of scheduled slot N\n"; // RFC-0197
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
@@ -2794,6 +2795,50 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("\xe2\x9c\x85 Triggering ") // ✅
                     + String(fired)
                     + String(fired == 1 ? " scheduled SMS." : " scheduled SMS."));
+            return;
+        }
+
+        // RFC-0204: /delayall <min> — extend all scheduled slots at once.
+        if (lower == "/delayall" || lower.startsWith("/delayall "))
+        {
+            String arg = extractArg(u.text, "/delayall ");
+            arg.trim();
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /delayall <minutes>\n"
+                           "Extends ALL pending scheduled SMS by extra minutes (1\xe2\x80\x931440).\n" // –
+                           "Example: /delayall 30"));
+                return;
+            }
+            long extra = arg.toInt();
+            if (extra < 1 || extra > 1440)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Minutes must be 1\xe2\x80\x931440.")); // ❌ –
+                return;
+            }
+            uint32_t extraMs = (uint32_t)extra * 60000UL;
+            int extended = 0;
+            for (int i = 0; i < (int)kScheduledQueueSize; i++)
+            {
+                if (scheduledQueue_[i].sendAtMs == 0) continue;
+                // Cap at UINT32_MAX to avoid overflow.
+                uint32_t remaining = 0xFFFFFFFFUL - scheduledQueue_[i].sendAtMs;
+                if (extraMs > remaining)
+                    scheduledQueue_[i].sendAtMs = 0xFFFFFFFFUL;
+                else
+                    scheduledQueue_[i].sendAtMs += extraMs;
+                extended++;
+            }
+            if (extended > 0 && persistSchedFn_) persistSchedFn_(); // RFC-0200
+            if (extended == 0)
+                bot_.sendMessageTo(u.chatId, String("(no scheduled SMS to delay)"));
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x8f\xb0 Extended ") + String(extended) // ⏰
+                    + String(extended == 1 ? " slot by " : " slot(s) by ")
+                    + String((int)extra) + String(" min."));
             return;
         }
 
