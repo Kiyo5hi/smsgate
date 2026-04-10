@@ -1148,6 +1148,29 @@ void loop()
     }
 #endif
 
+    // RFC-0056: Periodic NTP resync (every 24 hours) to keep the clock
+    // accurate over long uptimes. Uses the same syncTime() as boot.
+    // Runs only on the WiFi path (syncTime needs network; cellular path
+    // uses NTP only when transitioning back to WiFi anyway).
+    {
+        static uint32_t lastNtpResyncMs = 0;
+        constexpr uint32_t kNtpResyncIntervalMs = 24UL * 60UL * 60UL * 1000UL; // 24h
+        uint32_t nowMs2 = (uint32_t)millis();
+        if (activeTransport == ActiveTransport::kWiFi &&
+            (uint32_t)(nowMs2 - lastNtpResyncMs) >= kNtpResyncIntervalMs &&
+            lastNtpResyncMs != 0) // skip first iteration (boot already synced)
+        {
+            lastNtpResyncMs = nowMs2;
+            Serial.println("RFC-0056: Periodic NTP resync...");
+            esp_task_wdt_reset();
+            syncTime();
+        }
+        else if (lastNtpResyncMs == 0)
+        {
+            lastNtpResyncMs = nowMs2; // initialise to now (first boot sync already done)
+        }
+    }
+
     // Periodically verify the active transport is still viable.
     // - If WiFi was primary and drops: try WiFi reconnect. If it's still down
     //   on the second consecutive check (~60 s later), fall over to cellular
