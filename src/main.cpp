@@ -2857,8 +2857,6 @@ void loop()
         {
             if (WiFi.status() != WL_CONNECTED)
             {
-                Serial.println("WiFi dropped, attempting reconnect...");
-                WiFi.reconnect();
                 if (wifiDownLastCheck)
                 {
                     // Two consecutive checks with WiFi down — fall over.
@@ -2874,9 +2872,30 @@ void loop()
                         }
                     }
 #endif
+                    // RFC-0237: After 5 min down, escalate from WiFi.reconnect()
+                    // to a full disconnect + begin cycle. WiFi.reconnect() can get
+                    // stuck on some ESP32 WiFi driver versions and will not recover
+                    // without re-running begin() with credentials.
+                    const unsigned long kWifiHardResetMs = 5UL * 60UL * 1000UL;
+                    if (wifiDownSinceMs > 0 &&
+                        (millis() - wifiDownSinceMs) >= kWifiHardResetMs)
+                    {
+                        Serial.println("[RFC-0237] WiFi down >5 min — full reconnect cycle");
+                        WiFi.disconnect(false); // disconnect, keep radio on
+                        delay(100);
+                        WiFi.begin(ssid, password); // non-blocking, re-applies credentials
+                        wifiDownSinceMs = millis(); // reset so escalation re-arms 5 min later
+                    }
+                    else
+                    {
+                        Serial.println("WiFi dropped, attempting reconnect...");
+                        WiFi.reconnect();
+                    }
                 }
                 else
                 {
+                    Serial.println("WiFi dropped, attempting reconnect...");
+                    WiFi.reconnect();
                     wifiDownLastCheck = true;
                     wifiDownSinceMs   = millis(); // RFC-0039: record drop time
                 }
