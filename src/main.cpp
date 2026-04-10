@@ -2821,6 +2821,40 @@ void loop()
                     }
                 } else if (line.startsWith("RING") || line.startsWith("+CLIP:")) {
                     callHandler.onUrcLine(line);
+                } else if (line.startsWith("+CREG:")) {
+                    // RFC-0247: real-time registration update via piggybacked URC.
+                    // Idempotent via s_regLostAlertSent; the 30 s block also checks
+                    // AT+CREG? so duplicate processing is harmless.
+                    int c236 = line.indexOf(':');
+                    String r236 = line.substring(c236 + 1);
+                    r236.trim();
+                    int cm236 = r236.indexOf(',');
+                    int st236 = (cm236 >= 0) ? r236.substring(cm236 + 1).toInt() : r236.toInt();
+                    switch (st236) {
+                        case 1:  cachedRegStatus = REG_OK_HOME;       break;
+                        case 5:  cachedRegStatus = REG_OK_ROAMING;    break;
+                        case 2:  cachedRegStatus = REG_SEARCHING;     break;
+                        case 3:  cachedRegStatus = REG_DENIED;        break;
+                        default: cachedRegStatus = REG_UNREGISTERED;  break;
+                    }
+                    bool ro236 = (cachedRegStatus == REG_OK_HOME || cachedRegStatus == REG_OK_ROAMING);
+                    const char *rt236 = (cachedRegStatus == REG_OK_HOME)      ? "home"
+                                     : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
+                                     : (cachedRegStatus == REG_SEARCHING)    ? "searching"
+                                     : (cachedRegStatus == REG_DENIED)       ? "denied"
+                                     : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
+                                     :                                         "unknown";
+                    if (!ro236 && !s_regLostAlertSent && cachedCsq > 0) {
+                        if (!alertsMuted())
+                            realBot.sendMessage(
+                                String("\xF0\x9F\x93\xB5 Network registration lost (") + rt236 + ")"); // 📵
+                        s_regLostAlertSent = true;
+                    } else if (ro236 && s_regLostAlertSent) {
+                        if (!alertsMuted())
+                            realBot.sendMessage(
+                                String("\xE2\x9C\x85 Network registration restored (") + rt236 + ")"); // ✅
+                        s_regLostAlertSent = false;
+                    }
                 }
             }
         }
@@ -3002,6 +3036,39 @@ void loop()
                     }
                 } else if (l239.startsWith("RING") || l239.startsWith("+CLIP:")) {
                     callHandler.onUrcLine(l239);
+                } else if (l239.startsWith("+CREG:")) {
+                    // RFC-0247: real-time registration update via piggybacked URC.
+                    int c239 = l239.indexOf(':');
+                    String r239 = l239.substring(c239 + 1);
+                    r239.trim();
+                    int cm239b = r239.indexOf(',');
+                    int st239 = (cm239b >= 0) ? r239.substring(cm239b + 1).toInt() : r239.toInt();
+                    switch (st239) {
+                        case 1:  cachedRegStatus = REG_OK_HOME;       break;
+                        case 5:  cachedRegStatus = REG_OK_ROAMING;    break;
+                        case 2:  cachedRegStatus = REG_SEARCHING;     break;
+                        case 3:  cachedRegStatus = REG_DENIED;        break;
+                        default: cachedRegStatus = REG_UNREGISTERED;  break;
+                    }
+                    bool ro239 = (cachedRegStatus == REG_OK_HOME || cachedRegStatus == REG_OK_ROAMING);
+                    const char *rt239 = (cachedRegStatus == REG_OK_HOME)      ? "home"
+                                     : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
+                                     : (cachedRegStatus == REG_SEARCHING)    ? "searching"
+                                     : (cachedRegStatus == REG_DENIED)       ? "denied"
+                                     : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
+                                     :                                         "unknown";
+                    Serial.printf("[RFC-0247/239] +CREG URC: stat=%d (%s)\n", st239, rt239);
+                    if (!ro239 && !s_regLostAlertSent && cachedCsq > 0) {
+                        if (!alertsMuted())
+                            realBot.sendMessage(
+                                String("\xF0\x9F\x93\xB5 Network registration lost (") + rt239 + ")"); // 📵
+                        s_regLostAlertSent = true;
+                    } else if (ro239 && s_regLostAlertSent) {
+                        if (!alertsMuted())
+                            realBot.sendMessage(
+                                String("\xE2\x9C\x85 Network registration restored (") + rt239 + ")"); // ✅
+                        s_regLostAlertSent = false;
+                    }
                 }
             }
         }
