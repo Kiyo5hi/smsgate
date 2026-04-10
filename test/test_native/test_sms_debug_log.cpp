@@ -312,6 +312,37 @@ void test_countForwarded_zero_timestamp_excluded()
     TEST_ASSERT_EQUAL(0u, log.countForwarded(0, 9999999));
 }
 
+// RFC-0178: dumpBriefRange — filter by [since, until) window.
+void test_dumpBriefRange_returns_entries_in_window()
+{
+    SmsDebugLog log;
+    { SmsDebugLog::Entry e; e.unixTimestamp = 1000; e.sender = "+1"; e.outcome = "fwd OK"; e.bodyChars = 10; log.push(e); }
+    { SmsDebugLog::Entry e; e.unixTimestamp = 2000; e.sender = "+2"; e.outcome = "fwd OK"; e.bodyChars = 20; log.push(e); }
+    { SmsDebugLog::Entry e; e.unixTimestamp = 3000; e.sender = "+3"; e.outcome = "fwd OK"; e.bodyChars = 30; log.push(e); }
+
+    // Window [1500, 2500) should only include timestamp=2000.
+    String result = log.dumpBriefRange(1500, 2500);
+    TEST_ASSERT_TRUE(result.indexOf("+2") >= 0);
+    TEST_ASSERT_FALSE(result.indexOf("+1") >= 0);
+    TEST_ASSERT_FALSE(result.indexOf("+3") >= 0);
+}
+
+void test_dumpBriefRange_no_match_returns_placeholder()
+{
+    SmsDebugLog log;
+    { SmsDebugLog::Entry e; e.unixTimestamp = 1000; e.sender = "+1"; e.outcome = "fwd OK"; log.push(e); }
+    String result = log.dumpBriefRange(5000, 6000);
+    TEST_ASSERT_TRUE(result.indexOf("no entries") >= 0);
+}
+
+void test_dumpBriefRange_zero_timestamp_excluded()
+{
+    SmsDebugLog log;
+    { SmsDebugLog::Entry e; e.unixTimestamp = 0; e.sender = "+1"; e.outcome = "fwd OK"; log.push(e); }
+    String result = log.dumpBriefRange(0, 9999999);
+    TEST_ASSERT_TRUE(result.indexOf("no entries") >= 0);
+}
+
 // ---------------------------------------------------------------------------
 // Runner
 // ---------------------------------------------------------------------------
@@ -334,4 +365,8 @@ void run_sms_debug_log_tests()
     // RFC-0171: countForwarded
     RUN_TEST(test_countForwarded_counts_fwd_entries_in_range);
     RUN_TEST(test_countForwarded_zero_timestamp_excluded);
+    // RFC-0178: dumpBriefRange
+    RUN_TEST(test_dumpBriefRange_returns_entries_in_window);
+    RUN_TEST(test_dumpBriefRange_no_match_returns_placeholder);
+    RUN_TEST(test_dumpBriefRange_zero_timestamp_excluded);
 }

@@ -520,6 +520,11 @@ bool registerBotCommands(RealBotClient &bot)
     }
     {
         JsonObject c = cmds.createNestedObject();
+        c["command"] = "logdate";
+        c["description"] = "Show SMS log for a UTC date: /logdate YYYY-MM-DD";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
         c["command"] = "setmaxparts";
         c["description"] = "Set max outbound SMS concat parts (1-10): /setmaxparts <N>";
     }

@@ -5469,6 +5469,72 @@ void test_TelegramPoller_logsince_invalid_hours_sends_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0178: /logdate YYYY-MM-DD — valid date calls dumpBriefRange.
+void test_TelegramPoller_logdate_valid_date_calls_debug_log()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsDebugLog log;
+    // 2026-04-08 00:00:00 UTC = 1775606400.
+    // Add an entry inside and outside that window.
+    { SmsDebugLog::Entry e; e.unixTimestamp = 1775606400 + 3600; // 2026-04-08 01:00 UTC
+      e.sender = "+99001"; e.outcome = "fwd OK"; e.bodyChars = 5; log.push(e); }
+    { SmsDebugLog::Entry e; e.unixTimestamp = 1775606400 - 100;  // 2026-04-07
+      e.sender = "+99002"; e.outcome = "fwd OK"; e.bodyChars = 5; log.push(e); }
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(1100, kAllowedFromId, 0, "/logdate 2026-04-08", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1100, poller.lastUpdateId());
+    bool sawEntry = false, sawWrong = false;
+    for (const auto &m : bot.sentMessages()) {
+        if (m.indexOf("+99001") >= 0) sawEntry = true;
+        if (m.indexOf("+99002") >= 0) sawWrong = true;
+    }
+    TEST_ASSERT_TRUE(sawEntry);
+    TEST_ASSERT_FALSE(sawWrong);
+}
+
+// RFC-0178: /logdate invalid format sends error.
+void test_TelegramPoller_logdate_invalid_format_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    SmsDebugLog log;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setDebugLog(&log);
+
+    bot.queueUpdateBatch({makeUpdate(1101, kAllowedFromId, 0, "/logdate notadate", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1101, poller.lastUpdateId());
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("YYYY-MM-DD") >= 0) { sawUsage = true; break; }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
 // RFC-0160: /setmaxparts <N> — calls maxPartsFn with validated value.
 void test_TelegramPoller_setmaxparts_calls_fn()
 {
@@ -6341,6 +6407,9 @@ void run_telegram_poller_tests()
     // RFC-0159: /logsince command
     RUN_TEST(test_TelegramPoller_logsince_no_arg_sends_usage);
     RUN_TEST(test_TelegramPoller_logsince_invalid_hours_sends_error);
+    // RFC-0178: /logdate command
+    RUN_TEST(test_TelegramPoller_logdate_valid_date_calls_debug_log);
+    RUN_TEST(test_TelegramPoller_logdate_invalid_format_sends_error);
     // RFC-0160: /setmaxparts command
     RUN_TEST(test_TelegramPoller_setmaxparts_calls_fn);
     RUN_TEST(test_TelegramPoller_setmaxparts_out_of_range_sends_error);

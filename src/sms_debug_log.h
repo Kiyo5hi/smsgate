@@ -84,6 +84,11 @@ public:
     // nothing qualifies.
     String dumpBriefSince(uint32_t sinceUnix) const;
 
+    // RFC-0178: Like dumpBriefSince but restricted to entries in [since, until).
+    // Entries with unixTimestamp == 0 or outside the window are omitted.
+    // Returns "(no entries for that date)" when nothing qualifies.
+    String dumpBriefRange(uint32_t sinceUnix, uint32_t untilUnix) const;
+
     // RFC-0171: Count entries with outcome == "fwd OK" whose unixTimestamp is
     // in [sinceUnix, untilUnix). Entries with unixTimestamp == 0 are excluded.
     size_t countForwarded(uint32_t sinceUnix, uint32_t untilUnix) const;

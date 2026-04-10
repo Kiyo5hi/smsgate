@@ -111,6 +111,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/last [N] \xe2\x80\x94 Show last N forwarded SMS (default 5)\n";
             help += "/logs [N] \xe2\x80\x94 Show last N SMS log entries (default 10)\n";
             help += "/logsince <hours> \xe2\x80\x94 Show log entries from the past N hours (1\xe2\x80\x93168)\n";
+            help += "/logdate <YYYY-MM-DD> \xe2\x80\x94 Show log entries for a specific UTC date\n";
             help += "/logstats \xe2\x80\x94 Aggregate outcome statistics from debug log\n";
             help += "/loginfo \xe2\x80\x94 Debug log ring buffer status (count/capacity + newest entry)\n";
             help += "/smsrate \xe2\x80\x94 SMS forwarding rate (last 1h and 24h from debug log)\n";
@@ -335,6 +336,48 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                                ? nowUnix - (uint32_t)(hrs * 3600)
                                : 0;
             bot_.sendMessageTo(u.chatId, debugLog_->dumpBriefSince(cutoff));
+            return;
+        }
+
+        // RFC-0178: /logdate YYYY-MM-DD — show log entries for a specific UTC date.
+        if (lower.startsWith("/logdate"))
+        {
+            if (!debugLog_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(debug log not configured)"));
+                return;
+            }
+            String arg = extractArg(u.text, "/logdate ");
+            // Parse YYYY-MM-DD. Require exactly 10 chars with dashes at [4] and [7].
+            if (arg.length() != 10 || arg[4] != '-' || arg[7] != '-')
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /logdate YYYY-MM-DD\nExample: /logdate 2026-04-08\n(timestamps are UTC)"));
+                return;
+            }
+            int yr  = arg.substring(0, 4).toInt();
+            int mo  = arg.substring(5, 7).toInt();
+            int day = arg.substring(8, 10).toInt();
+            if (yr < 2020 || yr > 2099 || mo < 1 || mo > 12 || day < 1 || day > 31)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid date.")); // ❌
+                return;
+            }
+            // Compute UTC midnight Unix timestamp using the proleptic Gregorian formula.
+            // Days from 1970-01-01 to YYYY-MM-DD:
+            static const uint16_t kMD[12] = {0,31,59,90,120,151,181,212,243,273,304,334};
+            long y = yr; long m = mo; long d = day;
+            long leaps = (y - 1) / 4 - (y - 1) / 100 + (y - 1) / 400
+                       - (1969 / 4 - 1969 / 100 + 1969 / 400);
+            bool thisLeap = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+            long doy = kMD[m - 1] + d - 1 + (m > 2 && thisLeap ? 1 : 0);
+            long daysSince1970 = (y - 1970) * 365L + leaps + doy;
+            uint32_t dayStart = (uint32_t)(daysSince1970 * 86400L);
+            uint32_t dayEnd   = dayStart + 86400u;
+            String result = debugLog_->dumpBriefRange(dayStart, dayEnd);
+            result += String("(UTC)");
+            bot_.sendMessageTo(u.chatId, result);
             return;
         }
 

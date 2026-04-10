@@ -508,6 +508,63 @@ String SmsDebugLog::dumpBriefSince(uint32_t sinceUnix) const
     return out;
 }
 
+// RFC-0178: dumpBriefRange — entries whose unixTimestamp is in [since, until).
+String SmsDebugLog::dumpBriefRange(uint32_t sinceUnix, uint32_t untilUnix) const
+{
+    if (count_ == 0)
+        return String("(no SMS logged yet)");
+
+    String out;
+    size_t matched = 0;
+    size_t newest = (head_ + kMaxEntries - 1) % kMaxEntries;
+
+    for (size_t i = 0; i < count_; i++)
+    {
+        size_t idx = (newest + kMaxEntries - i) % kMaxEntries;
+        const Entry &e = entries_[idx];
+
+        if (e.unixTimestamp == 0 || e.unixTimestamp < sinceUnix || e.unixTimestamp >= untilUnix)
+            continue;
+
+        ++matched;
+
+        uint32_t t    = e.unixTimestamp;
+        uint32_t mn   = (t / 60) % 60;
+        uint32_t h    = (t / 3600) % 24;
+        uint32_t days = t / 86400;
+        uint32_t y = 1970;
+        while (true) {
+            bool leap = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+            uint32_t yd = leap ? 366u : 365u;
+            if (days < yd) break;
+            days -= yd; ++y;
+        }
+        static const uint8_t kML[12] = {31,28,31,30,31,30,31,31,30,31,30,31};
+        bool ly = (y % 4 == 0 && (y % 100 != 0 || y % 400 == 0));
+        uint32_t mo = 0;
+        for (mo = 0; mo < 12; mo++) {
+            uint32_t ml = kML[mo] + (mo == 1 && ly ? 1u : 0u);
+            if (days < ml) break; days -= ml;
+        }
+        char buf[18];
+        snprintf(buf, sizeof(buf), "%04u-%02u-%02u %02u:%02u",
+                 (unsigned)y, (unsigned)(mo + 1), (unsigned)(days + 1),
+                 (unsigned)h, (unsigned)mn);
+        out += String(buf);
+        out += String(" | ");
+        out += e.sender.substring(0, 12);
+        if (e.sender.length() > 12) out += "\xe2\x80\xa6";
+        out += String(" | ");
+        out += e.outcome;
+        if (e.bodyChars > 0) { out += String(" "); out += String((int)e.bodyChars); out += String("c"); }
+        out += String("\n");
+    }
+
+    if (matched == 0)
+        return String("(no entries for that date)");
+    return out;
+}
+
 // RFC-0171: Count forwarded entries whose unixTimestamp is in [sinceUnix, untilUnix).
 // Entries with unixTimestamp == 0 are excluded.
 size_t SmsDebugLog::countForwarded(uint32_t sinceUnix, uint32_t untilUnix) const
