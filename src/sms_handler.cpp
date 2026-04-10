@@ -109,7 +109,8 @@ bool SmsHandler::forwardSingle(const sms_codec::SmsPdu &pdu, int /*simIndex*/)
 }
 
 bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int simIndex,
-                                            std::vector<int> &deleteSlots)
+                                            std::vector<int> &deleteSlots,
+                                            bool *pWasDuplicate)
 {
     deleteSlots.clear();
     if (!pdu.isConcatenated || pdu.concatTotalParts == 0 || pdu.concatPartNumber == 0 ||
@@ -285,6 +286,20 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
     for (const auto &f : sorted)
         assembled += f.content;
 
+    // RFC-0061: Suppress exact duplicate assembled messages.
+    // checkDup reads only; recordDedup is called below after a successful
+    // bot send so failed attempts never populate the ring.
+    if (checkDup(group->sender, assembled))
+    {
+        Serial.println("Duplicate concat SMS suppressed, deleting SIM slots.");
+        for (const auto &f : sorted)
+            if (f.simIndex > 0) deleteSlots.push_back(f.simIndex);
+        totalBufferedBytes_ -= group->byteCount;
+        concatGroups_.erase(concatGroups_.begin() + (group - concatGroups_.data()));
+        if (pWasDuplicate) *pWasDuplicate = true;
+        return true;
+    }
+
     String formatted = formatBotMessage(group->sender, group->firstTimestamp, assembled);
 
     int32_t mid = bot_.sendMessageReturningId(formatted);
@@ -298,6 +313,7 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
     {
         replyTargets_->put(mid, group->sender);
     }
+    recordDedup(group->sender, assembled); // RFC-0061: record after success
     smsForwarded_++;
     if (onForwarded_) onForwarded_();
 
@@ -337,6 +353,44 @@ void SmsHandler::noteTelegramFailure()
             reboot_();
         }
     }
+}
+
+// ---------- RFC-0061: duplicate suppression ----------
+
+uint32_t SmsHandler::dedupHash(const String &sender, const String &body)
+{
+    uint32_t h = 5381u;
+    for (size_t i = 0; i < (size_t)sender.length(); i++)
+        h = h * 33u ^ (uint8_t)sender[i];
+    h = h * 33u ^ 0u; // null separator keeps (ab,c) distinct from (a,bc)
+    for (size_t i = 0; i < (size_t)body.length(); i++)
+        h = h * 33u ^ (uint8_t)body[i];
+    return h == 0u ? 1u : h; // 0 is reserved as "empty slot" sentinel
+}
+
+bool SmsHandler::checkDup(const String &sender, const String &body) const
+{
+    uint32_t h = dedupHash(sender, body);
+    unsigned long now = clock_();
+    for (size_t i = 0; i < kDedupSlots; i++)
+    {
+        if (dedupRing_[i].hash == h)
+        {
+            unsigned long age = now - dedupRing_[i].tsMs;
+            if (age < kDedupWindowMs)
+                return true; // duplicate within window
+        }
+    }
+    return false;
+}
+
+void SmsHandler::recordDedup(const String &sender, const String &body)
+{
+    uint32_t h = dedupHash(sender, body);
+    unsigned long now = clock_();
+    dedupRing_[dedupHead_].hash = h;
+    dedupRing_[dedupHead_].tsMs = now;
+    dedupHead_ = (dedupHead_ + 1) % kDedupSlots;
 }
 
 // ---------- CMGR PDU response parsing ----------
@@ -457,8 +511,21 @@ void SmsHandler::handleSmsIndex(int idx)
 
     if (!pdu.isConcatenated)
     {
+        // RFC-0061: Suppress exact duplicates of recently forwarded SMS.
+        // checkDup only reads the ring; recordDedup writes only on success
+        // so that failed sends never consume a dedup slot (retries must reach
+        // the bot).
+        if (checkDup(pdu.sender, pdu.content))
+        {
+            Serial.println("Duplicate SMS suppressed, deleting SIM slot.");
+            modem_.sendAT("+CMGD=" + String(idx));
+            modem_.waitResponseOk(1000UL);
+            if (debugLog_) { logEntry.outcome = "dup"; debugLog_->push(logEntry); }
+            return;
+        }
         if (forwardSingle(pdu, idx))
         {
+            recordDedup(pdu.sender, pdu.content); // RFC-0061
             consecutiveFailures_ = 0;
             Serial.println("Posted to Telegram OK, deleting SMS.");
             modem_.sendAT("+CMGD=" + String(idx));
@@ -482,11 +549,13 @@ void SmsHandler::handleSmsIndex(int idx)
     Serial.println((int)pdu.concatTotalParts);
 
     std::vector<int> deleteSlots;
-    bool posted = insertFragmentAndMaybePost(pdu, idx, deleteSlots);
+    bool wasDuplicate = false;
+    bool posted = insertFragmentAndMaybePost(pdu, idx, deleteSlots, &wasDuplicate);
     if (posted)
     {
         consecutiveFailures_ = 0;
-        Serial.print("Assembled concat message posted OK, deleting ");
+        Serial.print(wasDuplicate ? "Duplicate concat suppressed, deleting "
+                                  : "Assembled concat message posted OK, deleting ");
         Serial.print((int)deleteSlots.size());
         Serial.println(" SIM slot(s).");
         for (int slot : deleteSlots)
@@ -494,7 +563,10 @@ void SmsHandler::handleSmsIndex(int idx)
             modem_.sendAT("+CMGD=" + String(slot));
             modem_.waitResponseOk(1000UL);
         }
-        if (debugLog_) { logEntry.outcome = "assembled+fwd OK"; debugLog_->push(logEntry); }
+        if (debugLog_) {
+            logEntry.outcome = wasDuplicate ? "dup" : "assembled+fwd OK";
+            debugLog_->push(logEntry);
+        }
         return;
     }
 

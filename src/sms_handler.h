@@ -57,6 +57,11 @@ public:
     static constexpr size_t MAX_BYTES_TOTAL = 8 * 1024;
     static constexpr unsigned long CONCAT_TTL_MS = 24UL * 60UL * 60UL * 1000UL;
 
+    // RFC-0061: Duplicate-suppression window and ring size. Public so tests
+    // can reference them without hard-coding magic numbers.
+    static constexpr unsigned long kDedupWindowMs = 30000UL; // 30 seconds
+    static constexpr size_t kDedupSlots = 8;
+
     // Clock defaults to `millis()` if not supplied.
     SmsHandler(IModem &modem, IBotClient &bot, RebootFn reboot, ClockFn clock = nullptr);
 
@@ -171,8 +176,13 @@ private:
     // later retry can try again (after the global failure counter
     // hits the threshold, the ESP reboots and we start fresh from
     // the SIM).
+    //
+    // RFC-0061: If `pWasDuplicate` is non-null, it is set to true when
+    // the assembled message was suppressed as a duplicate (still returns
+    // true so the caller deletes the SIM slots).
     bool insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int simIndex,
-                                    std::vector<int> &deleteSlots);
+                                    std::vector<int> &deleteSlots,
+                                    bool *pWasDuplicate = nullptr);
 
     // Drop expired / overflowed groups. LRU by lastSeenMs.
     void evictExpiredLocked(unsigned long now);
@@ -183,6 +193,25 @@ private:
 
     // Bump a failure counter and potentially trigger a reboot.
     void noteTelegramFailure();
+
+    // RFC-0061: djb2 hash of (sender + '\0' + body); never returns 0.
+    static uint32_t dedupHash(const String &sender, const String &body);
+
+    // RFC-0061: Return true if (sender, body) was successfully forwarded
+    // within kDedupWindowMs (check only, does NOT record).
+    bool checkDup(const String &sender, const String &body) const;
+
+    // RFC-0061: Record that (sender, body) was just successfully forwarded.
+    // Call this AFTER a successful Telegram send so that failed attempts
+    // never populate the ring (retries must still reach the bot).
+    void recordDedup(const String &sender, const String &body);
+
+    // RFC-0061: Dedup ring buffer. Each slot stores the djb2 hash and the
+    // millis()-since-boot timestamp at which the message was forwarded.
+    // Hash=0 is the "empty slot" sentinel (dedupHash guarantees non-zero).
+    struct DedupEntry { uint32_t hash = 0; unsigned long tsMs = 0; };
+    DedupEntry dedupRing_[kDedupSlots] = {};
+    size_t dedupHead_ = 0;
 
     IModem &modem_;
     IBotClient &bot_;

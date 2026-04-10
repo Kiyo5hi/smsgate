@@ -33,6 +33,17 @@ static String makeCmgrResponse()
     return wrapInCmgrResponse(buildPduHex(opts));
 }
 
+// Variant with a different body so two calls to handleSmsIndex don't
+// trigger RFC-0061 duplicate suppression.
+static String makeCmgrResponseWithBody(const char *body)
+{
+    PduBuildOpts opts;
+    opts.sender = "13800138000";
+    opts.dcs = 0x00;
+    opts.bodyBytes = gsm7FromAscii(body);
+    return wrapInCmgrResponse(buildPduHex(opts));
+}
+
 // ---------- success path ----------
 
 void test_handleSmsIndex_success_deletes_sms()
@@ -198,9 +209,9 @@ void test_sweepExistingSms_drains_multiple_slots()
         "OK\r\n");
 
     modem.queueOk(cmglData);
-    modem.queueOk(makeCmgrResponse());
+    modem.queueOk(makeCmgrResponseWithBody("SlotA")); // different bodies: RFC-0061
     modem.queueOkEmpty();
-    modem.queueOk(makeCmgrResponse());
+    modem.queueOk(makeCmgrResponseWithBody("SlotB"));
     modem.queueOkEmpty();
 
     handler.sweepExistingSms();
@@ -235,8 +246,8 @@ void test_smsForwarded_increments_on_success()
     TEST_ASSERT_EQUAL(1, handler.smsForwarded());
     TEST_ASSERT_EQUAL(0, handler.smsFailed());
 
-    // Second success increments again.
-    modem.queueOk(makeCmgrResponse());
+    // Second success increments again (different body to avoid RFC-0061 dedup).
+    modem.queueOk(makeCmgrResponseWithBody("World"));
     modem.queueOkEmpty();
     handler.handleSmsIndex(2);
 
@@ -282,18 +293,18 @@ void test_smsFailed_and_smsForwarded_independent()
     int rebootCalls = 0;
     SmsHandler handler(modem, bot, [&]() { rebootCalls++; });
 
-    // One success.
-    modem.queueOk(makeCmgrResponse());
+    // One success (different bodies per RFC-0061: dedup checks sender+body).
+    modem.queueOk(makeCmgrResponseWithBody("Msg1"));
     modem.queueOkEmpty();
     handler.handleSmsIndex(1);
 
     // One failure.
     bot.queueResult(false);
-    modem.queueOk(makeCmgrResponse());
+    modem.queueOk(makeCmgrResponseWithBody("Msg2"));
     handler.handleSmsIndex(2);
 
     // Another success.
-    modem.queueOk(makeCmgrResponse());
+    modem.queueOk(makeCmgrResponseWithBody("Msg3"));
     modem.queueOkEmpty();
     handler.handleSmsIndex(3);
 
@@ -442,6 +453,95 @@ void test_runtime_blocked_concat_fragment_not_buffered_sim_slot_deleted()
     TEST_ASSERT_EQUAL(0, rebootCalls);
 }
 
+// ---------- RFC-0061: duplicate suppression ----------
+
+void test_dedup_single_suppresses_duplicate()
+{
+    unsigned long now = 0;
+    auto clock = [&now]() -> unsigned long { return now; };
+    FakeModem modem;
+    FakeBotClient bot;
+    SmsHandler handler(modem, bot, [&]() {}, clock);
+
+    // First occurrence: forward normally.
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty(); // CMGD
+    handler.handleSmsIndex(1);
+    TEST_ASSERT_EQUAL(1, handler.smsForwarded());
+    TEST_ASSERT_EQUAL(1, (int)bot.callCount());
+
+    // Second occurrence within the window.
+    now += SmsHandler::kDedupWindowMs / 2;
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty(); // CMGD
+    handler.handleSmsIndex(2);
+
+    // Bot must NOT have been called again.
+    TEST_ASSERT_EQUAL(1, handler.smsForwarded()); // still 1
+    TEST_ASSERT_EQUAL(1, (int)bot.callCount());   // still 1
+    // Slot must still be deleted (not kept on SIM).
+    const auto &sent = modem.sentCommands();
+    // Commands: CMGR=1, CMGD=1, CMGR=2, CMGD=2
+    TEST_ASSERT_EQUAL(4, (int)sent.size());
+    TEST_ASSERT_EQUAL_STRING("+CMGD=2", sent[3].c_str());
+    // Failure counter must NOT be bumped.
+    TEST_ASSERT_EQUAL(0, handler.consecutiveFailures());
+}
+
+void test_dedup_single_allows_after_window_expires()
+{
+    unsigned long now = 0;
+    auto clock = [&now]() -> unsigned long { return now; };
+    FakeModem modem;
+    FakeBotClient bot;
+    SmsHandler handler(modem, bot, [&]() {}, clock);
+
+    // First occurrence.
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty();
+    handler.handleSmsIndex(1);
+    TEST_ASSERT_EQUAL(1, handler.smsForwarded());
+
+    // Advance past the dedup window.
+    now += SmsHandler::kDedupWindowMs + 1;
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty();
+    handler.handleSmsIndex(2);
+
+    // Second occurrence should be forwarded (window expired).
+    TEST_ASSERT_EQUAL(2, handler.smsForwarded());
+    TEST_ASSERT_EQUAL(2, (int)bot.callCount());
+}
+
+void test_dedup_different_sender_not_suppressed()
+{
+    unsigned long now = 0;
+    auto clock = [&now]() -> unsigned long { return now; };
+    FakeModem modem;
+    FakeBotClient bot;
+    SmsHandler handler(modem, bot, [&]() {}, clock);
+
+    // Build a response with different sender but same body ("Hello").
+    PduBuildOpts opts;
+    opts.sender = "19991112222"; // different sender
+    opts.dcs = 0x00;
+    opts.bodyBytes = gsm7FromAscii("Hello");
+    String otherSenderCmgr = wrapInCmgrResponse(buildPduHex(opts));
+
+    // First SMS from +13800138000 body="Hello".
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty();
+    handler.handleSmsIndex(1);
+
+    // Second SMS from different sender, same body — should NOT be suppressed.
+    modem.queueOk(otherSenderCmgr);
+    modem.queueOkEmpty();
+    handler.handleSmsIndex(2);
+
+    TEST_ASSERT_EQUAL(2, handler.smsForwarded());
+    TEST_ASSERT_EQUAL(2, (int)bot.callCount());
+}
+
 // ---------- Unity plumbing ----------
 
 void run_sms_handler_tests()
@@ -462,4 +562,8 @@ void run_sms_handler_tests()
     // RFC-0021: runtime block list
     RUN_TEST(test_runtime_blocked_single_part_not_forwarded_sim_slot_deleted);
     RUN_TEST(test_runtime_blocked_concat_fragment_not_buffered_sim_slot_deleted);
+    // RFC-0061: duplicate suppression
+    RUN_TEST(test_dedup_single_suppresses_duplicate);
+    RUN_TEST(test_dedup_single_allows_after_window_expires);
+    RUN_TEST(test_dedup_different_sender_not_suppressed);
 }
