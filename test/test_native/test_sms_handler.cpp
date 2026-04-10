@@ -584,6 +584,30 @@ void test_extra_recipients_receive_forwarded_sms()
     TEST_ASSERT_EQUAL(3, (int)rtm.occupiedSlots());
 }
 
+// RFC-0172: fwdTag prepended to forwarded messages
+void test_fwdTag_prepended_to_forwarded_message()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+    SmsHandler handler(modem, bot, [&]() {});
+    handler.setReplyTargetMap(&rtm);
+    handler.setFwdTag(String("[Home]"));
+
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty(); // CMGD
+
+    handler.handleSmsIndex(1);
+
+    TEST_ASSERT_EQUAL(1, handler.smsForwarded());
+    const auto &msgs = bot.sentMessagesWithTarget();
+    TEST_ASSERT_TRUE(msgs.size() > 0);
+    // The message should start with "[Home] "
+    TEST_ASSERT_TRUE(msgs[0].text.startsWith("[Home] "));
+}
+
 // ---------- Unity plumbing ----------
 
 void run_sms_handler_tests()
@@ -610,4 +634,6 @@ void run_sms_handler_tests()
     RUN_TEST(test_dedup_different_sender_not_suppressed);
     // RFC-0070: multi-user forwarding
     RUN_TEST(test_extra_recipients_receive_forwarded_sms);
+    // RFC-0172: forward tag
+    RUN_TEST(test_fwdTag_prepended_to_forwarded_message);
 }

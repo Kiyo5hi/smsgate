@@ -159,6 +159,12 @@ public:
     }
     int gmtOffsetHours() const { return gmtOffsetHours_; }
 
+    // RFC-0172: Custom tag prepended to every forwarded SMS message.
+    // Empty by default. When set to e.g. "[Home]", messages look like:
+    // "[Home] +86 138-0000-0000 | 2024-01-15T10:30:45+08:00\n-----\nbody"
+    void setFwdTag(const String &tag) { fwdTag_ = tag; }
+    const String &fwdTag() const { return fwdTag_; }
+
     // RFC-0144: Set the dedup window. 0 = disable dedup entirely.
     void setDedupWindowMs(unsigned long ms) { dedupWindowMs_ = ms; }
     unsigned long dedupWindowMs() const { return dedupWindowMs_; }
@@ -317,7 +323,8 @@ private:
     int runtimeListCount_ = 0;
     bool forwardingEnabled_ = true;                   // RFC-0153
     bool blockingEnabled_   = true;                   // RFC-0162
-    int  gmtOffsetHours_    = 8;                      // RFC-0169
+    int    gmtOffsetHours_    = 8;                    // RFC-0169
+    String fwdTag_;                                   // RFC-0172 (default empty)
     unsigned long concatTtlMs_   = CONCAT_TTL_MS;    // RFC-0142
     unsigned long dedupWindowMs_ = kDedupWindowMs;   // RFC-0144
     int maxConsecutiveFailures_ = MAX_CONSECUTIVE_FAILURES; // RFC-0138

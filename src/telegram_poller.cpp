@@ -156,6 +156,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/setcalldedup <s> \xe2\x80\x94 Call dedup cooldown window in seconds (1\xe2\x80\x9360)\n";
             help += "/setunknowndeadline <ms> \xe2\x80\x94 RING-without-CLIP deadline in ms (500\xe2\x80\x9310000)\n";
             help += "/setgmtoffset <h> \xe2\x80\x94 Timezone for SMS timestamps (-12 to +14, default +8)\n";
+            help += "/setfwdtag <text> \xe2\x80\x94 Custom prefix tag on forwarded SMS (max 20 chars)\n";
+            help += "/clearfwdtag \xe2\x80\x94 Remove custom forward prefix tag\n";
             help += "/settings \xe2\x80\x94 Show all runtime-configurable parameters\n";
             help += "/nvsinfo \xe2\x80\x94 NVS flash storage usage (used/free/total entries)\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
@@ -1624,6 +1626,47 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 GMT offset set to UTC") // ✅
                 + sign + String(hours) + String("."));
+            return;
+        }
+
+        // RFC-0172: /setfwdtag <text> — set a custom prefix tag on forwarded SMS.
+        if (lower.startsWith("/setfwdtag"))
+        {
+            if (!fwdTagFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setfwdtag not configured)"));
+                return;
+            }
+            String tag = extractArg(u.text, "/setfwdtag ");
+            if (tag.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setfwdtag <text>\nMax 20 chars.\nExample: /setfwdtag [Home]"));
+                return;
+            }
+            if ((int)tag.length() > 20)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Tag too long (max 20 chars).")); // ❌
+                return;
+            }
+            fwdTagFn_(tag);
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Forward tag set to \"") + tag + String("\"")); // ✅
+            return;
+        }
+
+        // RFC-0172: /clearfwdtag — remove the custom forward prefix tag.
+        if (lower == "/clearfwdtag")
+        {
+            if (!fwdTagFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setfwdtag not configured)"));
+                return;
+            }
+            fwdTagFn_(String());
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Forward tag cleared.")); // ✅
             return;
         }
 

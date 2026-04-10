@@ -20,12 +20,22 @@ SmsHandler::SmsHandler(IModem &modem, IBotClient &bot, RebootFn reboot, ClockFn 
 
 // ---------- helpers ----------
 
-static String formatBotMessage(const String &sender, const String &timestamp, const String &body, int gmtOffsetHours = 8)
+static String formatBotMessage(const String &sender, const String &timestamp,
+                               const String &body,
+                               int gmtOffsetHours = 8,
+                               const String &fwdTag = String()) // RFC-0172
 {
-    return sms_codec::humanReadablePhoneNumber(sender) + " | " +
-           sms_codec::timestampToRFC3339(timestamp, gmtOffsetHours) + // RFC-0169
-           "\n-----\n" +
-           body;
+    String out;
+    if (fwdTag.length() > 0)
+    {
+        out += fwdTag;
+        out += " ";
+    }
+    out += sms_codec::humanReadablePhoneNumber(sender) + " | " +
+           sms_codec::timestampToRFC3339(timestamp, gmtOffsetHours); // RFC-0169
+    out += "\n-----\n";
+    out += body;
+    return out;
 }
 
 SmsHandler::ConcatGroup *SmsHandler::findGroup(const String &sender, uint16_t ref)
@@ -90,7 +100,7 @@ void SmsHandler::evictLruUntilUnderCaps(size_t reservedExtraBytes)
 
 bool SmsHandler::forwardSingle(const sms_codec::SmsPdu &pdu, int /*simIndex*/)
 {
-    String formatted = formatBotMessage(pdu.sender, pdu.timestamp, pdu.content, gmtOffsetHours_); // RFC-0169
+    String formatted = formatBotMessage(pdu.sender, pdu.timestamp, pdu.content, gmtOffsetHours_, fwdTag_); // RFC-0169/0172
     int32_t mid = bot_.sendMessageReturningId(formatted);
     if (mid <= 0)
     {
@@ -309,7 +319,7 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
         return true;
     }
 
-    String formatted = formatBotMessage(group->sender, group->firstTimestamp, assembled, gmtOffsetHours_); // RFC-0169
+    String formatted = formatBotMessage(group->sender, group->firstTimestamp, assembled, gmtOffsetHours_, fwdTag_); // RFC-0169/0172
 
     int32_t mid = bot_.sendMessageReturningId(formatted);
     if (mid <= 0)

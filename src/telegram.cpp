@@ -573,6 +573,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "smsrate";
         c["description"] = "SMS forwarding rate (last 1h and 24h from debug log)";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setfwdtag";
+        c["description"] = "Set custom prefix tag on forwarded SMS (max 20 chars)";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "clearfwdtag";
+        c["description"] = "Remove custom forward prefix tag";
+    }
     String payload;
     serializeJson(doc, payload);
 

@@ -5951,6 +5951,31 @@ void test_TelegramPoller_smsrate_replies_with_rate_info()
     TEST_ASSERT_TRUE(msgs.back().indexOf("24h") >= 0);
 }
 
+// RFC-0172: /setfwdtag command
+void test_TelegramPoller_setfwdtag_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    String captured;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setFwdTagFn([&captured](const String &tag) { captured = tag; });
+
+    bot.queueUpdateBatch({makeUpdate(1094, kAllowedFromId, 0, "/setfwdtag [Home]", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1094, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL_STRING("[Home]", captured.c_str());
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -6209,6 +6234,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_loginfo_shows_count_and_capacity);
     // RFC-0171: /smsrate command
     RUN_TEST(test_TelegramPoller_smsrate_replies_with_rate_info);
+    // RFC-0172: /setfwdtag command
+    RUN_TEST(test_TelegramPoller_setfwdtag_calls_fn);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

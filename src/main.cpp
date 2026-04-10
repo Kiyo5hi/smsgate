@@ -1403,7 +1403,7 @@ void setup()
         telegramPoller->setCallUnknownDeadlineFn([&callHandler](uint32_t ms) { // RFC-0166
             callHandler.setUnknownDeadlineMs(ms);
         });
-        telegramPoller->setSettingsFn([&smsHandler, &smsSender, &callHandler]() -> String { // RFC-0167,0169
+        telegramPoller->setSettingsFn([&smsHandler, &smsSender, &callHandler]() -> String { // RFC-0167,0169,0172
             String s;
             s += "\xe2\x9a\x99\xef\xb8\x8f Runtime settings:\n"; // ⚙️
             s += "  SMS forwarding: ";
@@ -1426,11 +1426,16 @@ void setup()
             s += "  SMS timestamp GMT offset: UTC";
             int gmt = smsHandler.gmtOffsetHours();
             if (gmt >= 0) s += "+";
-            s += String(gmt);
+            s += String(gmt); s += "\n";
+            s += "  Forward tag: ";
+            s += (smsHandler.fwdTag().length() > 0 ? ("\"" + smsHandler.fwdTag() + "\"") : "(none)");
             return s;
         });
         telegramPoller->setGmtOffsetFn([&smsHandler](int h) { // RFC-0169
             smsHandler.setGmtOffsetHours(h);
+        });
+        telegramPoller->setFwdTagFn([&smsHandler](const String &tag) { // RFC-0172
+            smsHandler.setFwdTag(tag);
         });
         telegramPoller->setNvsInfoFn([]() -> String { // RFC-0168
             nvs_stats_t stats;

@@ -344,6 +344,10 @@ public:
     // calls this fn with the offset (-12 to +14) for SMS timestamp formatting.
     void setGmtOffsetFn(std::function<void(int)> fn) { gmtOffsetFn_ = std::move(fn); }
 
+    // RFC-0172: Optional forward tag setter fn. When set, /setfwdtag <text>
+    // and /clearfwdtag call this fn with the new tag string (empty = clear).
+    void setFwdTagFn(std::function<void(const String &)> fn) { fwdTagFn_ = std::move(fn); }
+
     // RFC-0146: Optional SMS forward fn. When set, /forwardsim <idx> calls
     // this fn with the SIM index and replies success/failure.
     void setSmsForwardFn(std::function<bool(int)> fn) { smsForwardFn_ = std::move(fn); }
@@ -462,7 +466,8 @@ private:
     std::function<void(uint32_t)> callUnknownDeadlineFn_;    // RFC-0166
     std::function<String()> settingsFn_;                     // RFC-0167
     std::function<String()> nvsInfoFn_;                      // RFC-0168
-    std::function<void(int)> gmtOffsetFn_;                   // RFC-0169
+    std::function<void(int)> gmtOffsetFn_;                          // RFC-0169
+    std::function<void(const String &)> fwdTagFn_;                  // RFC-0172
     std::function<bool(int)> smsForwardFn_;        // RFC-0146
     uint32_t pollIntervalMs_ = kPollIntervalMs;    // RFC-0147
     std::function<void(uint32_t)> dedupWindowFn_;  // RFC-0144
