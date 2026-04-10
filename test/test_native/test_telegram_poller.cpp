@@ -6995,6 +6995,46 @@ void test_TelegramPoller_schedqueue_shows_abs_time_when_ntpsynced()
     TEST_ASSERT_TRUE(sawUtc);
 }
 
+// RFC-0203: tick() sends a Telegram confirmation when a scheduled slot fires.
+void test_TelegramPoller_tick_sends_confirmation_on_sched_fire()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // Schedule a 1-minute SMS.
+    bot.queueUpdateBatch({makeUpdate(9010, kAllowedFromId, 0,
+        "/schedulesend 1 +7777 Delivery test body", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(9010, poller.lastUpdateId());
+
+    // Advance past the delay to fire the slot.
+    bot.clearMessages();
+    clk.nowMs += 60000UL;
+    poller.tick();
+
+    // Slot should be freed and confirmation sent.
+    TEST_ASSERT_EQUAL(1, sender.queueSize());
+    bool sawConfirm = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("+7777") >= 0 && m.indexOf("sent") >= 0)
+        { sawConfirm = true; break; }
+    TEST_ASSERT_TRUE(sawConfirm);
+}
+
 // RFC-0200: persistSchedFn_ is called when a slot fires in tick().
 void test_TelegramPoller_persistSchedFn_called_on_tick_fire()
 {
@@ -7387,6 +7427,8 @@ void run_telegram_poller_tests()
     // RFC-0202: absolute time in scheduled SMS commands
     RUN_TEST(test_TelegramPoller_schedulesend_shows_abs_time_when_ntpsynced);
     RUN_TEST(test_TelegramPoller_schedqueue_shows_abs_time_when_ntpsynced);
+    // RFC-0203: delivery confirmation on scheduled fire
+    RUN_TEST(test_TelegramPoller_tick_sends_confirmation_on_sched_fire);
     // RFC-0200: persist callback + getSchedQueue/setSchedQueue
     RUN_TEST(test_TelegramPoller_persistSchedFn_called_on_tick_fire);
     RUN_TEST(test_TelegramPoller_setSchedQueue_round_trip);

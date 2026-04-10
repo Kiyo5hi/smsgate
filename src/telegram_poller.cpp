@@ -2966,6 +2966,11 @@ void TelegramPoller::tick()
             // retry queue is full — leave the slot and try again next tick.
             if (smsSender_.enqueue(slot.phone, slot.body))
             {
+                // RFC-0203: Notify the admin chat that the scheduled SMS was sent.
+                String preview = slot.body;
+                if (preview.length() > 60) preview = preview.substring(0, 60) + String("...");
+                bot_.sendMessage(String("\xe2\x9c\x85 Scheduled SMS to ") // ✅
+                                 + slot.phone + String(" sent: ") + preview);
                 slot.sendAtMs = 0; // free the slot
                 schedFired = true;
             }
