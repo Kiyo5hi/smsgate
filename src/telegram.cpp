@@ -418,6 +418,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "simread";
         c["description"] = "Read a SIM slot: /simread <idx>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "modeminfo";
+        c["description"] = "Show IMEI, model, and firmware revision";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "setconcatttl";
+        c["description"] = "Set concat fragment TTL: /setconcatttl <seconds>";
+    }
     String payload;
     serializeJson(doc, payload);
 

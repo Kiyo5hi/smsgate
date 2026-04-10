@@ -45,7 +45,7 @@ void SmsHandler::evictExpiredLocked(unsigned long now)
     for (auto it = concatGroups_.begin(); it != concatGroups_.end();)
     {
         unsigned long age = now - it->firstSeenMs;
-        if (age > CONCAT_TTL_MS)
+        if (age > concatTtlMs_)
         {
             Serial.print("SMS concat TTL expiry, dropping ref=");
             Serial.println(it->refNumber);

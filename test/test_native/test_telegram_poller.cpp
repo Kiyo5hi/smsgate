@@ -4106,6 +4106,122 @@ void test_TelegramPoller_send_duplicate_gets_already_queued_error()
     TEST_ASSERT_TRUE(sawError);
 }
 
+// RFC-0142: /setconcatttl <seconds> calls fn.
+void test_TelegramPoller_setconcatttl_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    uint32_t captured = 0;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setConcatTtlFn([&captured](uint32_t secs) { captured = secs; });
+
+    bot.queueUpdateBatch({makeUpdate(1010, kAllowedFromId, 0, "/setconcatttl 7200", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1010, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(7200u, captured);
+    bool sawOk = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("7200")) >= 0) { sawOk = true; break; }
+    TEST_ASSERT_TRUE(sawOk);
+}
+
+// RFC-0142: /setconcatttl 59 → validation error (< 60).
+void test_TelegramPoller_setconcatttl_too_small_sends_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setConcatTtlFn([&fnCalled](uint32_t) { fnCalled = true; });
+
+    bot.queueUpdateBatch({makeUpdate(1011, kAllowedFromId, 0, "/setconcatttl 59", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1011, poller.lastUpdateId());
+    TEST_ASSERT_FALSE(fnCalled);
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("Invalid")) >= 0) { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+}
+
+// RFC-0143: /modeminfo calls fn and forwards result.
+void test_TelegramPoller_modeminfo_calls_fn()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    bool fnCalled = false;
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setModemInfoFn([&fnCalled]() -> String {
+        fnCalled = true;
+        return String("IMEI: 123456789012345\nModel: A7670G\nFW: 1.2.3");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(1012, kAllowedFromId, 0, "/modeminfo", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1012, poller.lastUpdateId());
+    TEST_ASSERT_TRUE(fnCalled);
+    bool sawImei = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("IMEI")) >= 0) { sawImei = true; break; }
+    TEST_ASSERT_TRUE(sawImei);
+}
+
+// RFC-0143: /modeminfo not configured → placeholder.
+void test_TelegramPoller_modeminfo_not_configured_replies_placeholder()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    bot.queueUpdateBatch({makeUpdate(1013, kAllowedFromId, 0, "/modeminfo", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1013, poller.lastUpdateId());
+    bool sawPlaceholder = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf(String("not configured")) >= 0) { sawPlaceholder = true; break; }
+    TEST_ASSERT_TRUE(sawPlaceholder);
+}
+
 // RFC-0140: /simlist calls fn and forwards result.
 void test_TelegramPoller_simlist_calls_fn()
 {
@@ -4563,6 +4679,12 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_setinterval_calls_fn);
     RUN_TEST(test_TelegramPoller_setinterval_zero_disables);
     RUN_TEST(test_TelegramPoller_setinterval_too_large_sends_error);
+    // RFC-0142: /setconcatttl command
+    RUN_TEST(test_TelegramPoller_setconcatttl_calls_fn);
+    RUN_TEST(test_TelegramPoller_setconcatttl_too_small_sends_error);
+    // RFC-0143: /modeminfo command
+    RUN_TEST(test_TelegramPoller_modeminfo_calls_fn);
+    RUN_TEST(test_TelegramPoller_modeminfo_not_configured_replies_placeholder);
     // RFC-0140: /simlist command
     RUN_TEST(test_TelegramPoller_simlist_calls_fn);
     RUN_TEST(test_TelegramPoller_simlist_not_configured_replies_placeholder);

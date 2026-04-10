@@ -1316,6 +1316,16 @@ void setup()
             s_heartbeatIntervalSec = secs;
             realPersist.saveBlob("hb_interval", &secs, sizeof(secs));
         });
+        telegramPoller->setConcatTtlFn([&smsHandler](uint32_t secs) { // RFC-0142
+            smsHandler.setConcatTtlMs((unsigned long)secs * 1000UL);
+        });
+        telegramPoller->setModemInfoFn([]() -> String { // RFC-0143
+            String info = String("\xF0\x9F\x93\xB1 Modem Info\n"); // 📱
+            info += String("IMEI: ") + String(modem.getIMEI()) + String("\n");
+            info += String("Model: ") + String(modem.getModemName()) + String("\n");
+            info += String("FW: ") + String(modem.getModemInfo());
+            return info;
+        });
         telegramPoller->setMaxFailFn([&smsHandler](int n) { // RFC-0138
             smsHandler.setMaxConsecutiveFailures(n);
         });

@@ -1273,6 +1273,46 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0143: /modeminfo — show IMEI, model, firmware revision.
+        if (lower == "/modeminfo")
+        {
+            if (modemInfoFn_)
+                bot_.sendMessageTo(u.chatId, modemInfoFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(modem info not configured)"));
+            return;
+        }
+
+        // RFC-0142: /setconcatttl <seconds> — change concat fragment TTL at runtime.
+        if (lower == "/setconcatttl" || lower.startsWith("/setconcatttl "))
+        {
+            if (!concatTtlFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(setconcatttl not configured)"));
+                return;
+            }
+            String arg = extractArg(lower, "/setconcatttl ");
+            if (arg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /setconcatttl <seconds>\n"
+                           "Range: 60 (1 min) \xe2\x80\x93 604800 (7 days)")); // –
+                return;
+            }
+            long val = arg.toInt();
+            if (val < 60 || val > 604800)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Invalid TTL (60\xe2\x80\x93 604800 seconds).")); // ❌
+                return;
+            }
+            concatTtlFn_((uint32_t)val);
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Concat TTL set to ") + String((int)val) // ✅
+                + String(" seconds."));
+            return;
+        }
+
         // RFC-0137: /setinterval <seconds> — change heartbeat interval at runtime.
         if (lower == "/setinterval" || lower.startsWith("/setinterval "))
         {

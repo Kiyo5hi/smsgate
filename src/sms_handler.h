@@ -134,6 +134,14 @@ public:
     // Returns the count of SIM indices dispatched to handleSmsIndex.
     int sweepExistingSms();
 
+    // RFC-0142: Set the concat fragment TTL. Range: 60s–604800s (7 days).
+    // After change, the next TTL sweep uses the new value automatically.
+    void setConcatTtlMs(unsigned long ms)
+    {
+        concatTtlMs_ = ms;
+    }
+    unsigned long concatTtlMs() const { return concatTtlMs_; }
+
     // RFC-0138: Set the consecutive-failure reboot threshold. 0 = never
     // reboot on failures (useful for debugging). Max 99.
     void setMaxConsecutiveFailures(int n)
@@ -269,6 +277,7 @@ private:
     int blockListCount_ = 0;
     const char (*runtimeList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;
     int runtimeListCount_ = 0;
+    unsigned long concatTtlMs_ = CONCAT_TTL_MS; // RFC-0142
     int maxConsecutiveFailures_ = MAX_CONSECUTIVE_FAILURES; // RFC-0138
     int consecutiveFailures_ = 0;
     int smsForwarded_ = 0;
