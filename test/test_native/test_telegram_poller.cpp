@@ -6560,6 +6560,44 @@ void test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot()
     TEST_ASSERT_TRUE(rebootCalled);
 }
 
+// RFC-0193: /sendnow — fires all scheduled SMS immediately.
+void test_TelegramPoller_sendnow_fires_scheduled()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs = 1000; // first tick processed
+
+    // Schedule a future SMS.
+    bot.queueUpdateBatch({makeUpdate(3001, kAllowedFromId, 0, "/schedulesend 60 +1234 Hi", kAllowedFromId)});
+    poller.tick();
+    TEST_ASSERT_EQUAL(3001, poller.lastUpdateId());
+
+    // Advance time past the poll interval (3000ms) but not far enough to fire the scheduled slot.
+    clk.nowMs += 4000;
+    bot.clearMessages();
+
+    // /sendnow should trigger it.
+    bot.queueUpdateBatch({makeUpdate(3002, kAllowedFromId, 0, "/sendnow", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(3002, poller.lastUpdateId());
+    bool sawTriggered = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Triggering") >= 0 || m.indexOf("1") >= 0) { sawTriggered = true; break; }
+    TEST_ASSERT_TRUE(sawTriggered);
+}
+
 // RFC-0192: /pausefwd 30 → calls pauseFwdFn with 30*60000ms, reply contains "30".
 void test_TelegramPoller_pausefwd_calls_fn()
 {
@@ -7040,4 +7078,6 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_testpdu_no_arg_sends_usage);
     // RFC-0192: /pausefwd command
     RUN_TEST(test_TelegramPoller_pausefwd_calls_fn);
+    // RFC-0193: /sendnow command
+    RUN_TEST(test_TelegramPoller_sendnow_fires_scheduled);
 }

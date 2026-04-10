@@ -2607,6 +2607,29 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             return;
         }
 
+        // RFC-0193: /sendnow — immediately fire all scheduled SMS.
+        if (lower == "/sendnow")
+        {
+            int fired = 0;
+            uint32_t nowMs3 = clock_ ? clock_() : 0;
+            for (auto &slot : scheduledQueue_)
+            {
+                if (slot.sendAtMs != 0)
+                {
+                    slot.sendAtMs = nowMs3; // fire on next tick
+                    fired++;
+                }
+            }
+            if (fired == 0)
+                bot_.sendMessageTo(u.chatId, String("(no scheduled SMS to send)"));
+            else
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9c\x85 Triggering ") // ✅
+                    + String(fired)
+                    + String(fired == 1 ? " scheduled SMS." : " scheduled SMS."));
+            return;
+        }
+
         // RFC-0192: /pausefwd <minutes> — temporarily pause SMS forwarding.
         if (lower == "/pausefwd" || lower.startsWith("/pausefwd "))
         {
