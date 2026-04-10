@@ -1040,6 +1040,18 @@ void setup()
                 smsHandler.setFwdTag(String(fwdTagBuf));
         }
 
+        // RFC-0183: Restore forwarding and block-mode flags from NVS.
+        {
+            uint8_t v = 1;
+            if (realPersist.loadBlob("fwd_enabled", &v, sizeof(v)) == sizeof(v))
+                smsHandler.setForwardingEnabled(v != 0);
+        }
+        {
+            uint8_t v = 1;
+            if (realPersist.loadBlob("blk_enabled", &v, sizeof(v)) == sizeof(v))
+                smsHandler.setBlockingEnabled(v != 0);
+        }
+
         // RFC-0150: Load auto-reply text from NVS.
         {
             char buf[161] = {};
@@ -1097,8 +1109,10 @@ void setup()
             s_lifetimeFwdCount++;                                                // RFC-0060: persist
             realPersist.saveBlob("lifetimefwd", &s_lifetimeFwdCount, sizeof(s_lifetimeFwdCount));
         });
-        telegramPoller->setForwardingEnabledFn([&smsHandler](bool enabled) { // RFC-0153
+        telegramPoller->setForwardingEnabledFn([&smsHandler](bool enabled) { // RFC-0153/0183
             smsHandler.setForwardingEnabled(enabled);
+            uint8_t v = enabled ? 1 : 0;
+            realPersist.saveBlob("fwd_enabled", &v, sizeof(v));
         });
         smsHandler.setOnSenderFn([&smsSender](const String &phone) { // RFC-0150
             if (s_autoReplyText.length() > 0)
@@ -1411,8 +1425,10 @@ void setup()
         telegramPoller->setMaxPartsFn([&smsSender](int n) { // RFC-0160
             smsSender.setMaxParts(n);
         });
-        telegramPoller->setBlockingEnabledFn([&smsHandler](bool enable) { // RFC-0162
+        telegramPoller->setBlockingEnabledFn([&smsHandler](bool enable) { // RFC-0162/0183
             smsHandler.setBlockingEnabled(enable);
+            uint8_t v = enable ? 1 : 0;
+            realPersist.saveBlob("blk_enabled", &v, sizeof(v));
         });
         telegramPoller->setCallNotifyFn([&callHandler](bool enable) { // RFC-0164
             callHandler.setCallNotifyEnabled(enable);
