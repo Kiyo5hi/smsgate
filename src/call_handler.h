@@ -66,11 +66,13 @@ public:
     // RFC-0043: Lifetime call counter (RAM only, reset on reboot).
     int callsReceived() const { return callsReceived_; }
 
-    // RFC-0100: Optional callback fired when a call event is committed.
-    // Receives the caller's phone number string (empty string if unknown).
-    // Production wires this to enqueue an auto-reply SMS when
-    // CALL_AUTO_REPLY_TEXT is defined. Tests pass a capture lambda.
-    void setOnCallFn(std::function<void(const String &number)> fn)
+    // RFC-0100 / RFC-0108: Optional callback fired when a call event is committed.
+    // Receives the caller's phone number string (empty string if unknown) and the
+    // Telegram message_id of the call notification (0 if the send failed or the
+    // bot returned no ID). Production wires this to enqueue an auto-reply SMS
+    // (RFC-0100) and to register the (messageId, number) pair in ReplyTargetMap
+    // (RFC-0108) so future Telegram replies route back to the caller as SMS.
+    void setOnCallFn(std::function<void(const String &number, int32_t messageId)> fn)
     {
         onCallFn_ = std::move(fn);
     }
@@ -104,5 +106,5 @@ private:
     // Cooldown bookkeeping — when the current suppression window ends.
     uint32_t cooldownUntilMs_ = 0;
     int callsReceived_ = 0;  // RFC-0043
-    std::function<void(const String &)> onCallFn_; // RFC-0100
+    std::function<void(const String &, int32_t)> onCallFn_; // RFC-0100/0108
 };

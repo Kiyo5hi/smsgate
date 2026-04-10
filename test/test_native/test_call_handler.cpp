@@ -324,7 +324,7 @@ void test_CallHandler_ignores_unrelated_urcs()
 
 // ---------- Unity plumbing ----------
 
-// RFC-0100: onCallFn fires with caller number on commit.
+// RFC-0100 / RFC-0108: onCallFn fires with caller number and message_id on commit.
 void test_CallHandler_onCallFn_fires_with_number()
 {
     FakeModem modem;
@@ -333,15 +333,21 @@ void test_CallHandler_onCallFn_fires_with_number()
     CallHandler handler(modem, bot, [&]() { return clk.nowMs; });
 
     String capturedNumber;
-    handler.setOnCallFn([&](const String &num) { capturedNumber = num; });
+    int32_t capturedMsgId = -1;
+    handler.setOnCallFn([&](const String &num, int32_t msgId) {
+        capturedNumber = num;
+        capturedMsgId = msgId;
+    });
 
     handler.onUrcLine(String("RING"));
     handler.onUrcLine(String("+CLIP: \"13800138000\",129,\"\",,\"\",0"));
 
     TEST_ASSERT_TRUE(capturedNumber.indexOf(String("138")) >= 0);
+    // FakeBotClient sendMessageReturningId returns 1 for the first call.
+    TEST_ASSERT_TRUE(capturedMsgId > 0);
 }
 
-// RFC-0100: onCallFn fires with empty string for unknown caller.
+// RFC-0100 / RFC-0108: onCallFn fires with empty string for unknown caller.
 void test_CallHandler_onCallFn_empty_for_unknown()
 {
     FakeModem modem;
@@ -351,9 +357,11 @@ void test_CallHandler_onCallFn_empty_for_unknown()
 
     bool called = false;
     String capturedNumber = "SENTINEL";
-    handler.setOnCallFn([&](const String &num) {
+    int32_t capturedMsgId = -1;
+    handler.setOnCallFn([&](const String &num, int32_t msgId) {
         called = true;
         capturedNumber = num;
+        capturedMsgId = msgId;
     });
 
     // RING only, no +CLIP — should commit after deadline with empty number.
@@ -363,6 +371,32 @@ void test_CallHandler_onCallFn_empty_for_unknown()
 
     TEST_ASSERT_TRUE(called);
     TEST_ASSERT_EQUAL(0, (int)capturedNumber.length()); // empty for unknown
+    // Unknown callers still get a message_id from the notification post.
+    TEST_ASSERT_TRUE(capturedMsgId > 0);
+}
+
+// RFC-0108: Verify that the message_id from the call notification can be used
+// to route a reply back as SMS (integration check with a single handler).
+void test_CallHandler_onCallFn_provides_message_id_for_reply_routing()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    ClockFixture clk;
+    CallHandler handler(modem, bot, [&]() { return clk.nowMs; });
+
+    String callbackPhone;
+    int32_t callbackMsgId = 0;
+    handler.setOnCallFn([&](const String &num, int32_t msgId) {
+        callbackPhone = num;
+        callbackMsgId = msgId;
+    });
+
+    handler.onUrcLine(String("RING"));
+    handler.onUrcLine(String("+CLIP: \"13800138000\",129,\"\",,\"\",0"));
+
+    // The message_id should be > 0 (FakeBotClient auto-increments).
+    TEST_ASSERT_TRUE(callbackMsgId > 0);
+    TEST_ASSERT_EQUAL_STRING("13800138000", callbackPhone.c_str());
 }
 
 void run_call_handler_tests()
@@ -386,7 +420,8 @@ void run_call_handler_tests()
     RUN_TEST(test_CallHandler_RINGING_is_not_a_RING);
     RUN_TEST(test_CallHandler_bot_send_failure_still_hangs_up);
     RUN_TEST(test_CallHandler_ignores_unrelated_urcs);
-    // RFC-0100: onCallFn callback
+    // RFC-0100 / RFC-0108: onCallFn callback
     RUN_TEST(test_CallHandler_onCallFn_fires_with_number);
     RUN_TEST(test_CallHandler_onCallFn_empty_for_unknown);
+    RUN_TEST(test_CallHandler_onCallFn_provides_message_id_for_reply_routing);
 }

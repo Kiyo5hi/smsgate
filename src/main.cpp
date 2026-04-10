@@ -1025,14 +1025,20 @@ void setup()
             return s;
         });
         smsSender.setDebugLog(&smsDebugLog); // RFC-0035: log outbound failures
+        // RFC-0100 / RFC-0108: Register call notification in ReplyTargetMap so the
+        // user can reply to the call message to send an SMS back to the caller.
+        callHandler.setOnCallFn([](const String &callerNumber, int32_t msgId) {
+            // RFC-0108: Register (msgId, callerNumber) so a Telegram reply to
+            // this notification routes back to the caller as an SMS.
+            if (callerNumber.length() > 0 && msgId > 0)
+                replyTargets.put(msgId, callerNumber);
 #ifdef CALL_AUTO_REPLY_TEXT
-        // RFC-0100: Auto-reply SMS when a call is auto-rejected.
-        callHandler.setOnCallFn([](const String &callerNumber) {
-            if (callerNumber.length() == 0) return; // can't SMS unknown number
-            smsSender.enqueue(callerNumber, String(CALL_AUTO_REPLY_TEXT),
-                nullptr, nullptr);
-        });
+            // RFC-0100: Auto-reply SMS when a call is auto-rejected.
+            if (callerNumber.length() > 0) // can't SMS unknown number
+                smsSender.enqueue(callerNumber, String(CALL_AUTO_REPLY_TEXT),
+                    nullptr, nullptr);
 #endif
+        });
         telegramPoller->setAliasStore(&smsAliasStore); // RFC-0088
         telegramPoller->setMuteFn([](uint32_t minutes) { // RFC-0098
             s_alertsMutedUntilMs = (uint32_t)millis() + minutes * 60000UL;

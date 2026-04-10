@@ -123,11 +123,10 @@ void CallHandler::commitRinging()
 
     callsReceived_++;  // RFC-0043: track lifetime call count
 
-    // Best-effort notify. We don't share SmsHandler's reboot budget —
-    // a flaky Telegram connection during a call shouldn't nuke the
-    // device, especially because SmsHandler's own counter already
-    // tracks that health signal.
-    bot_.sendMessage(msg);
+    // Best-effort notify. RFC-0108: use sendMessageReturningId so the caller
+    // can register the (messageId, phone) pair in ReplyTargetMap, enabling
+    // the user to reply to the call notification to send an SMS to the caller.
+    int32_t msgId = bot_.sendMessageReturningId(msg);
 
     // Auto-hangup. Try the TinyGSM path first; fall back to raw
     // AT+CHUP as a belt-and-braces measure if TinyGSM returns false.
@@ -138,9 +137,9 @@ void CallHandler::commitRinging()
         modem_.waitResponseOk(1000UL);
     }
 
-    // RFC-0100: fire optional callback with the caller number.
+    // RFC-0100/0108: fire optional callback with caller number + message_id.
     if (onCallFn_)
-        onCallFn_(number_);
+        onCallFn_(number_, msgId);
 
     // Enter cooldown regardless of hangup success — we've done all we
     // can, and the dedupe window keeps us from double-notifying on
