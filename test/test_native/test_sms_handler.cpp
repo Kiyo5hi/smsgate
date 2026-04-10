@@ -608,6 +608,37 @@ void test_fwdTag_prepended_to_forwarded_message()
     TEST_ASSERT_TRUE(msgs[0].text.startsWith("[Home] "));
 }
 
+// RFC-0176: alias name prepended to forwarded message header
+void test_alias_prepended_to_forwarded_message_header()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+    SmsHandler handler(modem, bot, [&]() {});
+    handler.setReplyTargetMap(&rtm);
+    // makeCmgrResponse uses sender "13800138000" with TOA 0x91 (international),
+    // so pdu.sender == "+13800138000".
+    handler.setAliasFn([](const String &phone) -> String {
+        if (phone == "+13800138000") return String("alice");
+        return String();
+    });
+
+    modem.queueOk(makeCmgrResponse());
+    modem.queueOkEmpty(); // CMGD
+
+    handler.handleSmsIndex(1);
+
+    TEST_ASSERT_EQUAL(1, handler.smsForwarded());
+    const auto &msgs = bot.sentMessagesWithTarget();
+    TEST_ASSERT_TRUE(msgs.size() > 0);
+    // Header should contain "alice (" before the phone number.
+    TEST_ASSERT_TRUE(msgs[0].text.indexOf("alice (") >= 0);
+    // Raw number should still appear (inside parentheses).
+    TEST_ASSERT_TRUE(msgs[0].text.indexOf("+13800138000") >= 0);
+}
+
 // ---------- Unity plumbing ----------
 
 void run_sms_handler_tests()
@@ -636,4 +667,6 @@ void run_sms_handler_tests()
     RUN_TEST(test_extra_recipients_receive_forwarded_sms);
     // RFC-0172: forward tag
     RUN_TEST(test_fwdTag_prepended_to_forwarded_message);
+    // RFC-0176: alias in header
+    RUN_TEST(test_alias_prepended_to_forwarded_message_header);
 }

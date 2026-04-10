@@ -132,6 +132,17 @@ public:
         save();
     }
 
+    // RFC-0176: Reverse lookup — given a phone number, return the alias name
+    // that maps to it (exact match, case-sensitive). Returns "" if not found.
+    // Useful for showing "Name (phone)" in forwarded SMS headers.
+    String lookupByPhone(const String &phone) const
+    {
+        for (int i = 0; i < count_; i++)
+            if (phone == String(entries_[i].phone))
+                return String(entries_[i].name);
+        return String();
+    }
+
     // Enumerate all entries. Callback receives (name, phone) pairs.
     void forEach(std::function<void(const String &name, const String &phone)> fn) const
     {

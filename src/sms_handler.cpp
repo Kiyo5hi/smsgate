@@ -22,8 +22,9 @@ SmsHandler::SmsHandler(IModem &modem, IBotClient &bot, RebootFn reboot, ClockFn 
 
 static String formatBotMessage(const String &sender, const String &timestamp,
                                const String &body,
-                               int gmtOffsetHours = 8,
-                               const String &fwdTag = String()) // RFC-0172
+                               int gmtOffsetMinutes = 480,
+                               const String &fwdTag = String(),      // RFC-0172
+                               const String &alias = String())        // RFC-0176
 {
     String out;
     if (fwdTag.length() > 0)
@@ -31,8 +32,11 @@ static String formatBotMessage(const String &sender, const String &timestamp,
         out += fwdTag;
         out += " ";
     }
-    out += sms_codec::humanReadablePhoneNumber(sender) + " | " +
-           sms_codec::timestampToRFC3339(timestamp, gmtOffsetHours); // RFC-0169
+    String displaySender = sms_codec::humanReadablePhoneNumber(sender);
+    if (alias.length() > 0)
+        displaySender = alias + " (" + displaySender + ")"; // RFC-0176
+    out += displaySender + " | " +
+           sms_codec::timestampToRFC3339(timestamp, gmtOffsetMinutes); // RFC-0169/0175
     out += "\n-----\n";
     out += body;
     return out;
@@ -100,7 +104,8 @@ void SmsHandler::evictLruUntilUnderCaps(size_t reservedExtraBytes)
 
 bool SmsHandler::forwardSingle(const sms_codec::SmsPdu &pdu, int /*simIndex*/)
 {
-    String formatted = formatBotMessage(pdu.sender, pdu.timestamp, pdu.content, gmtOffsetMinutes_, fwdTag_); // RFC-0169/0172
+    String alias = aliasFn_ ? aliasFn_(pdu.sender) : String(); // RFC-0176
+    String formatted = formatBotMessage(pdu.sender, pdu.timestamp, pdu.content, gmtOffsetMinutes_, fwdTag_, alias); // RFC-0169/0172/0176
     int32_t mid = bot_.sendMessageReturningId(formatted);
     if (mid <= 0)
     {
@@ -319,7 +324,8 @@ bool SmsHandler::insertFragmentAndMaybePost(const sms_codec::SmsPdu &pdu, int si
         return true;
     }
 
-    String formatted = formatBotMessage(group->sender, group->firstTimestamp, assembled, gmtOffsetMinutes_, fwdTag_); // RFC-0169/0172
+    String alias = aliasFn_ ? aliasFn_(group->sender) : String(); // RFC-0176
+    String formatted = formatBotMessage(group->sender, group->firstTimestamp, assembled, gmtOffsetMinutes_, fwdTag_, alias); // RFC-0169/0172/0176
 
     int32_t mid = bot_.sendMessageReturningId(formatted);
     if (mid <= 0)

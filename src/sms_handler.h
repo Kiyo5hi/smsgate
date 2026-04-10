@@ -89,6 +89,11 @@ public:
     // blocked or deduplicated messages.
     void setOnSenderFn(std::function<void(const String &)> cb) { onSenderFn_ = std::move(cb); }
 
+    // RFC-0176: Optional alias lookup. When set, called with the sender's
+    // phone number; should return a friendly name or "" for unknown senders.
+    // The alias is prepended to the header: "Name (+86138...) | timestamp"
+    void setAliasFn(std::function<String(const String &)> fn) { aliasFn_ = std::move(fn); }
+
     // RFC-0070: Set extra Telegram recipients for forwarded SMS. When set,
     // each successfully forwarded SMS (single-part or assembled concat) is
     // also sent to each extra chat ID via sendMessageTo (no reply-routing).
@@ -317,6 +322,7 @@ private:
     SmsDebugLog *debugLog_ = nullptr;
     std::function<void()> onForwarded_;
     std::function<void(const String &)> onSenderFn_; // RFC-0150
+    std::function<String(const String &)> aliasFn_;  // RFC-0176
     const int64_t *extraRecipients_ = nullptr; // RFC-0070
     int extraRecipientCount_ = 0;             // RFC-0070
     const char (*blockList_)[kSmsBlockListMaxNumberLen + 1] = nullptr;

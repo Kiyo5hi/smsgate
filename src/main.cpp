@@ -1126,6 +1126,9 @@ void setup()
 #endif
         });
         telegramPoller->setAliasStore(&smsAliasStore); // RFC-0088
+        smsHandler.setAliasFn([](const String &phone) { // RFC-0176
+            return smsAliasStore.lookupByPhone(phone);
+        });
         telegramPoller->setMuteFn([](uint32_t minutes) { // RFC-0098
             s_alertsMutedUntilMs = (uint32_t)millis() + minutes * 60000UL;
         });
