@@ -6560,6 +6560,41 @@ void test_TelegramPoller_factoryreset_confirm_calls_clear_and_reboot()
     TEST_ASSERT_TRUE(rebootCalled);
 }
 
+// RFC-0196: /scheddelay 1 15 → extends slot 1 by 15 minutes.
+void test_TelegramPoller_scheddelay_extends_slot()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs = 1000;
+
+    // Schedule a 30-min entry.
+    bot.queueUpdateBatch({makeUpdate(5001, kAllowedFromId, 0, "/schedulesend 30 +1111 Hi", kAllowedFromId)});
+    poller.tick();
+    clk.nowMs += 4000;
+    bot.clearMessages();
+
+    // Extend slot 1 by 15 minutes.
+    bot.queueUpdateBatch({makeUpdate(5002, kAllowedFromId, 0, "/scheddelay 1 15", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(5002, poller.lastUpdateId());
+    bool sawExtended = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("extended") >= 0 || m.indexOf("15") >= 0) { sawExtended = true; break; }
+    TEST_ASSERT_TRUE(sawExtended);
+}
+
 // RFC-0195: /clearschedule — cancels all scheduled SMS at once.
 void test_TelegramPoller_clearschedule_clears_all()
 {
@@ -7116,6 +7151,8 @@ void run_telegram_poller_tests()
     RUN_TEST(test_TelegramPoller_testpdu_no_arg_sends_usage);
     // RFC-0192: /pausefwd command
     RUN_TEST(test_TelegramPoller_pausefwd_calls_fn);
+    // RFC-0196: /scheddelay command
+    RUN_TEST(test_TelegramPoller_scheddelay_extends_slot);
     // RFC-0195: /clearschedule command
     RUN_TEST(test_TelegramPoller_clearschedule_clears_all);
     // RFC-0193: /sendnow command

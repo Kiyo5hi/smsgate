@@ -138,6 +138,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/schedqueue \xe2\x80\x94 List pending scheduled SMS (up to 5 slots)\n";
             help += "/cancelsched <N> \xe2\x80\x94 Cancel a scheduled SMS slot\n";
             help += "/clearschedule \xe2\x80\x94 Cancel all pending scheduled SMS\n"; // RFC-0195
+            help += "/scheddelay <N> <min> \xe2\x80\x94 Extend scheduled slot N by extra minutes\n"; // RFC-0196
             help += "/wifi \xe2\x80\x94 Force WiFi reconnect\n";
             help += "/mute [min] \xe2\x80\x94 Snooze proactive alerts (default 60m)\n";
             help += "/unmute \xe2\x80\x94 Cancel alert snooze\n";
@@ -2609,6 +2610,41 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             scheduledQueue_[n - 1].body     = String();
             bot_.sendMessageTo(u.chatId,
                 String("\xe2\x9c\x85 Slot ") + String(n) + String(" cancelled.")); // ✅
+            return;
+        }
+
+        // RFC-0196: /scheddelay <N> <extra_min> — extend a scheduled SMS deadline.
+        if (lower == "/scheddelay" || lower.startsWith("/scheddelay "))
+        {
+            String arg = extractArg(u.text, "/scheddelay ");
+            arg.trim();
+            int sp = arg.indexOf(' ');
+            if (sp <= 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /scheddelay <slot> <extra_min>\n"
+                           "Example: /scheddelay 1 15"));
+                return;
+            }
+            int n = (int)arg.substring(0, sp).toInt();
+            long extra = arg.substring(sp + 1).toInt();
+            if (n < 1 || n > (int)kScheduledQueueSize || scheduledQueue_[n - 1].sendAtMs == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c Slot ") + String(n) // ❌
+                    + String(" is empty or out of range."));
+                return;
+            }
+            if (extra < 1 || extra > 1440)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("\xe2\x9d\x8c extra_min must be 1\xe2\x80\x93 1440.")); // ❌ –
+                return;
+            }
+            scheduledQueue_[n - 1].sendAtMs += (uint32_t)extra * 60000UL;
+            bot_.sendMessageTo(u.chatId,
+                String("\xe2\x9c\x85 Slot ") + String(n) // ✅
+                + String(" extended by ") + String((int)extra) + String(" min."));
             return;
         }
 
