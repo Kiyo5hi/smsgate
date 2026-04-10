@@ -80,6 +80,13 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         }
         lower.trim();
 
+        // RFC-0042: /ping — instant liveness check.
+        if (lower == "/ping")
+        {
+            bot_.sendMessageTo(u.chatId, String("\xF0\x9F\x8F\x93 Pong")); // 🏓
+            return;
+        }
+
         if (lower == "/debug")
         {
             if (debugLog_)
@@ -288,7 +295,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
         Serial.println("TelegramPoller: no reply_to_message_id, dropping");
         {
             String help = "Reply to a forwarded SMS to send a response. ";
-            help += "Commands: /debug, /cleardebug, /status, /restart, /send <num> <msg>, /queue";
+            help += "Commands: /ping, /debug, /cleardebug, /status, /restart, /send <num> <msg>, /queue";
             if (smsBlockMutator_)
                 help += ", /blocklist, /block <num>, /unblock <num>";
             sendErrorReply(u.chatId, help);
