@@ -3509,10 +3509,15 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("\xe2\x9d\x8c That date/time is in the past.")); // ❌
                 return;
             }
-            if (deltaSecAt > 365L * 86400L)
+            // RFC-0267: cap at 24 days. The millis()-based scheduler uses the
+            // RFC-0266 subtraction idiom which is only correct for intervals
+            // ≤ 2^31 ms ≈ 24.8 days. 365-day cap also overflows int32 (long on
+            // ESP32) when multiplied by 1000 to convert to ms.
+            if (deltaSecAt > 24L * 86400L)
             {
                 bot_.sendMessageTo(u.chatId,
-                    String("\xe2\x9d\x8c Cannot schedule more than 365 days ahead.")); // ❌
+                    String("\xe2\x9d\x8c Cannot schedule more than 24 days ahead"
+                           " (millis() scheduler limit).")); // ❌
                 return;
             }
             // Parse phone + body from the rest (after "YYYY-MM-DD HH:MM ").
