@@ -8588,6 +8588,114 @@ void test_TelegramPoller_setSchedQueue_round_trip()
     TEST_ASSERT_EQUAL_STRING("Round-trip body", q3[0].body.c_str());
 }
 
+// ─── RFC-0228: /schedimport tests ────────────────────────────────────────────
+
+// /schedimport with valid /schedulesend lines creates scheduled slots.
+void test_TelegramPoller_schedimport_imports_schedulesend_lines()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    String importCmd = String("/schedimport\n/schedulesend 30 +4479001 Hello\n/schedulesend 60 +4479002 World");
+    bot.queueUpdateBatch({makeUpdate(32001, kAllowedFromId, 0,
+        importCmd.c_str(), kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(32001, poller.lastUpdateId());
+
+    // Two slots should be occupied.
+    const auto &q = poller.getSchedQueue();
+    int occupied = 0;
+    for (const auto &sl : q)
+        if (sl.sendAtMs != 0) occupied++;
+    TEST_ASSERT_EQUAL(2, occupied);
+
+    // Summary message should say "Imported 2 slot(s)".
+    bool sawSummary = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Imported 2") >= 0) { sawSummary = true; break; }
+    TEST_ASSERT_TRUE(sawSummary);
+}
+
+// /schedimport skips unrecognized lines and counts them as skipped.
+void test_TelegramPoller_schedimport_skips_unknown_lines()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    // One valid line, two invalid.
+    String importCmd = String("/schedimport\n/schedulesend 30 +4479003 Hi\n/unknowncmd foo\nsome random text");
+    bot.queueUpdateBatch({makeUpdate(32010, kAllowedFromId, 0,
+        importCmd.c_str(), kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(32010, poller.lastUpdateId());
+
+    bool sawSummary = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Imported 1") >= 0 && m.indexOf("skipped 2") >= 0)
+            { sawSummary = true; break; }
+    TEST_ASSERT_TRUE(sawSummary);
+}
+
+// /schedimport with no body shows usage.
+void test_TelegramPoller_schedimport_empty_body_shows_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 1000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(32020, kAllowedFromId, 0,
+        "/schedimport", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(32020, poller.lastUpdateId());
+
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("Usage") >= 0 || m.indexOf("usage") >= 0
+            || m.indexOf("schedulesend") >= 0) { sawUsage = true; break; }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
 // ─── RFC-0227: SMS template command tests ────────────────────────────────────
 
 // /tsave then /tlist shows template.
@@ -9261,6 +9369,10 @@ void run_telegram_poller_tests()
     // RFC-0200: persist callback + getSchedQueue/setSchedQueue
     RUN_TEST(test_TelegramPoller_persistSchedFn_called_on_tick_fire);
     RUN_TEST(test_TelegramPoller_setSchedQueue_round_trip);
+    // RFC-0228: /schedimport command
+    RUN_TEST(test_TelegramPoller_schedimport_imports_schedulesend_lines);
+    RUN_TEST(test_TelegramPoller_schedimport_skips_unknown_lines);
+    RUN_TEST(test_TelegramPoller_schedimport_empty_body_shows_usage);
     // RFC-0227: SMS template commands
     RUN_TEST(test_TelegramPoller_tsave_and_tlist);
     RUN_TEST(test_TelegramPoller_tsave_overwrite);

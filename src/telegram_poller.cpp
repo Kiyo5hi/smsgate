@@ -268,6 +268,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/schedulesend <min> <phone> <msg> \xe2\x80\x94 Schedule SMS for future delivery (1\xe2\x80\x931440 min)\n";
             help += "/schedqueue \xe2\x80\x94 List pending scheduled SMS (up to 5 slots)\n";
             help += "/schedexport \xe2\x80\x94 Export scheduled queue as re-entrant commands\n"; // RFC-0226
+            help += "/schedimport \xe2\x80\x94 Import /schedulesend|/scheduleat|/recurring commands\n"; // RFC-0228
             help += "/cancelsched <N> \xe2\x80\x94 Cancel a scheduled SMS slot\n";
             help += "/clearschedule \xe2\x80\x94 Cancel all pending scheduled SMS\n"; // RFC-0195
             help += "/scheddelay <N> <min> \xe2\x80\x94 Extend scheduled slot N by extra minutes\n"; // RFC-0196
@@ -3215,6 +3216,63 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId,
                     String("\xf0\x9f\x93\x8b Scheduled queue export (") // 📋
                     + String(count) + String(" slot(s)):\n") + out);
+            return;
+        }
+
+        // RFC-0228: /schedimport — batch import of /schedulesend, /scheduleat, /recurring lines.
+        if (lower.startsWith("/schedimport"))
+        {
+            String importBody = u.text.length() > strlen("/schedimport") ?
+                u.text.substring(strlen("/schedimport")) : String();
+            importBody.trim();
+            if (importBody.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /schedimport\n/schedulesend 30 +1234 body\n/scheduleat 2026-01-01 09:00 +1234 body\n/recurring 60 +1234 body"));
+                return;
+            }
+            int imported = 0, skipped = 0;
+            // Split on newlines.
+            int pos = 0;
+            while (pos <= (int)importBody.length())
+            {
+                int nl = importBody.indexOf('\n', pos);
+                String line = (nl < 0)
+                    ? importBody.substring(pos)
+                    : importBody.substring(pos, nl);
+                line.trim();
+                pos = (nl < 0) ? (int)importBody.length() + 1 : nl + 1;
+                if (line.length() == 0) continue;
+                // Check allowed prefixes (compare only the slash-command prefix chars).
+                String lpfx = line.substring(0, 20);
+                lpfx.toLowerCase();
+                bool allowed = lpfx.startsWith("/schedulesend ")
+                            || lpfx.startsWith("/scheduleat ")
+                            || lpfx.startsWith("/recurring ");
+                if (!allowed) { skipped++; continue; }
+                // Dispatch as synthetic update (re-uses all existing validation).
+                TelegramUpdate syn;
+                syn.updateId         = 0; // not persisted
+                syn.fromId           = u.fromId;
+                syn.chatId           = u.chatId;
+                syn.replyToMessageId = 0;
+                syn.text             = line;
+                syn.valid            = true;
+                int slotsBeforeImport = 0;
+                for (int i = 0; i < (int)kScheduledQueueSize; i++)
+                    if (scheduledQueue_[i].sendAtMs != 0) slotsBeforeImport++;
+                processUpdate(syn);
+                int slotsAfterImport = 0;
+                for (int i = 0; i < (int)kScheduledQueueSize; i++)
+                    if (scheduledQueue_[i].sendAtMs != 0) slotsAfterImport++;
+                if (slotsAfterImport > slotsBeforeImport)
+                    imported++;
+                else
+                    skipped++;
+            }
+            String reply = String("\xe2\x9c\x85 Imported ") + String(imported)
+                         + String(" slot(s), skipped ") + String(skipped) + String(" line(s).");
+            bot_.sendMessageTo(u.chatId, reply);
             return;
         }
 
