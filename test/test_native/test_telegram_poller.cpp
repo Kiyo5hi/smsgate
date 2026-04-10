@@ -5805,6 +5805,32 @@ void test_TelegramPoller_setunknowndeadline_out_of_range_replies_error()
     TEST_ASSERT_TRUE(msgs.back().indexOf("Error") >= 0);
 }
 
+// RFC-0167: /settings command
+void test_TelegramPoller_settings_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setSettingsFn([]() -> String { return "settings: forwarding=ON"; });
+
+    bot.queueUpdateBatch({makeUpdate(1089, kAllowedFromId, 0, "/settings", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(1089, poller.lastUpdateId());
+    auto msgs = bot.sentMessages();
+    TEST_ASSERT_TRUE(msgs.size() > 0);
+    TEST_ASSERT_TRUE(msgs.back().indexOf("forwarding=ON") >= 0);
+}
+
 void run_telegram_poller_tests()
 {
     RUN_TEST(test_TelegramPoller_happy_path_routes_reply_to_phone);
@@ -6053,6 +6079,8 @@ void run_telegram_poller_tests()
     // RFC-0166: /setunknowndeadline command
     RUN_TEST(test_TelegramPoller_setunknowndeadline_calls_fn_with_ms);
     RUN_TEST(test_TelegramPoller_setunknowndeadline_out_of_range_replies_error);
+    // RFC-0167: /settings command
+    RUN_TEST(test_TelegramPoller_settings_calls_fn_and_replies);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }

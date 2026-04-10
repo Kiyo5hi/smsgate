@@ -1402,6 +1402,28 @@ void setup()
         telegramPoller->setCallUnknownDeadlineFn([&callHandler](uint32_t ms) { // RFC-0166
             callHandler.setUnknownDeadlineMs(ms);
         });
+        telegramPoller->setSettingsFn([&smsHandler, &smsSender, &callHandler]() -> String { // RFC-0167
+            String s;
+            s += "\xe2\x9a\x99\xef\xb8\x8f Runtime settings:\n"; // ⚙️
+            s += "  SMS forwarding: ";
+            s += (smsHandler.forwardingEnabled() ? "ON" : "OFF"); s += "\n";
+            s += "  SMS block enforcement: ";
+            s += (smsHandler.blockingEnabled() ? "ON" : "OFF"); s += "\n";
+            s += "  Max SMS parts: ";
+            s += String(smsSender.maxParts()); s += "\n";
+            s += "  Call notify: ";
+            s += (callHandler.callNotifyEnabled() ? "ON" : "OFF"); s += "\n";
+            s += "  Call dedup window: ";
+            s += String(callHandler.dedupeWindowMs() / 1000); s += "s\n";
+            s += "  Unknown-number deadline: ";
+            s += String(callHandler.unknownDeadlineMs()); s += "ms\n";
+            s += "  Heartbeat interval: ";
+            s += String(s_heartbeatIntervalSec);
+            s += (s_heartbeatIntervalSec == 0 ? "s (disabled)" : "s"); s += "\n";
+            s += "  Poll interval: ";
+            s += String(telegramPoller->pollIntervalMs() / 1000); s += "s";
+            return s;
+        });
         telegramPoller->setBlockCheckFn([&smsHandler](const String &phone) -> String { // RFC-0163
             bool enfEnabled = smsHandler.blockingEnabled();
             bool hitCompile = (sBlockListCount > 0 &&

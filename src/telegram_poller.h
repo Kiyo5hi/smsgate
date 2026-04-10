@@ -332,6 +332,10 @@ public:
     // /setunknowndeadline <ms> calls this fn with the deadline in ms.
     void setCallUnknownDeadlineFn(std::function<void(uint32_t)> fn) { callUnknownDeadlineFn_ = std::move(fn); }
 
+    // RFC-0167: Optional settings snapshot fn. When set, /settings calls this
+    // fn to get a formatted multi-line string of all runtime-configurable params.
+    void setSettingsFn(std::function<String()> fn) { settingsFn_ = std::move(fn); }
+
     // RFC-0146: Optional SMS forward fn. When set, /forwardsim <idx> calls
     // this fn with the SIM index and replies success/failure.
     void setSmsForwardFn(std::function<bool(int)> fn) { smsForwardFn_ = std::move(fn); }
@@ -345,6 +349,7 @@ public:
         if (ms > 300000) ms = 300000;
         pollIntervalMs_ = ms;
     }
+    uint32_t pollIntervalMs() const { return pollIntervalMs_; }
 
     // RFC-0144: Optional dedup window setter. When set, /setdedup <seconds>
     // changes the dedup window (0 = disable, max 3600).
@@ -447,6 +452,7 @@ private:
     std::function<void(bool)> callNotifyFn_;            // RFC-0164
     std::function<void(uint32_t)> callDedupFn_;              // RFC-0165
     std::function<void(uint32_t)> callUnknownDeadlineFn_;    // RFC-0166
+    std::function<String()> settingsFn_;                     // RFC-0167
     std::function<bool(int)> smsForwardFn_;        // RFC-0146
     uint32_t pollIntervalMs_ = kPollIntervalMs;    // RFC-0147
     std::function<void(uint32_t)> dedupWindowFn_;  // RFC-0144

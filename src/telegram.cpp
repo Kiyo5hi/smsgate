@@ -548,6 +548,11 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "setunknowndeadline";
         c["description"] = "Set RING-without-CLIP deadline in ms (500-10000): /setunknowndeadline <ms>";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "settings";
+        c["description"] = "Show all runtime-configurable parameters";
+    }
     String payload;
     serializeJson(doc, payload);
 

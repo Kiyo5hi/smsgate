@@ -153,6 +153,7 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/setcallnotify on|off \xe2\x80\x94 Enable/mute call Telegram notifications\n";
             help += "/setcalldedup <s> \xe2\x80\x94 Call dedup cooldown window in seconds (1\xe2\x80\x9360)\n";
             help += "/setunknowndeadline <ms> \xe2\x80\x94 RING-without-CLIP deadline in ms (500\xe2\x80\x9310000)\n";
+            help += "/settings \xe2\x80\x94 Show all runtime-configurable parameters\n";
             help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
             help += "/announce <msg> \xe2\x80\x94 Broadcast message to all authorized users\n";
             help += "/digest \xe2\x80\x94 Show on-demand stats digest\n";
@@ -711,6 +712,20 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             else
             {
                 bot_.sendMessageTo(u.chatId, String("(status not configured)"));
+            }
+            return;
+        }
+
+        // RFC-0167: /settings — snapshot of all runtime-configurable parameters.
+        if (lower == "/settings")
+        {
+            if (settingsFn_)
+            {
+                bot_.sendMessageTo(u.chatId, settingsFn_());
+            }
+            else
+            {
+                bot_.sendMessageTo(u.chatId, String("(settings not configured)"));
             }
             return;
         }
