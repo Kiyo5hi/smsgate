@@ -2485,16 +2485,22 @@ void loop()
             switch (cregStat) {
                 case 1:  cachedRegStatus = REG_OK_HOME;       break;
                 case 5:  cachedRegStatus = REG_OK_ROAMING;    break;
+                case 6:  cachedRegStatus = REG_SMS_ONLY;      break; // SMS-only service
                 case 2:  cachedRegStatus = REG_SEARCHING;     break;
                 case 3:  cachedRegStatus = REG_DENIED;        break;
+                case 4:  cachedRegStatus = REG_UNKNOWN;       break; // state not determined
                 default: cachedRegStatus = REG_UNREGISTERED;  break;
             }
-            bool cregOk = (cachedRegStatus == REG_OK_HOME || cachedRegStatus == REG_OK_ROAMING);
+            bool cregOk = (cachedRegStatus == REG_OK_HOME    ||
+                           cachedRegStatus == REG_OK_ROAMING ||
+                           cachedRegStatus == REG_SMS_ONLY);
             const char *cregTxt = (cachedRegStatus == REG_OK_HOME)      ? "home"
                                 : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
+                                : (cachedRegStatus == REG_SMS_ONLY)     ? "sms-only"
                                 : (cachedRegStatus == REG_SEARCHING)    ? "searching"
                                 : (cachedRegStatus == REG_DENIED)       ? "denied"
                                 : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
+                                : (cachedRegStatus == REG_UNKNOWN)      ? "unknown"
                                 :                                         "unknown";
             Serial.printf("[RFC-0247] +CREG URC: stat=%d (%s)\n", cregStat, cregTxt);
             if (!cregOk && !s_regLostAlertSent && cachedCsq > 0) {
@@ -2568,8 +2574,10 @@ void loop()
                     switch (stat) {
                         case 1:  cachedRegStatus = REG_OK_HOME;       break;
                         case 5:  cachedRegStatus = REG_OK_ROAMING;    break;
+                        case 6:  cachedRegStatus = REG_SMS_ONLY;      break;
                         case 2:  cachedRegStatus = REG_SEARCHING;     break;
                         case 3:  cachedRegStatus = REG_DENIED;        break;
+                        case 4:  cachedRegStatus = REG_UNKNOWN;       break;
                         default: cachedRegStatus = REG_UNREGISTERED;  break;
                     }
                 }
@@ -2577,12 +2585,16 @@ void loop()
         }
         // RFC-0082: Network registration loss / recovery alert.
         {
-            bool regOk = (cachedRegStatus == REG_OK_HOME || cachedRegStatus == REG_OK_ROAMING);
+            bool regOk = (cachedRegStatus == REG_OK_HOME    ||
+                          cachedRegStatus == REG_OK_ROAMING ||
+                          cachedRegStatus == REG_SMS_ONLY);
             const char *regTxt = (cachedRegStatus == REG_OK_HOME)      ? "home"
                                : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
+                               : (cachedRegStatus == REG_SMS_ONLY)     ? "sms-only"
                                : (cachedRegStatus == REG_SEARCHING)    ? "searching"
                                : (cachedRegStatus == REG_DENIED)       ? "denied"
                                : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
+                               : (cachedRegStatus == REG_UNKNOWN)      ? "unknown"
                                :                                         "unknown";
             if (!regOk && !s_regLostAlertSent && cachedCsq > 0) {
                 if (!alertsMuted()) // RFC-0098
@@ -2833,16 +2845,22 @@ void loop()
                     switch (st236) {
                         case 1:  cachedRegStatus = REG_OK_HOME;       break;
                         case 5:  cachedRegStatus = REG_OK_ROAMING;    break;
+                        case 6:  cachedRegStatus = REG_SMS_ONLY;      break;
                         case 2:  cachedRegStatus = REG_SEARCHING;     break;
                         case 3:  cachedRegStatus = REG_DENIED;        break;
+                        case 4:  cachedRegStatus = REG_UNKNOWN;       break;
                         default: cachedRegStatus = REG_UNREGISTERED;  break;
                     }
-                    bool ro236 = (cachedRegStatus == REG_OK_HOME || cachedRegStatus == REG_OK_ROAMING);
+                    bool ro236 = (cachedRegStatus == REG_OK_HOME    ||
+                                  cachedRegStatus == REG_OK_ROAMING ||
+                                  cachedRegStatus == REG_SMS_ONLY);
                     const char *rt236 = (cachedRegStatus == REG_OK_HOME)      ? "home"
                                      : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
+                                     : (cachedRegStatus == REG_SMS_ONLY)     ? "sms-only"
                                      : (cachedRegStatus == REG_SEARCHING)    ? "searching"
                                      : (cachedRegStatus == REG_DENIED)       ? "denied"
                                      : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
+                                     : (cachedRegStatus == REG_UNKNOWN)      ? "unknown"
                                      :                                         "unknown";
                     if (!ro236 && !s_regLostAlertSent && cachedCsq > 0) {
                         if (!alertsMuted())
@@ -3053,16 +3071,22 @@ void loop()
                     switch (st239) {
                         case 1:  cachedRegStatus = REG_OK_HOME;       break;
                         case 5:  cachedRegStatus = REG_OK_ROAMING;    break;
+                        case 6:  cachedRegStatus = REG_SMS_ONLY;      break;
                         case 2:  cachedRegStatus = REG_SEARCHING;     break;
                         case 3:  cachedRegStatus = REG_DENIED;        break;
+                        case 4:  cachedRegStatus = REG_UNKNOWN;       break;
                         default: cachedRegStatus = REG_UNREGISTERED;  break;
                     }
-                    bool ro239 = (cachedRegStatus == REG_OK_HOME || cachedRegStatus == REG_OK_ROAMING);
+                    bool ro239 = (cachedRegStatus == REG_OK_HOME    ||
+                                  cachedRegStatus == REG_OK_ROAMING ||
+                                  cachedRegStatus == REG_SMS_ONLY);
                     const char *rt239 = (cachedRegStatus == REG_OK_HOME)      ? "home"
                                      : (cachedRegStatus == REG_OK_ROAMING)   ? "roaming"
+                                     : (cachedRegStatus == REG_SMS_ONLY)     ? "sms-only"
                                      : (cachedRegStatus == REG_SEARCHING)    ? "searching"
                                      : (cachedRegStatus == REG_DENIED)       ? "denied"
                                      : (cachedRegStatus == REG_UNREGISTERED) ? "unregistered"
+                                     : (cachedRegStatus == REG_UNKNOWN)      ? "unknown"
                                      :                                         "unknown";
                     Serial.printf("[RFC-0247/239] +CREG URC: stat=%d (%s)\n", st239, rt239);
                     if (!ro239 && !s_regLostAlertSent && cachedCsq > 0) {
