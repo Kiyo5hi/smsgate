@@ -202,6 +202,8 @@ static uint32_t s_lifetimeFwdCount = 0;
 static bool s_simFullWarnSent = false;
 // RFC-0066: Low heap warning. Hysteresis: alert at <15 KB, clear at >25 KB.
 static bool s_lowHeapWarnSent = false;
+// RFC-0081: CSQ low-signal alert. Hysteresis: alert at ≤5, clear at >10.
+static bool s_lowCsqWarnSent = false;
 // RFC-0075: Daily stats digest. Initialised to 0 so the first digest sends
 // 24 h after boot (set on first 30-second tick, fire 24 h later).
 static uint32_t s_lastDailyDigestMs = 0;
@@ -1230,6 +1232,17 @@ void loop()
                 s_simFullWarnSent = false;
             }
         }
+        // RFC-0081: CSQ low-signal alert. Hysteresis: alert at ≤5, clear at >10.
+        // CSQ==0 means "unknown" (modem not yet polled) — skip.
+        if (cachedCsq > 0 && cachedCsq <= 5 && !s_lowCsqWarnSent) {
+            String csqMsg = String("\xF0\x9F\x93\xB6 Low signal: CSQ "); // 📶
+            csqMsg += String(cachedCsq); csqMsg += ". SMS delivery may be unreliable.";
+            realBot.sendMessage(csqMsg);
+            s_lowCsqWarnSent = true;
+        } else if (cachedCsq > 10) {
+            s_lowCsqWarnSent = false;
+        }
+
         // RFC-0066: Low heap warning. Hysteresis: alert at <15 KB, clear at >25 KB.
         // RFC-0073: Critical threshold at <8 KB — send final message and reboot.
         {
