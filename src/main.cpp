@@ -2872,13 +2872,20 @@ void loop()
             lastPeriodicSweepMs != 0) // skip first iteration (boot sweep already done)
         {
             lastPeriodicSweepMs = millis();
-            // RFC-0242: Re-arm URC subscriptions before each sweep in case
-            // the A76xx firmware lost +CNMI/+CLIP during the 30-min window.
-            realModem.sendAT("+CNMI=2,1,0,0,0");
+            // RFC-0242: Re-arm AT settings before each sweep. The A76xx
+            // firmware can silently revert PDU mode, header display, or URC
+            // subscriptions during normal operation — not just on explicit
+            // soft-resets. Re-arm the full set every 30 min to prevent a
+            // silently-reverted +CMGF from breaking the PDU receive pipeline.
+            realModem.sendAT("+CMGF=0");          // ensure PDU mode
             realModem.waitResponseOk(2000UL);
-            realModem.sendAT("+CLIP=1");
+            realModem.sendAT("+CSDH=1");          // ensure text header display
             realModem.waitResponseOk(2000UL);
-            realModem.sendAT("+CREG=1"); // RFC-0247: re-arm CREG URC subscription
+            realModem.sendAT("+CNMI=2,1,0,0,0"); // ensure SMS notification
+            realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CLIP=1");           // ensure caller-ID presentation
+            realModem.waitResponseOk(2000UL);
+            realModem.sendAT("+CREG=1");           // RFC-0247: ensure CREG URC subscription
             realModem.waitResponseOk(2000UL);
             esp_task_wdt_reset();
             smsHandler.sweepExistingSms();
