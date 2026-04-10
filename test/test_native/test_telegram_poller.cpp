@@ -7875,6 +7875,74 @@ void test_TelegramPoller_recurring_invalid_interval_error()
     TEST_ASSERT_EQUAL(0U, poller.getSchedQueue()[0].sendAtMs); // no slot allocated
 }
 
+// RFC-0224: @alias in /schedulesend resolves to phone number.
+void test_TelegramPoller_schedulesend_alias_resolves()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    clk.nowMs = 10000;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    store.set(String("bob"), String("+4479111"));
+    poller.setAliasStore(&store);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(25001, kAllowedFromId, 0,
+        "/schedulesend 60 @bob Hello Bob", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(25001, poller.lastUpdateId());
+
+    const auto &q = poller.getSchedQueue();
+    TEST_ASSERT_NOT_EQUAL(0U, q[0].sendAtMs);
+    TEST_ASSERT_EQUAL_STRING("+4479111", q[0].phone.c_str());
+}
+
+// RFC-0224: unknown @alias in /schedulesend replies error.
+void test_TelegramPoller_schedulesend_unknown_alias_error()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    SmsAliasStore store(persist);
+    store.load();
+    poller.setAliasStore(&store);
+    poller.begin();
+    clk.nowMs += 4000;
+    poller.tick();
+
+    bot.queueUpdateBatch({makeUpdate(25002, kAllowedFromId, 0,
+        "/schedulesend 60 @nobody Test", kAllowedFromId)});
+    clk.nowMs += 4000;
+    poller.tick();
+    TEST_ASSERT_EQUAL(25002, poller.lastUpdateId());
+    bool sawError = false;
+    for (const auto &m : bot.sentMessages())
+        if (m.indexOf("alias") >= 0 || m.indexOf("Unknown") >= 0)
+        { sawError = true; break; }
+    TEST_ASSERT_TRUE(sawError);
+    TEST_ASSERT_EQUAL(0U, poller.getSchedQueue()[0].sendAtMs);
+}
+
 // RFC-0207: /schedbody on empty slot replies error.
 void test_TelegramPoller_schedbody_empty_slot_error()
 {
@@ -8673,6 +8741,9 @@ void run_telegram_poller_tests()
     // RFC-0223: /recurring command
     RUN_TEST(test_TelegramPoller_recurring_creates_repeating_slot);
     RUN_TEST(test_TelegramPoller_recurring_invalid_interval_error);
+    // RFC-0224: @alias in scheduling commands
+    RUN_TEST(test_TelegramPoller_schedulesend_alias_resolves);
+    RUN_TEST(test_TelegramPoller_schedulesend_unknown_alias_error);
     // RFC-0205: /sendafter command
     RUN_TEST(test_TelegramPoller_sendafter_schedules_future_slot);
     RUN_TEST(test_TelegramPoller_sendafter_wraps_to_tomorrow);

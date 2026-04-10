@@ -119,6 +119,32 @@ static String extractArg(const String &lower, const char *prefix)
     return arg;
 }
 
+// RFC-0224: Resolve a phone token to a normalized E.164 number.
+// If rawPhone starts with '@', performs alias lookup via aliasStore (may be nullptr).
+// Returns the resolved phone on success, or "" on failure; fills errOut with a
+// user-facing error message on failure.
+static String resolvePhone(const String &rawPhone,
+                            SmsAliasStore *aliasStore,
+                            String &errOut)
+{
+    if (rawPhone.length() > 0 && rawPhone[0] == '@')
+    {
+        if (!aliasStore)
+        {
+            errOut = String("(aliases not configured)");
+            return String();
+        }
+        String resolved = aliasStore->lookup(rawPhone.substring(1));
+        if (resolved.length() == 0)
+        {
+            errOut = String("Unknown alias: ") + rawPhone;
+            return String();
+        }
+        return resolved;
+    }
+    return sms_codec::normalizePhoneNumber(rawPhone);
+}
+
 TelegramPoller::TelegramPoller(IBotClient &bot,
                                SmsSender &smsSender,
                                ReplyTargetMap &replyTargets,
@@ -2825,10 +2851,17 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("Usage: /schedulesend <delay_min> <phone> <body>"));
                 return;
             }
-            String phone = sms_codec::normalizePhoneNumber(rest.substring(0, sp2));
+            String schedErrMsg;
+            String phone = resolvePhone(rest.substring(0, sp2), aliasStore_, schedErrMsg); // RFC-0224
+            if (phone.length() == 0)
+            {
+                sendErrorReply(u.chatId, schedErrMsg.length() > 0
+                    ? schedErrMsg : String("Usage: /schedulesend <delay_min> <phone> <body>"));
+                return;
+            }
             String body  = rest.substring(sp2 + 1);
             body.trim();
-            if (phone.length() == 0 || body.length() == 0)
+            if (body.length() == 0)
             {
                 bot_.sendMessageTo(u.chatId,
                     String("Usage: /schedulesend <delay_min> <phone> <body>"));
@@ -2958,11 +2991,12 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             }
             String rawPhone2 = rest.substring(0, sp2);
             rawPhone2.trim();
-            String phone2 = sms_codec::normalizePhoneNumber(rawPhone2);
+            String sendAfterErr;
+            String phone2 = resolvePhone(rawPhone2, aliasStore_, sendAfterErr); // RFC-0224
             if (phone2.length() == 0)
             {
-                bot_.sendMessageTo(u.chatId,
-                    String("\xe2\x9d\x8c Invalid phone number.")); // ❌
+                sendErrorReply(u.chatId, sendAfterErr.length() > 0
+                    ? sendAfterErr : String("\xe2\x9d\x8c Invalid phone number.")); // ❌
                 return;
             }
             String body2 = rest.substring(sp2 + 1);
@@ -3084,13 +3118,14 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("Usage: /scheduleat YYYY-MM-DD HH:MM <phone> <body>"));
                 return;
             }
-            String phoneAt = sms_codec::normalizePhoneNumber(rest.substring(0, spAt));
+            String schedAtErr;
+            String phoneAt = resolvePhone(rest.substring(0, spAt), aliasStore_, schedAtErr); // RFC-0224
             String bodyAt  = rest.substring(spAt + 1);
             bodyAt.trim();
             if (phoneAt.length() < 5 || bodyAt.length() == 0)
             {
-                bot_.sendMessageTo(u.chatId,
-                    String("Usage: /scheduleat YYYY-MM-DD HH:MM <phone> <body>"));
+                sendErrorReply(u.chatId, schedAtErr.length() > 0
+                    ? schedAtErr : String("Usage: /scheduleat YYYY-MM-DD HH:MM <phone> <body>"));
                 return;
             }
             if (bodyAt.length() > 127) bodyAt = bodyAt.substring(0, 127);
@@ -3200,7 +3235,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             int n = (int)arg.substring(0, sp).toInt();
             String rawPhone = arg.substring(sp + 1);
             rawPhone.trim();
-            String newPhone = sms_codec::normalizePhoneNumber(rawPhone);
+            String renameErr;
+            String newPhone = resolvePhone(rawPhone, aliasStore_, renameErr); // RFC-0224
             if (n < 1 || n > (int)kScheduledQueueSize || scheduledQueue_[n - 1].sendAtMs == 0)
             {
                 bot_.sendMessageTo(u.chatId,
@@ -3210,8 +3246,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             }
             if (newPhone.length() == 0)
             {
-                bot_.sendMessageTo(u.chatId,
-                    String("\xe2\x9d\x8c Phone number cannot be empty.")); // ❌
+                sendErrorReply(u.chatId, renameErr.length() > 0
+                    ? renameErr : String("\xe2\x9d\x8c Phone number cannot be empty.")); // ❌
                 return;
             }
             scheduledQueue_[n - 1].phone = newPhone;
@@ -3392,13 +3428,14 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     String("Usage: /recurring <interval_min> <phone> <body>"));
                 return;
             }
-            String rPhone = sms_codec::normalizePhoneNumber(rest2.substring(0, sp2));
+            String recurErr;
+            String rPhone = resolvePhone(rest2.substring(0, sp2), aliasStore_, recurErr); // RFC-0224
             String rBody  = rest2.substring(sp2 + 1);
             rBody.trim();
             if (rPhone.length() < 5 || rBody.length() == 0)
             {
-                bot_.sendMessageTo(u.chatId,
-                    String("Usage: /recurring <interval_min> <phone> <body>"));
+                sendErrorReply(u.chatId, recurErr.length() > 0
+                    ? recurErr : String("Usage: /recurring <interval_min> <phone> <body>"));
                 return;
             }
             if (rBody.length() > 127) rBody = rBody.substring(0, 127);
