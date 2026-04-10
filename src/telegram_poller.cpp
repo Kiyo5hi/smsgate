@@ -139,6 +139,8 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             help += "/count \xe2\x80\x94 Session SMS/call counter summary\n";
             help += "/ip \xe2\x80\x94 WiFi IP address, SSID, and RSSI\n";
             help += "/smsslots \xe2\x80\x94 SIM SMS slot usage\n";
+            help += "/lifetime \xe2\x80\x94 Lifetime SMS forwarded and boot count\n";
+            help += "/announce <msg> \xe2\x80\x94 Broadcast message to all authorized users\n";
             help += "/me \xe2\x80\x94 Show your Telegram fromId and chatId\n";
             help += "/reboot \xe2\x80\x94 Soft reboot\n";
             help += "/at <cmd> \xe2\x80\x94 Admin: raw AT command passthrough\n";
@@ -1156,6 +1158,39 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 bot_.sendMessageTo(u.chatId, smsSlotsFn_());
             else
                 bot_.sendMessageTo(u.chatId, String("(SMS slots info not configured)"));
+            return;
+        }
+
+        // RFC-0128: /lifetime — lifetime SMS count and boot count.
+        if (lower == "/lifetime")
+        {
+            if (lifetimeFn_)
+                bot_.sendMessageTo(u.chatId, lifetimeFn_());
+            else
+                bot_.sendMessageTo(u.chatId, String("(lifetime stats not configured)"));
+            return;
+        }
+
+        // RFC-0129: /announce <msg> — broadcast to all authorized users.
+        if (lower.startsWith("/announce"))
+        {
+            if (!announceFn_)
+            {
+                bot_.sendMessageTo(u.chatId, String("(announce not configured)"));
+                return;
+            }
+            String msg = extractArg(u.text, "/announce ");
+            if (msg.length() == 0)
+            {
+                bot_.sendMessageTo(u.chatId,
+                    String("Usage: /announce <message>\nExample: /announce Maintenance in 5 minutes"));
+                return;
+            }
+            int count = announceFn_(msg);
+            String reply = String("\xe2\x9c\x85 Announced to "); // ✅
+            reply += String(count);
+            reply += String(count == 1 ? " user." : " users.");
+            bot_.sendMessageTo(u.chatId, reply);
             return;
         }
 

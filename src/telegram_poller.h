@@ -237,6 +237,18 @@ public:
     // When not set, replies "(SMS slots info not configured)".
     void setSmsSlotssFn(std::function<String()> fn) { smsSlotsFn_ = std::move(fn); }
 
+    // RFC-0128: Optional lifetime stats callback. When set, /lifetime calls
+    // this fn and replies with lifetime SMS count + boot count.
+    // When not set, replies "(lifetime stats not configured)".
+    void setLifetimeFn(std::function<String()> fn) { lifetimeFn_ = std::move(fn); }
+
+    // RFC-0129: Optional announce callback. When set, /announce <msg> calls
+    // this fn with the message text and sends it to all authorized users.
+    // The fn returns the number of users notified (as a string, e.g. "3").
+    // When not set, replies "(announce not configured)".
+    using AnnounceFn = std::function<int(const String &msg)>;
+    void setAnnounceFn(AnnounceFn fn) { announceFn_ = std::move(fn); }
+
     // RFC-0121: Optional network info callback. When set, /network calls this
     // fn and replies with the result (e.g. "📶 Operator: T-Mobile | Reg: home | CSQ 18 (good)").
     // When not set, replies "(network info not configured)".
@@ -292,6 +304,8 @@ private:
     std::function<String()> countFn_;      // RFC-0124
     std::function<String()> ipFn_;         // RFC-0126
     std::function<String()> smsSlotsFn_;   // RFC-0127
+    std::function<String()> lifetimeFn_;  // RFC-0128
+    AnnounceFn announceFn_;               // RFC-0129
     int32_t lastUpdateId_ = 0;
     uint32_t lastPollMs_ = 0;
     bool firstPollDone_ = false;

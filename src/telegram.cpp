@@ -348,6 +348,16 @@ bool registerBotCommands(RealBotClient &bot)
         c["command"] = "smsslots";
         c["description"] = "Show SIM SMS slot usage";
     }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "lifetime";
+        c["description"] = "Show lifetime SMS count and boot count";
+    }
+    {
+        JsonObject c = cmds.createNestedObject();
+        c["command"] = "announce";
+        c["description"] = "Broadcast to all authorized users: /announce <msg>";
+    }
 
     String payload;
     serializeJson(doc, payload);

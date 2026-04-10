@@ -1245,6 +1245,21 @@ void setup()
             }
             return msg;
         });
+        telegramPoller->setLifetimeFn([]() -> String {              // RFC-0128
+            // "📈 Lifetime: 1234 SMS forwarded | Boot #42"
+            String msg = String("\xF0\x9F\x93\x88 Lifetime: "); // 📈
+            msg += String((int)s_lifetimeFwdCount); msg += String(" SMS forwarded");
+            msg += String(" | Boot #"); msg += String((int)s_bootCount);
+            return msg;
+        });
+        telegramPoller->setAnnounceFn([](const String &text) -> int { // RFC-0129
+            int count = 0;
+            for (int i = 0; i < allowedIdCount; i++) {
+                if (realBot.sendMessageTo(allowedIds[i], text))
+                    count++;
+            }
+            return count;
+        });
         telegramPoller->setAtCmdFn([](int64_t fromId, const String &cmd) -> String { // RFC-0107
             // Admin-only: first user in TELEGRAM_CHAT_IDS.
             if (allowedIdCount == 0 || fromId != allowedIds[0])

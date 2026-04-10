@@ -3386,6 +3386,166 @@ void test_TelegramPoller_smsslots_not_configured_replies()
     TEST_ASSERT_TRUE(sawNotConfigured);
 }
 
+// RFC-0128: /lifetime with fn set → replies with fn result.
+void test_TelegramPoller_lifetime_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setLifetimeFn([]() -> String {
+        return String("\xF0\x9F\x93\x88 Lifetime: 1234 SMS forwarded | Boot #7");
+    });
+
+    bot.queueUpdateBatch({makeUpdate(950, kAllowedFromId, 0, "/lifetime", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(950, poller.lastUpdateId());
+    bool sawLifetime = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("1234")) >= 0) { sawLifetime = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawLifetime);
+}
+
+// RFC-0128: /lifetime without fn → "(lifetime stats not configured)".
+void test_TelegramPoller_lifetime_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // lifetimeFn_ NOT set
+
+    bot.queueUpdateBatch({makeUpdate(951, kAllowedFromId, 0, "/lifetime", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(951, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
+// RFC-0129: /announce with fn set → calls fn and replies with count.
+void test_TelegramPoller_announce_calls_fn_and_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+
+    int announceCount = 0;
+    String capturedMsg;
+    poller.setAnnounceFn([&](const String &msg) -> int {
+        capturedMsg = msg;
+        announceCount++;
+        return 2; // simulates 2 users
+    });
+
+    bot.queueUpdateBatch({makeUpdate(952, kAllowedFromId, 0, "/announce Hello all!", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(952, poller.lastUpdateId());
+    TEST_ASSERT_EQUAL(1, announceCount);
+    TEST_ASSERT_EQUAL_STRING("Hello all!", capturedMsg.c_str());
+    bool sawConfirm = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Announced")) >= 0 && m.indexOf(String("2")) >= 0)
+        {
+            sawConfirm = true;
+            break;
+        }
+    }
+    TEST_ASSERT_TRUE(sawConfirm);
+}
+
+// RFC-0129: /announce with no argument → usage error.
+void test_TelegramPoller_announce_no_arg_sends_usage()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    poller.setAnnounceFn([](const String &) -> int { return 0; });
+
+    bot.queueUpdateBatch({makeUpdate(953, kAllowedFromId, 0, "/announce", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(953, poller.lastUpdateId());
+    bool sawUsage = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("Usage")) >= 0) { sawUsage = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawUsage);
+}
+
+// RFC-0129: /announce without fn → "(announce not configured)".
+void test_TelegramPoller_announce_not_configured_replies()
+{
+    FakeModem modem;
+    FakeBotClient bot;
+    FakePersist persist;
+    SmsSender sender(modem);
+    ReplyTargetMap rtm(persist);
+    rtm.load();
+
+    ClockFixture clk;
+    TelegramPoller poller(bot, sender, rtm, persist,
+                          [&]() -> uint32_t { return clk.nowMs; },
+                          allowedAuth);
+    poller.begin();
+    // announceFn_ NOT set
+
+    bot.queueUpdateBatch({makeUpdate(954, kAllowedFromId, 0, "/announce test", kAllowedFromId)});
+    poller.tick();
+
+    TEST_ASSERT_EQUAL(954, poller.lastUpdateId());
+    bool sawNotConfigured = false;
+    for (const auto &m : bot.sentMessages())
+    {
+        if (m.indexOf(String("not configured")) >= 0) { sawNotConfigured = true; break; }
+    }
+    TEST_ASSERT_TRUE(sawNotConfigured);
+}
+
 // RFC-0111: /send twice with same phone+body → second gets "Already queued" error.
 void test_TelegramPoller_send_duplicate_gets_already_queued_error()
 {
@@ -3568,6 +3728,13 @@ void run_telegram_poller_tests()
     // RFC-0127: /smsslots command
     RUN_TEST(test_TelegramPoller_smsslots_calls_fn_and_replies);
     RUN_TEST(test_TelegramPoller_smsslots_not_configured_replies);
+    // RFC-0128: /lifetime command
+    RUN_TEST(test_TelegramPoller_lifetime_calls_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_lifetime_not_configured_replies);
+    // RFC-0129: /announce command
+    RUN_TEST(test_TelegramPoller_announce_calls_fn_and_replies);
+    RUN_TEST(test_TelegramPoller_announce_no_arg_sends_usage);
+    RUN_TEST(test_TelegramPoller_announce_not_configured_replies);
     // RFC-0111: outbound dedup
     RUN_TEST(test_TelegramPoller_send_duplicate_gets_already_queued_error);
 }
