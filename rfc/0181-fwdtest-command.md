@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: implemented
 created: 2026-04-10
 updated: 2026-04-10
 ---
