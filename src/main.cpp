@@ -1518,6 +1518,7 @@ void setup()
         telegramPoller->setAnnounceFn([](const String &text) -> int { // RFC-0129
             int count = 0;
             for (int i = 0; i < allowedIdCount; i++) {
+                esp_task_wdt_reset(); // RFC-0256: each sendMessageTo can block ~23 s; up to 10 recipients
                 if (realBot.sendMessageTo(allowedIds[i], text))
                     count++;
             }

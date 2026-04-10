@@ -3265,6 +3265,9 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 int slotsBeforeImport = 0;
                 for (int i = 0; i < (int)kScheduledQueueSize; i++)
                     if (scheduledQueue_[i].sendAtMs != 0) slotsBeforeImport++;
+#ifdef ESP_PLATFORM
+                esp_task_wdt_reset(); // RFC-0257: each recursive processUpdate sends one ~23 s message
+#endif
                 processUpdate(syn);
                 int slotsAfterImport = 0;
                 for (int i = 0; i < (int)kScheduledQueueSize; i++)
