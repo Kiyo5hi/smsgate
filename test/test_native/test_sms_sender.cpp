@@ -565,6 +565,40 @@ void test_SmsSender_success_logs_to_debug_log()
     TEST_ASSERT_TRUE(log.dump().indexOf(String("out:sent")) >= 0);
 }
 
+// RFC-0091: sentCount increments when an entry succeeds.
+void test_SmsSender_sentCount_increments_on_success()
+{
+    FakeModem modem;
+    modem.setPduSendDefault(1);
+    SmsSender sender(modem);
+
+    TEST_ASSERT_EQUAL(0, sender.sentCount());
+    sender.enqueue(String("+1"), String("hello"), nullptr, nullptr);
+    sender.drainQueue(0);
+    TEST_ASSERT_EQUAL(1, sender.sentCount());
+    TEST_ASSERT_EQUAL(0, sender.failedCount());
+}
+
+// RFC-0091: failedCount increments when all retries are exhausted.
+void test_SmsSender_failedCount_increments_on_final_failure()
+{
+    FakeModem modem;
+    modem.setPduSendDefault(-1); // always fail
+    SmsSender sender(modem);
+
+    TEST_ASSERT_EQUAL(0, sender.failedCount());
+    sender.enqueue(String("+1"), String("hello"), nullptr, nullptr);
+    // Drain kMaxAttempts times to exhaust retries.
+    uint32_t t = 0;
+    for (int i = 0; i < SmsSender::kMaxAttempts; i++)
+    {
+        sender.drainQueue(t);
+        t += 30000; // advance past all backoff windows
+    }
+    TEST_ASSERT_EQUAL(1, sender.failedCount());
+    TEST_ASSERT_EQUAL(0, sender.sentCount());
+}
+
 // RFC-0089: clearQueue removes all entries without firing callbacks.
 void test_SmsSender_clearQueue_removes_all()
 {
@@ -622,4 +656,7 @@ void run_sms_sender_tests()
     // RFC-0089: clearQueue
     RUN_TEST(test_SmsSender_clearQueue_removes_all);
     RUN_TEST(test_SmsSender_clearQueue_empty_returns_zero);
+    // RFC-0091: session counters
+    RUN_TEST(test_SmsSender_sentCount_increments_on_success);
+    RUN_TEST(test_SmsSender_failedCount_increments_on_final_failure);
 }

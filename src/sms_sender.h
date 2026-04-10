@@ -88,6 +88,10 @@ public:
     // Number of entries currently in the queue. For testing / introspection.
     int queueSize() const;
 
+    // RFC-0091: Session counters — reset on construction, never persisted.
+    int sentCount()   const { return sentCount_; }
+    int failedCount() const { return failedCount_; }
+
     // Snapshot of occupied queue entries (RFC-0033: /queue command).
     // Each entry carries phone, a body preview (up to 20 chars), and
     // the attempt count (0 = first attempt not yet made).
@@ -133,4 +137,6 @@ private:
     std::array<OutboundEntry, kQueueSize> queue_;
     DeliveryReportMap *deliveryReportMap_ = nullptr;
     SmsDebugLog *debugLog_ = nullptr;
+    int sentCount_   = 0; // RFC-0091: session-only, not persisted
+    int failedCount_ = 0;
 };

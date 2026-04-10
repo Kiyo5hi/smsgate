@@ -169,6 +169,7 @@ void SmsSender::drainQueue(uint32_t nowMs)
                 le.pduPrefix   = e.body.substring(0, 40);
                 debugLog_->push(le);
             }
+            sentCount_++; // RFC-0091
             auto cb = e.onSuccess; // copy before clearing slot
             e.occupied = false;
             if (cb)
@@ -199,6 +200,7 @@ void SmsSender::drainQueue(uint32_t nowMs)
                     le.pduPrefix   = e.body.substring(0, 40);
                     debugLog_->push(le);
                 }
+                failedCount_++; // RFC-0091
                 auto cb = e.onFinalFailure; // copy before clearing slot
                 e.occupied = false;
                 if (cb)

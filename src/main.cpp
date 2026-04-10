@@ -745,6 +745,7 @@ void setup()
         msg += "  Concat in-flight: "; msg += String((int)smsHandler.concatKeyCount()); msg += "\n";
         // RFC-0034: show outbound retry queue depth.
         msg += "  Outbound queue: "; msg += String(smsSender.queueSize()); msg += "/"; msg += String(SmsSender::kQueueSize); msg += "\n";
+        msg += "  Outbound: "; msg += String(smsSender.sentCount()); msg += " sent, "; msg += String(smsSender.failedCount()); msg += " failed\n"; // RFC-0091
         // RFC-0036: SIM slot usage (reflects SMS still on SIM — fragments + sweep backlog).
         if (cachedSimUsed >= 0) {
             msg += "  SIM: "; msg += String(cachedSimUsed); msg += "/"; msg += String(cachedSimTotal); msg += " slots\n";
