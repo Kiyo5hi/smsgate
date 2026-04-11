@@ -137,6 +137,10 @@ fn main() {
     log::info!("smsgate ready");
     let _ = messenger.send_message("✅ smsgate started");
 
+    // Subscribe main task to the Task WDT (RFC-0001 §4.4: 120s timeout).
+    // The WDT fires if esp_task_wdt_reset() is not called within the timeout.
+    unsafe { esp_idf_sys::esp_task_wdt_add(std::ptr::null_mut()); }
+
     // ---- Main loop ----
     let boot_ms = now_ms();
     let mut consecutive_failures: u8 = 0;
@@ -145,6 +149,9 @@ fn main() {
     loop {
         let now = now_ms();
         let uptime_ms = elapsed_since(boot_ms, now);
+
+        // Kick the hardware watchdog (RFC-0001 §4.4)
+        unsafe { esp_idf_sys::esp_task_wdt_reset(); }
 
         // Update modem status every 30 s
         if elapsed_since(last_status_update, now) > 30_000 {

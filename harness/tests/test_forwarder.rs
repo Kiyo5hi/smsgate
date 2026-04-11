@@ -167,6 +167,41 @@ fn forward_sms_stores_reply_mapping() {
 }
 
 #[test]
+fn block_list_suffix_match_shorter_stored() {
+    // Stored: "138000" — should match "+8613800138000" (ends_with)
+    let mut store = MemStore::new();
+    add_to_blocklist("138000", &mut store).unwrap();
+    // "+8613800138000" normalized = "+8613800138000", stored "138000"
+    // nb.ends_with(&normalized) is false, normalized.ends_with(&nb) = true ("...138000" ends with "138000")
+    assert!(is_blocked("+8613800138000", &store));
+    // non-matching number should NOT be blocked
+    assert!(!is_blocked("+8613800138001", &store));
+}
+
+#[test]
+fn block_list_duplicate_add_is_idempotent() {
+    let mut store = MemStore::new();
+    add_to_blocklist("10086", &mut store).unwrap();
+    add_to_blocklist("10086", &mut store).unwrap(); // second add should be no-op
+    let list = load_blocklist(&store);
+    assert_eq!(list.len(), 1, "duplicate add should not grow list");
+}
+
+#[test]
+fn forwarding_paused_log_entry_not_forwarded() {
+    let mut store = MemStore::new();
+    save_bool(&mut store, keys::FWD_ENABLED, false).unwrap();
+    let mut messenger = RecordingMessenger::new();
+    let mut router = ReplyRouter::new();
+    let mut log = LogRing::new();
+
+    forward_sms(&make_sms("+1", "test"), &mut messenger, &mut router, &mut log, &mut store);
+
+    assert_eq!(log.len(), 1);
+    assert!(!log.last_n(1)[0].forwarded, "paused message should log as not-forwarded");
+}
+
+#[test]
 fn messenger_failure_returns_none_and_no_router_entry() {
     let mut store = MemStore::new();
     let mut messenger = FailingMessenger;

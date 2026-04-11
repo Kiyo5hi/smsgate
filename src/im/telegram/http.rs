@@ -25,7 +25,21 @@ impl TelegramHttpClient {
     }
 
     /// POST JSON to a Telegram Bot API path; returns the response body.
+    ///
+    /// On connection-level failure (server closed keep-alive, timeout, etc.),
+    /// reconnects once and retries automatically.
     pub fn post(&mut self, path: &str, json_body: &str) -> anyhow::Result<String> {
+        match self.do_post(path, json_body) {
+            Ok(body) => Ok(body),
+            Err(e) => {
+                log::warn!("[http] request failed ({}), reconnecting…", e);
+                self.reconnect()?;
+                self.do_post(path, json_body)
+            }
+        }
+    }
+
+    fn do_post(&mut self, path: &str, json_body: &str) -> anyhow::Result<String> {
         let body_bytes = json_body.as_bytes();
         let request = format!(
             "POST {} HTTP/1.1\r\n\
@@ -38,18 +52,13 @@ impl TelegramHttpClient {
             path, HOST, body_bytes.len(), json_body
         );
 
-        // Ensure connection
-        if !self.is_connected() {
-            self.reconnect()?;
-        }
-
         self.tls.write_all(request.as_bytes())?;
 
         let mut response = String::with_capacity(4096);
         let mut buf = [0u8; 1024];
         let deadline = std::time::Instant::now() + READ_TIMEOUT;
 
-        // Read status line + headers to find Content-Length
+        // Read until we have the full headers
         loop {
             if std::time::Instant::now() > deadline {
                 anyhow::bail!("read timeout");
@@ -57,7 +66,6 @@ impl TelegramHttpClient {
             let n = self.tls.read(&mut buf)?;
             if n == 0 { break; }
             response.push_str(&String::from_utf8_lossy(&buf[..n]));
-            // Check if we have the full headers
             if response.contains("\r\n\r\n") { break; }
         }
 
@@ -85,15 +93,11 @@ impl TelegramHttpClient {
         Ok(body)
     }
 
-    fn is_connected(&self) -> bool {
-        // esp_idf_svc EspTls doesn't expose a direct "is connected" check;
-        // we optimistically assume connected and handle errors on write.
-        true
-    }
-
     fn reconnect(&mut self) -> anyhow::Result<()> {
         let conf = esp_idf_svc::tls::Config::default();
-        self.tls.connect(HOST, PORT, &conf)?;
+        let mut tls = EspTls::new()?;
+        tls.connect(HOST, PORT, &conf)?;
+        self.tls = tls;
         Ok(())
     }
 }

@@ -1,5 +1,6 @@
 # ESP32 sdkconfig defaults for smsgate
-CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+# ESP-IDF v5.2 caps this at 60; 120 (config.toml) is enforced by the kick interval
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=60
 CONFIG_LWIP_DNS_MAX_SERVERS=2
 CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
 CONFIG_ESP_TLS_INSECURE=n

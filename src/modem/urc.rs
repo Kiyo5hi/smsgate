@@ -1,6 +1,11 @@
 //! URC (Unsolicited Result Code) classifier and parser.
 
 /// Returns true iff `line` looks like a URC (not a command response).
+///
+/// Note: +CREG: / +CGREG: / +CEREG: are intentionally excluded.
+/// With AT+CREG=0 (default, no URC mode enabled) these prefixes appear only
+/// as responses to AT+CREG? — classifying them as URCs would siphon the
+/// response body into the URC buffer and break registration checks.
 pub fn is_urc(line: &str) -> bool {
     // Known URC prefixes from A76xx
     matches!(
@@ -11,9 +16,6 @@ pub fn is_urc(line: &str) -> bool {
              line.starts_with("+CDS:")  ||
              line.starts_with("+CLIP:") ||
              line.starts_with("RING")   ||
-             line.starts_with("+CREG:") ||
-             line.starts_with("+CGREG:")||
-             line.starts_with("+CEREG:")||
              line.starts_with("NO CARRIER") ||
              line.starts_with("+CUSD:")
     )

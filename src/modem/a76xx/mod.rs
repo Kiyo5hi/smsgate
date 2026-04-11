@@ -40,7 +40,7 @@ impl A76xxModem {
         let cmds = [
             "E0",          // echo off
             "+CMGF=0",     // PDU mode
-            "+CNMI=2,2,0,0,0", // direct delivery of new SMS via +CMT
+            "+CNMI=2,1,0,0,0", // store SMS in memory, notify via +CMTI: <mem>,<idx>
             "+CLIP=1",     // caller-line identification
         ];
         for cmd in &cmds {

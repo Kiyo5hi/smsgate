@@ -1,6 +1,5 @@
 //! IM backend abstraction.
 
-#[cfg(feature = "esp32")]
 pub mod telegram;
 
 use thiserror::Error;

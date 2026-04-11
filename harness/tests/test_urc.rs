@@ -31,17 +31,24 @@ fn no_carrier_is_urc() {
     assert!(is_urc("NO CARRIER"));
 }
 
+// +CREG / +CGREG / +CEREG are intentionally NOT URCs (see is_urc doc).
+// They appear only as AT+CREG? responses with AT+CREG=0 (default).
 #[test]
-fn creg_is_urc() {
-    assert!(is_urc("+CREG: 1"));
-    assert!(is_urc("+CGREG: 1"));
-    assert!(is_urc("+CEREG: 1"));
+fn creg_is_not_urc() {
+    assert!(!is_urc("+CREG: 1"));
+    assert!(!is_urc("+CGREG: 1"));
+    assert!(!is_urc("+CEREG: 1"));
 }
 
 #[test]
 fn cds_is_urc() {
     assert!(is_urc("+CDS: ..."));
     assert!(is_urc("+CDSI: 1"));
+}
+
+#[test]
+fn cusd_is_urc() {
+    assert!(is_urc("+CUSD: 0,\"balance\",15"));
 }
 
 #[test]

@@ -446,6 +446,53 @@ fn pack_with_offset() {
     assert!(packed.len() >= 7); // UDH bytes (0-5) + body
 }
 
+// ---------------------------------------------------------------------------
+// pdu_timestamp_to_unix
+// ---------------------------------------------------------------------------
+
+#[test]
+fn pdu_timestamp_unix_known_epoch() {
+    // 2024-01-01 00:00:00 UTC+0 = 1704067200
+    // PDU format: "24/01/01,00:00:00+00" but stored as YY/MM/DD,HH:MM:SS+TZ
+    let ts = "24/01/01,00:00:00+00";
+    let unix = pdu_timestamp_to_unix(ts);
+    // 2024 epoch = 1704067200 (leap-aware)
+    assert_eq!(unix, 1704067200, "got {}", unix);
+}
+
+#[test]
+fn pdu_timestamp_unix_utc8_offset() {
+    // 2024-01-01 08:00:00 UTC+8 = same moment as 2024-01-01 00:00:00 UTC
+    // TZ token "+32" = +32 * 15 min = +480 min = +8h
+    let ts = "24/01/01,08:00:00+32";
+    let unix = pdu_timestamp_to_unix(ts);
+    assert_eq!(unix, 1704067200, "UTC+8 should equal UTC epoch, got {}", unix);
+}
+
+#[test]
+fn pdu_timestamp_unix_short_returns_zero() {
+    assert_eq!(pdu_timestamp_to_unix("24/01/01"), 0);
+    assert_eq!(pdu_timestamp_to_unix(""), 0);
+}
+
+#[test]
+fn pdu_timestamp_unix_invalid_month_returns_zero() {
+    // Month 13 is invalid
+    let ts = "24/13/01,00:00:00+00";
+    assert_eq!(pdu_timestamp_to_unix(ts), 0);
+}
+
+// ---------------------------------------------------------------------------
+// Misc: human_readable_phone edge cases
+// ---------------------------------------------------------------------------
+
+#[test]
+fn human_readable_short_number_unchanged() {
+    // Numbers that don't match 11-digit or +86 14-char patterns pass through
+    assert_eq!(human_readable_phone("+1555"), "+1555");
+    assert_eq!(human_readable_phone("10086"), "10086");
+}
+
 fn unpack_from_packed(data: &[u8], n_septets: usize, offset: usize) -> Vec<u8> {
     let mut out = Vec::with_capacity(n_septets);
     for i in 0..n_septets {

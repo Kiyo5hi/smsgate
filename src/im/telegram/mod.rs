@@ -1,20 +1,27 @@
 //! Telegram Bot API backend.
 
+#[cfg(feature = "esp32")]
 pub mod http;
 pub mod types;
 
+#[cfg(feature = "esp32")]
 use super::{InboundMessage, MessageId, Messenger, MessengerError};
+#[cfg(feature = "esp32")]
 use crate::config::Config;
+#[cfg(feature = "esp32")]
 use http::TelegramHttpClient;
+#[cfg(feature = "esp32")]
 use types::{ApiResult, SendMessageResult, Update};
 
 /// Telegram Bot API messenger.
+#[cfg(feature = "esp32")]
 pub struct TelegramMessenger {
     http: TelegramHttpClient,
     chat_id: i64,
     token: String,
 }
 
+#[cfg(feature = "esp32")]
 impl TelegramMessenger {
     pub fn new(http: TelegramHttpClient) -> Self {
         TelegramMessenger {
@@ -47,6 +54,7 @@ impl TelegramMessenger {
     }
 }
 
+#[cfg(feature = "esp32")]
 impl Messenger for TelegramMessenger {
     fn send_message(&mut self, text: &str) -> Result<MessageId, MessengerError> {
         let escaped = text.replace('\\', "\\\\").replace('"', "\\\"");

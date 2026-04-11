@@ -126,13 +126,24 @@ Expected boot log milestones on T-A7670X cold start:
 - `t≈3545ms`: RESET_PIN configured
 - `t≈6745ms`: Board power-on sequence complete (modem booted)
 - `t≈12900ms`: Modem responded to AT probe
-- `t≈45000ms`: Network registration check (30s window)
-- `t≈49000ms`: WiFi DHCP IP assigned
-- `t≈51000ms`: Sweeping existing SMS
-- `t≈55000ms`: smsgate ready
+- `t≈15500ms`: **Network registered** (typical; within 30s window)
+- `t≈19500ms`: WiFi DHCP IP assigned
+- `t≈21000ms`: Sweeping existing SMS
+- `t≈22000ms`: smsgate ready
 
-Network registration (`+CREG: 0,1`) may time out on cold boot and produce a warning — the
-bridge continues. The modem registers in background and SMS delivery still works.
+If network registration doesn't appear within 30s, a warning is logged and boot continues.
+SMS delivery still works — the modem registers in the background.
+
+## Modem Driver Notes
+
+**`is_urc` deliberately excludes `+CREG:` / `+CGREG:` / `+CEREG:`**. With `AT+CREG=0`
+(default — no URC mode), these prefixes appear only as responses to `AT+CREG?`. If they were
+classified as URCs, `send_at("+CREG?")` would siphon the response into the URC buffer and
+registration checks would always return `false`. Do not add them back to `is_urc` unless
+`AT+CREG=1` (or `=2`) is also added to the modem init sequence.
+
+**`AT+CNMI=2,1,0,0,0`** (store + `+CMTI` notify) is the required setting. The alternative
+`mt=2` (direct `+CMT` delivery) requires two-line URC parsing that is not implemented.
 
 ## Forbidden Patterns
 
@@ -141,3 +152,4 @@ bridge continues. The modem registers in background and SMS delivery still works
 - Importing `im::telegram` (or any concrete backend) from `bridge/`, `commands/`, `sms/`, `persist/`
 - Adding a fifth NVS key without updating `rfc/0001-foundation.md §4.3`
 - ASCII art diagrams in documentation — use Mermaid instead
+- Adding `+CREG:` back to `is_urc` without also enabling `AT+CREG=1` in modem init
