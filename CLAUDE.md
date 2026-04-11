@@ -6,13 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ESP32 firmware in Rust — bridges SMS and IM (Telegram and others); two-way forwarding.
 Hardware: LilyGo T-A7670X (ESP32 + A7670G modem, CH9102 USB bridge).
-This branch (`rust-rewrite`) is a scaffold; working C++ firmware is on `main`/`stable`.
+This branch (`rust-rewrite`) is hardware-tested and boots to working state on real hardware.
 
 ## Commands
 
 ```bash
 # Host tests — no hardware needed; use after every change
-cargo test --workspace --exclude fuzz --no-default-features
+cargo test -p harness
 
 # Single test file
 cargo test -p harness --test <name>
@@ -22,8 +22,8 @@ cargo test -p harness --test <name>
 CARGO_TARGET_DIR=/c/t cargo +esp build --release --target xtensa-esp32-espidf
 
 # Flash + monitor (Windows COM port, e.g. COM3)
-espflash flash --release --port COM3 --target-app-partition target/xtensa-esp32-espidf/release/smsgate
-espflash monitor --port COM3
+espflash flash /c/t/xtensa-esp32-espidf/release/smsgate --port COM3
+espflash monitor --port COM3 --non-interactive
 
 # Fuzz smoke (nightly, run after touching PDU/URC/command parsers)
 # Note: requires cargo-fuzz and Linux/macOS (Windows DLL issue with libFuzzer)
@@ -104,6 +104,35 @@ Verify after every change:
 - `ScriptedModem` unconsumed steps → test failure (no silent pass)
 - Command count ≤ 10, or exception documented in `rfc/0001-foundation.md §4.2`
 - NVS key set unchanged (4 keys only), or updated in `rfc/0001-foundation.md §4.3`
+
+## sdkconfig.defaults Known Quirk
+
+`ESP_IDF_SDKCONFIG_DEFAULTS` in `.cargo/config.toml` must be an **absolute path**. A relative
+path is resolved against the esp-idf-sys crate directory in `~/.cargo/registry`, not the project
+root, and silently produces the wrong (default) sdkconfig values.
+
+If you change `sdkconfig.defaults` and the change doesn't seem to take effect, delete the cached
+sdkconfig to force kconfgen to regenerate from scratch:
+```bash
+rm /c/t/xtensa-esp32-espidf/release/build/esp-idf-sys-*/out/sdkconfig
+```
+Then rebuild. The `sdkconfig.defaults` is applied as a *seed* (lower priority than existing
+sdkconfig), so deleting the cache is required for changes to take effect.
+
+## Boot Sequence Timing
+
+Expected boot log milestones on T-A7670X cold start:
+- `t≈645ms`: smsgate starting
+- `t≈3545ms`: RESET_PIN configured
+- `t≈6745ms`: Board power-on sequence complete (modem booted)
+- `t≈12900ms`: Modem responded to AT probe
+- `t≈45000ms`: Network registration check (30s window)
+- `t≈49000ms`: WiFi DHCP IP assigned
+- `t≈51000ms`: Sweeping existing SMS
+- `t≈55000ms`: smsgate ready
+
+Network registration (`+CREG: 0,1`) may time out on cold boot and produce a warning — the
+bridge continues. The modem registers in background and SMS delivery still works.
 
 ## Forbidden Patterns
 
