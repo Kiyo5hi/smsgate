@@ -141,7 +141,9 @@ bool registerBotCommands(RealBotClient &bot)
     String url = String("/bot") + botToken + "/setMyCommands";
 
     // Register all commands so Telegram's autocomplete menu shows them.
-    DynamicJsonDocument doc(1024);
+    // RFC-0275: 97 objects × ~40 bytes ArduinoJson overhead = ~3880 bytes needed.
+    // Use 6144 to give headroom for future command additions.
+    DynamicJsonDocument doc(6144);
     JsonArray cmds = doc.createNestedArray("commands");
     {
         JsonObject c = cmds.createNestedObject();
