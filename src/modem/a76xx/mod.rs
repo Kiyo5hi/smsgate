@@ -38,16 +38,24 @@ impl A76xxModem {
         }
 
         let cmds = [
-            "E0",          // echo off
-            "+CMGF=0",     // PDU mode
-            "+CNMI=2,1,0,0,0", // store SMS in memory, notify via +CMTI: <mem>,<idx>
-            "+CLIP=1",     // caller-line identification
+            "E0",              // echo off
+            "+CMGF=0",         // PDU mode
+            "+CNMI=2,1,0,0,0", // store SMS in modem memory, notify via +CMTI: <mem>,<idx>
+            "+CLIP=1",         // caller-line identification
         ];
         for cmd in &cmds {
             let r = self.send_at(cmd)?;
             if !r.ok {
                 log::warn!("[a76xx] init cmd AT{} returned error", cmd);
             }
+        }
+
+        // Query active storage for diagnostics. Non-fatal; some SIM/modem combos
+        // return +CMS ERROR here if SMS management isn't supported.
+        match self.send_at("+CPMS?") {
+            Ok(r) if r.ok  => log::info!("[a76xx] CPMS: {}", r.body.trim()),
+            Ok(r)          => log::debug!("[a76xx] CPMS? not supported: {}", r.body.trim()),
+            Err(_)         => log::debug!("[a76xx] CPMS? timed out"),
         }
 
         // Wait for network registration (up to 30 s)

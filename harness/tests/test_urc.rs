@@ -69,13 +69,27 @@ fn at_response_body_is_not_urc() {
 #[test]
 fn parse_cmti_extracts_index() {
     let urc = parse_urc("+CMTI: \"SM\",3");
-    assert!(matches!(urc, Urc::NewSms { index: 3 }));
+    assert!(matches!(urc, Urc::NewSms { index: 3, .. }));
+}
+
+#[test]
+fn parse_cmti_extracts_mem_sm() {
+    if let Urc::NewSms { mem, index } = parse_urc("+CMTI: \"SM\",3") {
+        assert_eq!(mem, "SM");
+        assert_eq!(index, 3);
+    } else {
+        panic!("expected Urc::NewSms");
+    }
 }
 
 #[test]
 fn parse_cmti_me_memory() {
-    let urc = parse_urc("+CMTI: \"ME\",7");
-    assert!(matches!(urc, Urc::NewSms { index: 7 }));
+    if let Urc::NewSms { mem, index } = parse_urc("+CMTI: \"ME\",7") {
+        assert_eq!(mem, "ME");
+        assert_eq!(index, 7);
+    } else {
+        panic!("expected Urc::NewSms");
+    }
 }
 
 #[test]
@@ -128,5 +142,5 @@ fn parse_unknown_is_other() {
 #[test]
 fn parse_cmti_bad_index_defaults_zero() {
     let urc = parse_urc("+CMTI: \"SM\",abc");
-    assert!(matches!(urc, Urc::NewSms { index: 0 }));
+    assert!(matches!(urc, Urc::NewSms { index: 0, .. }));
 }

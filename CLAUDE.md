@@ -145,6 +145,15 @@ registration checks would always return `false`. Do not add them back to `is_urc
 **`AT+CNMI=2,1,0,0,0`** (store + `+CMTI` notify) is the required setting. The alternative
 `mt=2` (direct `+CMT` delivery) requires two-line URC parsing that is not implemented.
 
+**`AT+CPMS` and storage memory**: On the T-A7670X hardware, `AT+CPMS?` returns `+CMS ERROR`
+(the SIM doesn't support SMS management queries). The modem defaults to `"ME"` (device flash)
+for all three memory slots. `+CMTI` notifications will say `+CMTI: "ME",<index>`. The modem
+driver passes the memory name through `Urc::NewSms { mem, index }` and calls `AT+CPMS=<mem>`
+before each `AT+CMGR` to guarantee the read uses the correct storage. SMS is deleted only after
+a successful Telegram forward — if `forward_sms` fails the slot stays occupied and sweep on
+next boot retries. Do not add `AT+CPMS="SM","SM","SM"` to modem init: it silently triggers
+CMTI notifications for all stored SMS which can overflow the 256-byte UART Rx buffer during init.
+
 ## Forbidden Patterns
 
 - `>=` / `<` on raw `u32` timestamps — use `elapsed_since()` / `is_past()` only

@@ -24,8 +24,8 @@ pub fn is_urc(line: &str) -> bool {
 /// Parsed URC discriminant.
 #[derive(Debug)]
 pub enum Urc {
-    /// New SMS stored: (memory, index).
-    NewSms { index: u16 },
+    /// New SMS stored: memory ("SM" or "ME") and index.
+    NewSms { mem: String, index: u16 },
     /// Direct SMS delivery (CMT mode): (PDU hex, TPDU len) — followed by a second line.
     SmsDelivery,
     /// Incoming call (RING without CLIP yet).
@@ -44,10 +44,14 @@ pub enum Urc {
 pub fn parse_urc(line: &str) -> Urc {
     if let Some(rest) = line.strip_prefix("+CMTI: ") {
         // +CMTI: "SM",3  or  +CMTI: "ME",3
-        let idx: u16 = rest.split(',').nth(1)
+        let mut parts = rest.splitn(2, ',');
+        let mem = parts.next()
+            .map(|s| s.trim().trim_matches('"').to_string())
+            .unwrap_or_else(|| "SM".to_string());
+        let idx: u16 = parts.next()
             .and_then(|s| s.trim().parse().ok())
             .unwrap_or(0);
-        return Urc::NewSms { index: idx };
+        return Urc::NewSms { mem, index: idx };
     }
     if line.starts_with("+CMT:") {
         return Urc::SmsDelivery;

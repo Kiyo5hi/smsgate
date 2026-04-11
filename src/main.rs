@@ -167,8 +167,8 @@ fn main() {
         // Poll URCs (non-blocking)
         while let Some(urc) = modem.poll_urc() {
             match parse_urc(&urc) {
-                Urc::NewSms { index } => {
-                    handle_new_sms(index, &mut *modem, &mut router, &mut log,
+                Urc::NewSms { mem, index } => {
+                    handle_new_sms(&mem, index, &mut *modem, &mut router, &mut log,
                                    &mut concat, &mut messenger, &mut *store);
                 }
                 Urc::SmsDelivery => {
@@ -221,6 +221,7 @@ fn now_ms() -> u32 {
 
 #[cfg(feature = "esp32")]
 fn handle_new_sms(
+    mem: &str,
     index: u16,
     modem: &mut dyn smsgate::modem::ModemPort,
     router: &mut ReplyRouter,
@@ -229,28 +230,49 @@ fn handle_new_sms(
     messenger: &mut dyn smsgate::im::Messenger,
     store: &mut dyn smsgate::persist::Store,
 ) {
+    log::info!("[main] +CMTI: mem={} index={}", mem, index);
+
+    // Switch read storage to where the modem stored the SMS.
+    // Necessary when the default storage differs from what CNMI uses.
+    let _ = modem.send_at(&format!("+CPMS=\"{}\"", mem));
+
     let r = modem.send_at(&format!("+CMGR={}", index));
-    let pdu_hex = match r {
+    let pdu_hex = match &r {
         Ok(resp) if resp.ok => {
             resp.body.lines()
                 .find(|l| !l.starts_with("+CMGR:") && !l.is_empty())
                 .map(|s| s.trim().to_string())
         }
-        _ => None,
+        Ok(resp) => {
+            log::warn!("[main] AT+CMGR={} error body: {}", index, resp.body);
+            None
+        }
+        Err(e) => {
+            log::warn!("[main] AT+CMGR={} failed: {:?}", index, e);
+            None
+        }
     };
 
     let Some(hex) = pdu_hex else {
-        log::warn!("[main] could not read SMS at slot {}", index);
+        log::warn!("[main] could not read SMS at mem={} slot={}", mem, index);
         return;
     };
 
-    // Delete immediately
-    let _ = modem.send_at(&format!("+CMGD={}", index));
-
-    process_pdu_hex(&hex, index, router, log, concat, messenger, store);
+    // Delete only after a successful forward so the SMS survives a crash/power loss.
+    // For concat partials (process returns false) we still delete to avoid storage overflow.
+    let delete = process_pdu_hex(&hex, index, router, log, concat, messenger, store);
+    if delete {
+        let _ = modem.send_at(&format!("+CMGD={}", index));
+    } else {
+        log::warn!("[main] forwarding failed — SMS stays at mem={} slot={} for retry on next boot", mem, index);
+    }
 }
 
 #[cfg(feature = "esp32")]
+/// Returns `true` if the modem slot should be deleted:
+/// - single SMS forwarded successfully
+/// - concat partial (slot consumed by concat state machine; delete to free space)
+/// Returns `false` if forwarding failed — keep the SMS so sweep on next boot can retry.
 fn process_pdu_hex(
     hex: &str,
     slot: u16,
@@ -259,10 +281,13 @@ fn process_pdu_hex(
     concat: &mut ConcatReassembler,
     messenger: &mut dyn smsgate::im::Messenger,
     store: &mut dyn smsgate::persist::Store,
-) {
+) -> bool {
     let pdu = match parse_sms_pdu(hex) {
         Ok(p) => p,
-        Err(e) => { log::error!("[main] PDU parse error: {}", e); return; }
+        Err(e) => {
+            log::error!("[main] PDU parse error at slot {}: {}", slot, e);
+            return true; // unparseable — no point keeping it
+        }
     };
 
     let sms = if pdu.is_concatenated {
@@ -273,7 +298,7 @@ fn process_pdu_hex(
                 timestamp: complete.timestamp,
                 slot,
             },
-            None => return, // still waiting for more parts
+            None => return true, // concat partial consumed; delete to free modem slot
         }
     } else {
         SmsMessage {
@@ -284,7 +309,7 @@ fn process_pdu_hex(
         }
     };
 
-    forward_sms(&sms, messenger, router, log, store);
+    forward_sms(&sms, messenger, router, log, store).is_some()
 }
 
 #[cfg(feature = "esp32")]
@@ -296,7 +321,27 @@ fn sweep_existing_sms(
     messenger: &mut dyn smsgate::im::Messenger,
     store: &mut dyn smsgate::persist::Store,
 ) {
-    log::info!("[main] sweeping existing SMS…");
+    // Sweep both SM (SIM) and ME (device flash) in case SMS arrived before
+    // CPMS was explicitly configured. Normal operation after init stores in SM.
+    for mem in &["SM", "ME"] {
+        let _ = modem.send_at(&format!("+CPMS=\"{}\",\"{}\",\"{}\"", mem, mem, mem));
+        log::info!("[main] sweeping {} storage…", mem);
+        sweep_one_storage(mem, modem, router, log, concat, messenger, store);
+    }
+    // Note: if AT+CPMS="SM" failed (e.g. SIM has no message storage), the modem
+    // stays on whatever it defaulted to (typically "ME"). That is correct.
+}
+
+#[cfg(feature = "esp32")]
+fn sweep_one_storage(
+    mem: &str,
+    modem: &mut dyn smsgate::modem::ModemPort,
+    router: &mut ReplyRouter,
+    log: &mut LogRing,
+    concat: &mut ConcatReassembler,
+    messenger: &mut dyn smsgate::im::Messenger,
+    store: &mut dyn smsgate::persist::Store,
+) {
     let r = modem.send_at("+CMGL=4");
     let Ok(resp) = r else { return; };
     if !resp.ok { return; }
@@ -309,8 +354,13 @@ fn sweep_existing_sms(
                 .and_then(|s| s.trim().parse().ok()).unwrap_or(0);
             if let Some(hex) = lines.next() {
                 let hex = hex.trim();
-                let _ = modem.send_at(&format!("+CMGD={}", slot));
-                process_pdu_hex(hex, slot, router, log, concat, messenger, store);
+                log::info!("[main] sweep found SMS in {} slot {}", mem, slot);
+                let delete = process_pdu_hex(hex, slot, router, log, concat, messenger, store);
+                if delete {
+                    let _ = modem.send_at(&format!("+CMGD={}", slot));
+                } else {
+                    log::warn!("[main] sweep forward failed — SMS stays at {} slot {}", mem, slot);
+                }
             }
         }
     }
