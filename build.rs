@@ -1,0 +1,70 @@
+use std::path::Path;
+
+fn main() {
+    // embuild: required for esp-idf-sys link patches
+    embuild::build::CfgArgs::output_propagated("ESP_IDF").ok();
+    embuild::build::LinkArgs::output_propagated("ESP_IDF").ok();
+
+    // Instruct Cargo to rerun this script if config.toml changes.
+    println!("cargo:rerun-if-changed=config.toml");
+    println!("cargo:rerun-if-changed=build.rs");
+
+    let config_path = Path::new("config.toml");
+    if !config_path.exists() {
+        println!(
+            "cargo:warning=config.toml not found. \
+             Copy config.toml.example to config.toml and fill in your credentials."
+        );
+        // Emit empty-string placeholders so the crate still compiles; the
+        // device will fail at runtime when it tries to connect.
+        emit_empty_defaults();
+        return;
+    }
+
+    let config_str = std::fs::read_to_string(config_path)
+        .expect("Failed to read config.toml");
+
+    let config: toml::Value = config_str
+        .parse()
+        .expect("config.toml is not valid TOML");
+
+    let get = |section: &str, key: &str| -> String {
+        config
+            .get(section)
+            .and_then(|s| s.get(key))
+            .and_then(|v| v.as_str().map(|s| s.to_string())
+                .or_else(|| v.as_integer().map(|i| i.to_string()))
+                .or_else(|| v.as_float().map(|f| f.to_string()))
+                .or_else(|| v.as_bool().map(|b| b.to_string())))
+            .unwrap_or_default()
+    };
+
+    println!("cargo:rustc-env=CFG_WIFI_SSID={}", get("wifi", "ssid"));
+    println!("cargo:rustc-env=CFG_WIFI_PASSWORD={}", get("wifi", "password"));
+    println!("cargo:rustc-env=CFG_IM_BACKEND={}", get("im", "backend"));
+    println!("cargo:rustc-env=CFG_IM_BOT_TOKEN={}", get("im", "bot_token"));
+    println!("cargo:rustc-env=CFG_IM_CHAT_ID={}", get("im", "chat_id"));
+    println!("cargo:rustc-env=CFG_MODEM_UART_TX={}", get("modem", "uart_tx"));
+    println!("cargo:rustc-env=CFG_MODEM_UART_RX={}", get("modem", "uart_rx"));
+    println!("cargo:rustc-env=CFG_MODEM_UART_BAUD={}", get("modem", "uart_baud"));
+    println!("cargo:rustc-env=CFG_MODEM_PWRKEY={}", get("modem", "pwrkey"));
+    println!("cargo:rustc-env=CFG_BRIDGE_MAX_FAILURES={}", get("bridge", "max_failures_before_reboot"));
+    println!("cargo:rustc-env=CFG_BRIDGE_POLL_INTERVAL_MS={}", get("bridge", "poll_interval_ms"));
+    println!("cargo:rustc-env=CFG_BRIDGE_WATCHDOG_SEC={}", get("bridge", "watchdog_timeout_sec"));
+}
+
+fn emit_empty_defaults() {
+    for key in &[
+        "CFG_WIFI_SSID", "CFG_WIFI_PASSWORD", "CFG_IM_BACKEND",
+        "CFG_IM_BOT_TOKEN", "CFG_IM_CHAT_ID",
+    ] {
+        println!("cargo:rustc-env={}=", key);
+    }
+    println!("cargo:rustc-env=CFG_MODEM_UART_TX=26");
+    println!("cargo:rustc-env=CFG_MODEM_UART_RX=27");
+    println!("cargo:rustc-env=CFG_MODEM_UART_BAUD=115200");
+    println!("cargo:rustc-env=CFG_MODEM_PWRKEY=4");
+    println!("cargo:rustc-env=CFG_BRIDGE_MAX_FAILURES=8");
+    println!("cargo:rustc-env=CFG_BRIDGE_POLL_INTERVAL_MS=3000");
+    println!("cargo:rustc-env=CFG_BRIDGE_WATCHDOG_SEC=120");
+}

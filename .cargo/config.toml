@@ -1,0 +1,13 @@
+[target.xtensa-esp32-espidf]
+linker = "ldproxy"
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[env]
+# Absolute path required — esp-idf-sys resolves this relative to its own crate
+# directory (in ~/.cargo/registry), not the project root. Update if you clone to
+# a different path.
+ESP_IDF_SDKCONFIG_DEFAULTS = "C:/Users/Kiyoshi Guo/Source/lilygo-sms-telegram-bridge/sdkconfig.defaults"
+ESP_IDF_VERSION = "v5.2"
+ESP_IDF_PYTHON = "C:/Users/Kiyoshi Guo/AppData/Local/Programs/Python/Python312/python.exe"

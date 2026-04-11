@@ -12,22 +12,41 @@ This branch (`rust-rewrite`) is a scaffold; working C++ firmware is on `main`/`s
 
 ```bash
 # Host tests — no hardware needed; use after every change
-cargo test --workspace --exclude fuzz
+cargo test --workspace --exclude fuzz --no-default-features
 
 # Single test file
 cargo test -p harness --test <name>
 
-# Build firmware (requires Xtensa toolchain)
-cargo build --release --target xtensa-esp32-espidf
+# Build firmware (requires Xtensa toolchain — see Toolchain Setup below)
+# Windows: must set CARGO_TARGET_DIR to a short path due to ESP-IDF path length limits
+CARGO_TARGET_DIR=/c/t cargo +esp build --release --target xtensa-esp32-espidf
 
-# Flash + monitor
-cargo espflash flash --release --port /dev/cu.wchusbserial*
-espflash monitor --port /dev/cu.wchusbserial*
+# Flash + monitor (Windows COM port, e.g. COM3)
+espflash flash --release --port COM3 --target-app-partition target/xtensa-esp32-espidf/release/smsgate
+espflash monitor --port COM3
 
 # Fuzz smoke (nightly, run after touching PDU/URC/command parsers)
+# Note: requires cargo-fuzz and Linux/macOS (Windows DLL issue with libFuzzer)
 cargo +nightly fuzz run pdu_decode    -- -max_total_time=60
 cargo +nightly fuzz run urc_parse     -- -max_total_time=60
 cargo +nightly fuzz run command_parse -- -max_total_time=60
+```
+
+## Toolchain Setup (Windows)
+
+```bash
+# 1. Install Xtensa Rust toolchain
+cargo install espup && espup install
+# Sets up ~/.rustup/toolchains/esp + exports in ~/export-esp.ps1
+
+# 2. Set environment before building (run each session)
+export LIBCLANG_PATH="$HOME/.rustup/toolchains/esp/xtensa-esp32-elf-clang/esp-clang/bin/libclang.dll"
+export PATH="$HOME/.rustup/toolchains/esp/xtensa-esp32-elf-clang/esp-clang/bin:$PATH"
+export PATH="$HOME/.rustup/toolchains/esp/xtensa-esp-elf/bin:$PATH"
+export PATH="$HOME/AppData/Local/Programs/Python/Python312:$PATH"
+
+# 3. Flash tool
+cargo install espflash ldproxy
 ```
 
 ## Architecture

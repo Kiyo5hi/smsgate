@@ -1,0 +1,20 @@
+[wifi]
+ssid     = "YOUR_WIFI_SSID"
+password = "YOUR_WIFI_PASSWORD"
+
+[im]
+backend   = "telegram"
+bot_token = "123456:ABC-DEF..."
+chat_id   = 987654321
+
+[modem]
+# Default pins for LilyGo T-A7670X — edit when switching boards
+uart_tx   = 26
+uart_rx   = 27
+uart_baud = 115200
+pwrkey    = 4
+
+[bridge]
+max_failures_before_reboot = 8
+poll_interval_ms           = 3000
+watchdog_timeout_sec       = 120

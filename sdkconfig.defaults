@@ -1,0 +1,10 @@
+# ESP32 sdkconfig defaults for smsgate
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30
+CONFIG_LWIP_DNS_MAX_SERVERS=2
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_ESP_TLS_INSECURE=n
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+# Stack size for main task — Rust needs significantly more than the default
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+# Enable PSRAM if available (T-A7670X has no PSRAM)
+# CONFIG_SPIRAM=n

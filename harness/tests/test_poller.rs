@@ -1,0 +1,265 @@
+//! Poller sentinel processing tests.
+
+use smsgate::bridge::forwarder::is_blocked;
+use smsgate::bridge::poller::poll_and_dispatch;
+use smsgate::bridge::reply_router::ReplyRouter;
+use smsgate::commands::{builtin::*, CommandRegistry};
+use smsgate::log_ring::LogRing;
+use smsgate::modem::ModemStatus;
+use smsgate::persist::{keys, load_bool, mem::MemStore};
+use smsgate::sms::sender::SmsSender;
+use harness::mocks::RecordingMessenger;
+
+fn make_registry() -> CommandRegistry {
+    let mut r = CommandRegistry::new();
+    r.register(Box::new(HelpCommand { help_text: String::new() }));
+    r.register(Box::new(StatusCommand));
+    r.register(Box::new(SendCommand));
+    r.register(Box::new(LogCommand));
+    r.register(Box::new(QueueCommand));
+    r.register(Box::new(BlockCommand));
+    r.register(Box::new(UnblockCommand));
+    r.register(Box::new(PauseCommand));
+    r.register(Box::new(ResumeCommand));
+    r.register(Box::new(RestartCommand));
+    r
+}
+
+#[test]
+fn send_sentinel_enqueues_sms() {
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    messenger.inject(1, "/send +8613800138000 Hello world", None);
+
+    let result = poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    );
+    assert!(result.is_ok());
+    assert!(!result.unwrap()); // no restart
+
+    // SMS was enqueued
+    assert_eq!(sender.len(), 1);
+    let snap = sender.snapshot();
+    assert_eq!(snap[0].phone, "+8613800138000");
+    assert_eq!(snap[0].body_preview, "Hello world");
+
+    // IM reply is clean (no sentinel)
+    assert_eq!(messenger.sent_count(), 1);
+    let reply = messenger.last_sent().unwrap();
+    assert!(!reply.contains("__SEND__"), "sentinel leaked to IM: {}", reply);
+    assert!(reply.contains("+8613800138000"));
+}
+
+#[test]
+fn block_sentinel_adds_to_blocklist() {
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    messenger.inject(1, "/block 10086", None);
+
+    poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    ).unwrap();
+
+    assert!(is_blocked("10086", &store), "number should be blocked");
+    let reply = messenger.last_sent().unwrap();
+    assert!(!reply.contains("__BLOCK__"), "sentinel leaked: {}", reply);
+}
+
+#[test]
+fn unblock_sentinel_removes_from_blocklist() {
+    let mut store = MemStore::new();
+    smsgate::bridge::forwarder::add_to_blocklist("10086", &mut store).unwrap();
+
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    messenger.inject(1, "/unblock 10086", None);
+
+    poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    ).unwrap();
+
+    assert!(!is_blocked("10086", &store), "number should be unblocked");
+    let reply = messenger.last_sent().unwrap();
+    assert!(!reply.contains("__UNBLOCK__"), "sentinel leaked: {}", reply);
+}
+
+#[test]
+fn pause_sentinel_disables_forwarding() {
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    messenger.inject(1, "/pause 30", None);
+
+    poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    ).unwrap();
+
+    assert_eq!(load_bool(&store, keys::FWD_ENABLED), Some(false));
+    let reply = messenger.last_sent().unwrap();
+    assert!(!reply.contains("__PAUSE__"), "sentinel leaked: {}", reply);
+}
+
+#[test]
+fn resume_sentinel_enables_forwarding() {
+    let mut store = MemStore::new();
+    smsgate::persist::save_bool(&mut store, keys::FWD_ENABLED, false).unwrap();
+
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    messenger.inject(1, "/resume", None);
+
+    poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    ).unwrap();
+
+    assert_eq!(load_bool(&store, keys::FWD_ENABLED), Some(true));
+    let reply = messenger.last_sent().unwrap();
+    assert!(!reply.contains("__RESUME__"), "sentinel leaked: {}", reply);
+}
+
+#[test]
+fn restart_sentinel_returns_true() {
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    messenger.inject(1, "/restart", None);
+
+    let result = poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    );
+    assert!(result.is_ok());
+    assert!(result.unwrap(), "restart should be signalled");
+
+    let reply = messenger.last_sent().unwrap();
+    assert!(!reply.contains("__RESTART__"), "sentinel leaked: {}", reply);
+}
+
+#[test]
+fn reply_to_sms_enqueues_outbound() {
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let mut router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    // Simulate a stored mapping: message 5000 → "+8613800138000"
+    router.put(5000, "+8613800138000", &mut store);
+
+    // User replies to message 5000
+    messenger.inject(1, "Reply text here", Some(5000));
+
+    poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    ).unwrap();
+
+    // SMS should be enqueued to the original sender
+    assert_eq!(sender.len(), 1);
+    assert_eq!(sender.snapshot()[0].phone, "+8613800138000");
+    assert_eq!(sender.snapshot()[0].body_preview, "Reply text here");
+}
+
+#[test]
+fn non_command_non_reply_is_ignored() {
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    // Plain text message (not a command, not a reply)
+    messenger.inject(1, "just some text", None);
+
+    poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    ).unwrap();
+
+    // Nothing enqueued, no IM reply
+    assert_eq!(sender.len(), 0);
+    assert_eq!(messenger.sent_count(), 0);
+}
+
+#[test]
+fn reply_to_unknown_id_does_not_enqueue() {
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new(); // empty — no mappings
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    // Reply to message ID 9999 which is not in the router
+    messenger.inject(1, "Reply to unknown", Some(9999));
+
+    poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    ).unwrap();
+
+    assert_eq!(sender.len(), 0, "unknown reply_to should not enqueue SMS");
+}
+
+#[test]
+fn unknown_command_sends_no_reply() {
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    messenger.inject(1, "/nonexistent_cmd", None);
+
+    poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    ).unwrap();
+
+    // Unknown commands produce no reply
+    assert_eq!(messenger.sent_count(), 0);
+}

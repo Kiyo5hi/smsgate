@@ -1,0 +1,77 @@
+//! Bot command abstraction and registry.
+
+pub mod builtin;
+
+use crate::log_ring::LogRing;
+use crate::modem::ModemStatus;
+use crate::persist::Store;
+use crate::sms::sender::SmsSender;
+
+/// Read-only context available to a command handler.
+pub struct CommandContext<'a> {
+    pub store: &'a dyn Store,
+    pub modem_status: &'a ModemStatus,
+    pub log_ring: &'a LogRing,
+    pub send_queue: &'a SmsSender,
+    pub uptime_ms: u32,
+}
+
+/// A single bot command.
+pub trait Command: Send + Sync {
+    fn name(&self) -> &'static str;
+    fn description(&self) -> &'static str;
+    /// Execute the command; `args` is text after the command name.
+    fn handle(&self, args: &str, ctx: &CommandContext) -> String;
+}
+
+/// Auto-dispatching command registry.
+pub struct CommandRegistry {
+    commands: Vec<Box<dyn Command>>,
+}
+
+impl CommandRegistry {
+    pub fn new() -> Self {
+        CommandRegistry { commands: Vec::new() }
+    }
+
+    /// Register a command. Panics if cap is exceeded.
+    pub fn register(&mut self, cmd: Box<dyn Command>) {
+        assert!(
+            self.commands.len() < 10,
+            "command cap exceeded (max 10) — see rfc/0001-foundation.md §4.2"
+        );
+        self.commands.push(cmd);
+    }
+
+    /// Dispatch a message text to the matching command. Returns reply or None.
+    pub fn dispatch(&self, text: &str, ctx: &CommandContext) -> Option<String> {
+        let text = text.trim_start_matches('/');
+        let (name, args) = text.split_once(|c: char| c.is_whitespace())
+            .unwrap_or((text, ""));
+
+        // Strip bot username suffix (e.g. /help@mybot)
+        let name = name.split('@').next().unwrap_or(name);
+
+        self.commands.iter()
+            .find(|c| c.name() == name)
+            .map(|c| c.handle(args.trim(), ctx))
+    }
+
+    /// Returns (name, description) pairs for registration with IM backend.
+    pub fn command_list(&self) -> Vec<(&str, &str)> {
+        self.commands.iter().map(|c| (c.name(), c.description())).collect()
+    }
+
+    /// Generate /help text.
+    pub fn help_text(&self) -> String {
+        let mut out = String::from("Commands:\n");
+        for cmd in &self.commands {
+            out.push_str(&format!("/{} — {}\n", cmd.name(), cmd.description()));
+        }
+        out
+    }
+}
+
+impl Default for CommandRegistry {
+    fn default() -> Self { Self::new() }
+}
