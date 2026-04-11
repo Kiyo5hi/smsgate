@@ -57,13 +57,7 @@ impl TelegramMessenger {
 #[cfg(feature = "esp32")]
 impl Messenger for TelegramMessenger {
     fn send_message(&mut self, text: &str) -> Result<MessageId, MessengerError> {
-        // Full JSON string escaping: backslash, double-quote, and all control chars.
-        let escaped = text
-            .replace('\\', "\\\\")
-            .replace('"', "\\\"")
-            .replace('\n', "\\n")
-            .replace('\r', "\\r")
-            .replace('\t', "\\t");
+        let escaped = types::json_escape(text);
         let body = format!(
             r#"{{"chat_id":{},"text":"{}","parse_mode":""}}"#,
             self.chat_id, escaped

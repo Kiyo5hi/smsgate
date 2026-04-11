@@ -1,6 +1,62 @@
 //! Tests for Telegram Bot API JSON deserialization (types.rs).
 
-use smsgate::im::telegram::types::{ApiResult, SendMessageResult, Update};
+use smsgate::im::telegram::types::{json_escape, ApiResult, SendMessageResult, Update};
+
+// ---------------------------------------------------------------------------
+// json_escape — used by send_message to build valid JSON bodies
+// ---------------------------------------------------------------------------
+
+#[test]
+fn json_escape_plain_text() {
+    assert_eq!(json_escape("hello"), "hello");
+}
+
+#[test]
+fn json_escape_newline() {
+    // SMS forward messages contain literal \n — must become \\n in JSON
+    assert_eq!(json_escape("line1\nline2"), "line1\\nline2");
+}
+
+#[test]
+fn json_escape_carriage_return() {
+    assert_eq!(json_escape("a\rb"), "a\\rb");
+}
+
+#[test]
+fn json_escape_tab() {
+    assert_eq!(json_escape("a\tb"), "a\\tb");
+}
+
+#[test]
+fn json_escape_backslash() {
+    assert_eq!(json_escape("a\\b"), "a\\\\b");
+}
+
+#[test]
+fn json_escape_double_quote() {
+    assert_eq!(json_escape("say \"hi\""), "say \\\"hi\\\"");
+}
+
+#[test]
+fn json_escape_sms_forward_format() {
+    // Matches the actual format used in forward_sms:
+    // format!("📱 SMS from {}\n🕐 {}\n\n{}", sender, ts, body)
+    let text = "📱 SMS from +8613812345678\n🕐 2024-01-01 12:00\n\nHello world";
+    let escaped = json_escape(text);
+    // Verify the result can be embedded in a JSON string without breaking parsing
+    let json = format!(r#"{{"text":"{}"}}"#, escaped);
+    let v: serde_json::Value = serde_json::from_str(&json).expect("must be valid JSON");
+    assert_eq!(v["text"].as_str().unwrap(), text);
+}
+
+#[test]
+fn json_escape_all_special_chars_combined() {
+    let text = "a\nb\\c\"d\re\tf";
+    let escaped = json_escape(text);
+    let json = format!(r#"{{"t":"{}"}}"#, escaped);
+    let v: serde_json::Value = serde_json::from_str(&json).expect("must be valid JSON");
+    assert_eq!(v["t"].as_str().unwrap(), text);
+}
 
 // ---------------------------------------------------------------------------
 // ApiResult<bool> — setMyCommands / deleteMyCommands responses

@@ -3,6 +3,18 @@
 use serde::Deserialize;
 use crate::im::MessageId;
 
+/// Escape a string for embedding inside a JSON string literal.
+///
+/// Handles the characters that would produce invalid JSON: backslash,
+/// double-quote, and ASCII control characters (LF, CR, TAB).
+pub fn json_escape(s: &str) -> String {
+    s.replace('\\', "\\\\")
+     .replace('"', "\\\"")
+     .replace('\n', "\\n")
+     .replace('\r', "\\r")
+     .replace('\t', "\\t")
+}
+
 #[derive(Debug, Deserialize)]
 pub struct ApiResult<T> {
     pub ok: bool,
