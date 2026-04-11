@@ -43,8 +43,11 @@ impl Command for SendCommand {
             return "Message too long (> 10 SMS parts)".to_string();
         }
         let preview: String = body.chars().take(50).collect();
+        // Encode newlines/CRs so the sentinel stays on a single line.
+        // apply_sentinels decodes these back before passing to enqueue.
+        let body_encoded = body.replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r");
         format!("{}{}|{}\nQueued: {} → \"{}…\" ({} part(s))",
-            SEND_SENTINEL, phone, body,
+            SEND_SENTINEL, phone, body_encoded,
             phone, preview, parts)
     }
 }

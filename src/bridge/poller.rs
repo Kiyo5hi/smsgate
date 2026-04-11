@@ -84,10 +84,14 @@ fn apply_sentinels(reply: &str, sender: &mut SmsSender, store: &mut dyn Store) -
 
     for line in reply.lines() {
         if let Some(rest) = line.strip_prefix(SEND_SENTINEL) {
-            // Format: "+phone|body"
-            if let Some((phone, body)) = rest.split_once('|') {
+            // Format: "+phone|body" — body may have \n/\r encoded as escape sequences.
+            if let Some((phone, body_encoded)) = rest.split_once('|') {
+                let body = body_encoded
+                    .replace("\\n", "\n")
+                    .replace("\\r", "\r")
+                    .replace("\\\\", "\\");
                 log::info!("[poller] sentinel: enqueue SMS to {}", phone);
-                if sender.enqueue(phone.to_string(), body.to_string()).is_none() {
+                if sender.enqueue(phone.to_string(), body).is_none() {
                     log::warn!("[poller] queue full — /send dropped");
                 }
             }

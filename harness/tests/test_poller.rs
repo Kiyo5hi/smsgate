@@ -223,6 +223,87 @@ fn non_command_non_reply_is_ignored() {
 }
 
 #[test]
+fn send_sentinel_body_with_pipe_char() {
+    // Bodies containing '|' must not be truncated — split_once splits on first '|' only.
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    messenger.inject(1, "/send +1 Hello|world|test", None);
+
+    poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    ).unwrap();
+
+    assert_eq!(sender.len(), 1);
+    let snap = sender.snapshot();
+    assert_eq!(snap[0].phone, "+1");
+    assert_eq!(snap[0].body_preview, "Hello|world|test");
+}
+
+#[test]
+fn send_sentinel_body_with_newline() {
+    // Bodies containing '\n' must be encoded in the sentinel and decoded back.
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    // Simulate a Telegram message where the body has a newline in it.
+    // dispatch() splits name/args on first whitespace, so args = "+1 line1\nline2"
+    // send.rs further splits on first whitespace: phone="+1", body="line1\nline2"
+    messenger.inject(1, "/send +1 line1\nline2", None);
+
+    poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    ).unwrap();
+
+    assert_eq!(sender.len(), 1);
+    let snap = sender.snapshot();
+    assert_eq!(snap[0].phone, "+1");
+    assert_eq!(snap[0].body_preview, "line1\nline2");
+}
+
+#[test]
+fn send_body_preview_truncated_at_50_chars() {
+    // The Queued: display line shows at most 50 chars of the body.
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    let long_body: String = "A".repeat(70);
+    messenger.inject(1, &format!("/send +1 {}", long_body), None);
+
+    poll_and_dispatch(
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0,
+    ).unwrap();
+
+    assert_eq!(sender.len(), 1);
+    // snapshot body_preview is truncated to 30 chars by SmsSender
+    let expected_30: String = "A".repeat(30);
+    assert_eq!(sender.snapshot()[0].body_preview, expected_30);
+
+    // Display reply to Telegram shows 50-char preview (send command truncation)
+    let reply = messenger.last_sent().unwrap();
+    let preview_50: String = "A".repeat(50);
+    assert!(reply.contains(&preview_50), "reply should show 50-char preview: {}", reply);
+}
+
+#[test]
 fn reply_to_unknown_id_does_not_enqueue() {
     let mut store = MemStore::new();
     let mut messenger = RecordingMessenger::new();
