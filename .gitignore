@@ -1,0 +1,24 @@
+# Rust build artifacts
+/target/
+
+# User configuration — contains secrets, never commit
+config.toml
+
+# PlatformIO artifacts (C++ sibling branches leak into working tree)
+.pio/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tool data
+.gsd/
+.gsd-id
+.bg-shell/
+
+# C++ legacy (never commit — Rust uses config.toml)
+src/secrets.h

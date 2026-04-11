@@ -1,0 +1,36 @@
+[package]
+name = "smsgate"
+version = "0.1.0"
+edition = "2021"
+
+# ESP32 target — build with:
+#   cargo build --release --target xtensa-esp32-espidf
+# Requires the Xtensa Rust toolchain from https://github.com/esp-rs/rust-build
+
+[dependencies]
+# esp-idf-hal: safe wrappers around ESP-IDF peripherals (GPIO, UART, NVS, etc.)
+esp-idf-hal    = { version = "0.43", features = ["std"] }
+esp-idf-svc    = { version = "0.48", features = ["std"] }
+esp-idf-sys    = { version = "0.34", features = ["binstart"] }
+
+# IM client — no crate dependency yet; the Messenger trait impl in im/telegram/
+# will use a custom HTTPS client over esp-idf-svc::tls::EspTls.
+# Add crate here once the HTTP layer is scaffolded.
+
+# SMS PDU encoding/decoding — pure Rust, no_std compatible
+# gsm7  = "..."  # TODO: evaluate crates.io options or port sms_codec
+
+# Logging
+log   = "0.4"
+heapless = "0.8"   # fixed-size collections — no heap fragmentation
+
+[build-dependencies]
+embuild = "0.31"
+
+[profile.release]
+opt-level = "s"
+lto        = true
+
+# ---- ESP-IDF version ----
+[package.metadata.esp-idf-sys]
+esp_idf_version = "v5.2"
