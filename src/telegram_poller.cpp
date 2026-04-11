@@ -2001,9 +2001,10 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                     msg += String(" (attempt ") + String(e.attempts + 1)
                         + String("/") + String(SmsSender::kMaxAttempts) + String(")");
                     // RFC-0095: show age since first drain attempt.
-                    if (e.queuedAtMs > 0 && nowMs >= e.queuedAtMs)
+                    // RFC-0273: unsigned subtraction is wraparound-safe; drop the >= guard.
+                    if (e.queuedAtMs > 0)
                     {
-                        uint32_t ageSec = (nowMs - e.queuedAtMs) / 1000;
+                        uint32_t ageSec = (uint32_t)(nowMs - e.queuedAtMs) / 1000;
                         if (ageSec < 60)
                             msg += String(" ") + String((int)ageSec) + String("s");
                         else
@@ -2043,9 +2044,10 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
             msg += String("Body:     ") + e.bodyFull + String("\n");
             msg += String("Attempts: ") + String(e.attempts) + String("/")
                  + String(SmsSender::kMaxAttempts) + String("\n");
-            if (e.queuedAtMs > 0 && nowMs >= e.queuedAtMs)
+            // RFC-0273: unsigned subtraction is wraparound-safe; drop the >= guard.
+            if (e.queuedAtMs > 0)
             {
-                uint32_t ageSec = (nowMs - e.queuedAtMs) / 1000;
+                uint32_t ageSec = (uint32_t)(nowMs - e.queuedAtMs) / 1000;
                 if (ageSec < 60)
                     msg += String("Queued:   ") + String((int)ageSec) + String("s ago\n");
                 else

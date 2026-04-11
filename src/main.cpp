@@ -302,7 +302,9 @@ void syncTime()
     // when called from loop().  After the deadline, return and let RFC-0079
     // retry on the next iteration.
     unsigned long ntpDeadline = millis() + 30000UL;
-    while (now < 8 * 3600 * 2 && millis() < ntpDeadline)
+    // RFC-0273: wraparound-safe deadline check. (uint32_t)(deadline - now) < 0x80000000
+    // is TRUE while the deadline is still in the future.
+    while (now < 8 * 3600 * 2 && (uint32_t)(ntpDeadline - (uint32_t)millis()) < 0x80000000UL)
     {
         esp_task_wdt_reset();  // RFC-0015: syncTime() is also called from loop()
         delay(500);

@@ -663,7 +663,8 @@ bool registerBotCommands(RealBotClient &bot)
     String body;
     unsigned long deadline = millis() + 8000;
     size_t target = contentLength > 0 ? (size_t)contentLength : 8192;
-    while (body.length() < target && millis() < deadline)
+    // RFC-0274: wraparound-safe deadline check.
+    while (body.length() < target && (uint32_t)(deadline - (uint32_t)millis()) < 0x80000000UL)
     {
         if (active->available())
         {
@@ -762,7 +763,8 @@ int32_t RealBotClient::doSendMessage(const String &text, int64_t chatId)
         unsigned long headerDeadline = millis() + 5000;
         while (transport_->connected() || transport_->available())
         {
-            if (millis() > headerDeadline)
+            // RFC-0274: wraparound-safe deadline check.
+            if ((uint32_t)((uint32_t)millis() - headerDeadline) < 0x80000000UL)
             {
                 Serial.println("doSendMessage: header read timeout, forcing stop");
                 transport_->stop();
@@ -786,7 +788,8 @@ int32_t RealBotClient::doSendMessage(const String &text, int64_t chatId)
     String body;
     unsigned long deadline = millis() + 4000;
     size_t target = contentLength > 0 ? (size_t)contentLength : 8192;
-    while (body.length() < target && millis() < deadline)
+    // RFC-0274: wraparound-safe deadline checks.
+    while (body.length() < target && (uint32_t)(deadline - (uint32_t)millis()) < 0x80000000UL)
     {
         if (transport_->available())
         {
@@ -801,7 +804,7 @@ int32_t RealBotClient::doSendMessage(const String &text, int64_t chatId)
             delay(2);
         }
     }
-    if (millis() >= deadline && body.length() < target)
+    if ((uint32_t)((uint32_t)millis() - deadline) < 0x80000000UL && body.length() < target)
     {
         // Partial body — connection is stale or server is wedged.
         // Force-stop so the next call reconnects cleanly.
@@ -935,7 +938,8 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
     int contentLength = -1;
     while (transport_->connected() || transport_->available())
     {
-        if (millis() > readDeadline)
+        // RFC-0274: wraparound-safe deadline check.
+        if ((uint32_t)((uint32_t)millis() - readDeadline) < 0x80000000UL)
         {
             Serial.println("getUpdates: header read timeout, forcing stop");
             transport_->stop();
@@ -956,7 +960,8 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
     // corrupt the next request.
     String body;
     size_t target = contentLength > 0 ? (size_t)contentLength : 16384;
-    while (body.length() < target && millis() < readDeadline)
+    // RFC-0274: wraparound-safe deadline checks.
+    while (body.length() < target && (uint32_t)(readDeadline - (uint32_t)millis()) < 0x80000000UL)
     {
         if (transport_->available())
         {
@@ -971,7 +976,7 @@ bool RealBotClient::pollUpdates(int32_t sinceUpdateId, int32_t timeoutSec,
             delay(2);
         }
     }
-    if (millis() >= readDeadline && body.length() < target)
+    if ((uint32_t)((uint32_t)millis() - readDeadline) < 0x80000000UL && body.length() < target)
     {
         Serial.println("getUpdates: body drain timeout, forcing stop");
         transport_->stop();
