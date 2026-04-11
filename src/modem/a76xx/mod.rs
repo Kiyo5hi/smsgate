@@ -23,7 +23,7 @@ impl A76xxModem {
     pub fn init(&mut self) -> Result<(), ModemError> {
         // Probe until the modem responds to AT (up to 15 s).
         // A7670G typically takes 5-10 s after power-on to become responsive.
-        let probe_deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+        let probe_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             let r = self.send_at(""); // sends "AT\r" — basic liveness check
             if r.is_ok() {
