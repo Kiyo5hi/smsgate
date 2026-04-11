@@ -20,7 +20,8 @@ static String schedEtaStr(uint32_t sendAtMs, uint32_t nowMs,
                            const std::function<long()> &wallTimeFn)
 {
     if (sendAtMs == 0) return String("(free)");
-    if (nowMs >= sendAtMs) {
+    // RFC-0273: wraparound-safe overdue check. (uint32_t)(now - T) < 0x80000000 ↔ now >= T.
+    if ((uint32_t)(nowMs - sendAtMs) < 0x80000000UL) {
         return String("now (overdue)");
     }
     uint32_t diffMs = sendAtMs - nowMs;
@@ -2050,8 +2051,10 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 else
                     msg += String("Queued:   ") + String((int)(ageSec / 60)) + String("m ago\n");
             }
-            if (e.nextRetryMs > 0 && nowMs < e.nextRetryMs)
+            // RFC-0273: wraparound-safe "is retry still in future?" check.
+            if (e.nextRetryMs > 0 && (uint32_t)(nowMs - e.nextRetryMs) >= 0x80000000UL)
             {
+                // now < nextRetryMs: compute remaining wait via unsigned subtraction.
                 uint32_t waitSec = (e.nextRetryMs - nowMs) / 1000;
                 msg += String("Next retry: in ") + String((int)waitSec) + String("s");
             }
@@ -3235,9 +3238,11 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 else if (expWallNow > 1000000000L)
                 {
                     // Absolute timestamp available: export as /scheduleat.
-                    long deltaMs = (long)sl.sendAtMs - (long)expNowMs;
+                    // RFC-0273: unsigned subtraction is wraparound-safe; treat overdue as +60s.
+                    uint32_t diffU = sl.sendAtMs - expNowMs;
+                    long deltaMs = (diffU < 0x80000000UL) ? (long)diffU : 0L;
                     long fireUnix = expWallNow + deltaMs / 1000L;
-                    if (fireUnix < expWallNow) fireUnix = expWallNow + 60L; // overdue: use +1min
+                    if (fireUnix <= expWallNow) fireUnix = expWallNow + 60L; // overdue: use +1min
                     time_t ft = (time_t)fireUnix;
                     struct tm *tmFire = gmtime(&ft);
                     char dateBuf[20];
@@ -3250,7 +3255,9 @@ void TelegramPoller::processUpdate(const TelegramUpdate &u)
                 else
                 {
                     // No wall time: export as relative /schedulesend.
-                    long deltaMs = (long)sl.sendAtMs - (long)expNowMs;
+                    // RFC-0273: unsigned subtraction; overdue slots export as 1m.
+                    uint32_t diffU = sl.sendAtMs - expNowMs;
+                    long deltaMs = (diffU < 0x80000000UL) ? (long)diffU : 0L;
                     long remMin = deltaMs > 0 ? (deltaMs + 59999L) / 60000L : 1L;
                     if (remMin < 1) remMin = 1;
                     line = String("/schedulesend ") + String((int)remMin) + String(" ")
