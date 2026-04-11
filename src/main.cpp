@@ -2162,13 +2162,15 @@ void setup()
             memset(blob.get(), 0, blobSize);
             blob[0] = 0x03; // version byte (bumped for RFC-0261)
             const auto& q = telegramPoller->getSchedQueue();
-            long nowSec = (long)time(nullptr);
-            long nowMs  = (long)(uint32_t)millis();
+            long nowSec      = (long)time(nullptr);
+            uint32_t nowMsU  = (uint32_t)millis();
             for (size_t i = 0; i < q.size() && i < kNumSlots; i++)
             {
                 uint8_t *slotPtr = blob.get() + 1 + i * kSlotSize;
                 if (q[i].sendAtMs == 0) continue; // free slot → sendAtUnix stays 0
-                long deltaMs = (long)q[i].sendAtMs - nowMs;
+                // RFC-0274: signed reinterpret of unsigned subtraction avoids UB and
+                // handles millis() wrap correctly. Positive = future, negative = past.
+                long deltaMs = (long)(int32_t)(q[i].sendAtMs - nowMsU);
                 uint32_t sendAtUnix = (uint32_t)(nowSec + deltaMs / 1000L);
                 memcpy(slotPtr, &sendAtUnix, 4);
                 q[i].phone.toCharArray((char*)(slotPtr + 4), 32);
@@ -2195,8 +2197,8 @@ void setup()
             if (realPersist.loadBlob("sched_queue", blob.get(), kExpectedSize) == kExpectedSize
                 && blob[0] == 0x03)
             {
-                long nowSec = (long)time(nullptr);
-                long nowMs  = (long)(uint32_t)millis();
+                long     nowSec  = (long)time(nullptr);
+                uint32_t nowMsU2 = (uint32_t)millis();
                 auto q = telegramPoller->getSchedQueue(); // copy
                 int loaded = 0;
                 for (size_t i = 0; i < kNumSlots; i++)
@@ -2225,8 +2227,9 @@ void setup()
                     if (ageSeconds > 0L) {
                         q[i].sendAtMs = 1; // past due: fire on next tick
                     } else {
+                        // delta fits in 32-bit signed: max schedule ~24h = 86,400 s = 86,400,000 ms < 2^31.
                         long deltaMs = ((long)sendAtUnix - nowSec) * 1000L;
-                        q[i].sendAtMs = (uint32_t)(nowMs + deltaMs);
+                        q[i].sendAtMs = nowMsU2 + (uint32_t)deltaMs;
                     }
                     loaded++;
                 }

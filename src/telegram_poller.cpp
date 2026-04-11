@@ -75,7 +75,8 @@ static String quietHoursWarning(uint32_t sendAtMs, uint32_t nowMs,
     if (qStart < 0 || qEnd < 0 || !wallTimeFn) return String();
     long wallNow = wallTimeFn();
     if (wallNow <= 1000000000L) return String(); // NTP not synced
-    long deltaMs = (long)sendAtMs - (long)nowMs;
+    // RFC-0274: signed reinterpret of unsigned subtraction avoids UB at millis() wrap.
+    long deltaMs = (long)(int32_t)(sendAtMs - nowMs);
     long sendAtUnix = wallNow + deltaMs / 1000L;
     if (!isInQuietHoursAt(sendAtUnix, qStart, qEnd)) return String();
     char buf[48];
