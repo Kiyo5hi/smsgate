@@ -64,7 +64,10 @@ impl TelegramHttpClient {
                 anyhow::bail!("read timeout");
             }
             let n = self.tls.read(&mut buf)?;
-            if n == 0 { break; }
+            if n == 0 {
+                // Server closed the connection — trigger reconnect
+                anyhow::bail!("connection closed before headers received");
+            }
             response.push_str(&String::from_utf8_lossy(&buf[..n]));
             if response.contains("\r\n\r\n") { break; }
         }
