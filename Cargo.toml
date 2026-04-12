@@ -8,7 +8,7 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 description = "ESP32 firmware that bridges SMS and IM (Telegram) via LilyGo T-A7670X"
-repository = "https://github.com/kiyoshi-guo/smsgate"
+repository = "https://github.com/Kiyo5hi/smsgate"
 
 [features]
 default = ["esp32"]
