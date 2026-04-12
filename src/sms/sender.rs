@@ -45,6 +45,21 @@ pub struct QueueSnapshot {
     pub age_secs: u64,
 }
 
+/// Result of a single `drain_once` call.
+#[derive(Debug)]
+pub enum DrainOutcome {
+    Idle,
+    Sent    { phone: String },
+    Retrying,
+    Dropped { phone: String },
+    BadPdu,
+}
+
+impl DrainOutcome {
+    /// Returns true if an attempt was made (i.e. not `Idle`).
+    pub fn attempted(&self) -> bool { !matches!(self, DrainOutcome::Idle) }
+}
+
 /// Outbound SMS queue with retry.
 pub struct SmsSender {
     entries: Vec<QueueEntry>,
@@ -76,10 +91,9 @@ impl SmsSender {
     }
 
     /// Process one ready entry against the modem. Called from the main loop.
-    /// Returns true if an attempt was made (regardless of outcome).
-    pub fn drain_once(&mut self, modem: &mut dyn ModemPort) -> bool {
+    pub fn drain_once(&mut self, modem: &mut dyn ModemPort) -> DrainOutcome {
         let Some(idx) = self.entries.iter().position(|e| e.is_ready()) else {
-            return false;
+            return DrainOutcome::Idle;
         };
         let entry = &mut self.entries[idx];
         entry.attempts += 1;
@@ -93,7 +107,7 @@ impl SmsSender {
         if pdus.is_empty() {
             log::error!("[sender] PDU build failed for {} — dropping", phone);
             self.entries.remove(idx);
-            return true;
+            return DrainOutcome::BadPdu;
         }
 
         let mut success = true;
@@ -112,14 +126,16 @@ impl SmsSender {
 
         if success {
             self.entries.remove(idx);
+            DrainOutcome::Sent { phone }
         } else if attempt >= MAX_ATTEMPTS {
             log::error!("[sender] max attempts reached for {}, dropping", phone);
             self.entries.remove(idx);
+            DrainOutcome::Dropped { phone }
         } else {
             let delay = RETRY_DELAYS.get(attempt - 1).copied().unwrap_or(RETRY_DELAYS[2]);
             self.entries[idx].next_attempt = Some(Instant::now() + delay);
+            DrainOutcome::Retrying
         }
-        true
     }
 
     /// Cancel all entries for a given phone number. Returns count cancelled.

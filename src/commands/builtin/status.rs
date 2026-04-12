@@ -43,6 +43,7 @@ impl Command for StatusCommand {
             queue_n, blocked_n, log_n,
             fwd_on,
             last_sms,
+            ctx.wifi_info,
         )
     }
 }

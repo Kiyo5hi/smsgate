@@ -14,7 +14,8 @@ use crate::commands::builtin::restart::RESTART_SENTINEL;
 use crate::commands::builtin::send::SEND_SENTINEL;
 
 /// Process incoming IM messages: dispatch commands and route replies to SMS.
-/// Returns `true` if a restart was requested via sentinel.
+/// Returns `(restart_requested, pause_mins)` — `pause_mins` is `Some(n)` when a
+/// timed `/pause n` was processed; the caller is responsible for the auto-resume timer.
 pub fn poll_and_dispatch(
     messenger: &mut dyn Messenger,
     sender: &mut SmsSender,
@@ -25,11 +26,13 @@ pub fn poll_and_dispatch(
     modem_status: &ModemStatus,
     uptime_ms: u32,
     free_heap_bytes: u32,
+    wifi_info: &str,
     timeout_sec: u32,
-) -> Result<bool, MessengerError> {
+) -> Result<(bool, Option<u32>), MessengerError> {
     let since = load_i64(store, keys::IM_CURSOR).unwrap_or(0);
     let messages = messenger.poll(since, timeout_sec)?;
     let mut restart_requested = false;
+    let mut pause_mins: Option<u32> = None;
 
     for msg in messages {
         let text = msg.text.trim();
@@ -46,12 +49,12 @@ pub fn poll_and_dispatch(
                 send_queue: sender,
                 uptime_ms,
                 free_heap_bytes,
+                wifi_info,
             };
             if let Some(reply) = registry.dispatch(text, &ctx) {
-                let (clean, should_restart) = apply_sentinels(&reply, sender, store);
-                if should_restart {
-                    restart_requested = true;
-                }
+                let (clean, should_restart, maybe_pause) = apply_sentinels(&reply, sender, store);
+                if should_restart { restart_requested = true; }
+                if maybe_pause.is_some() { pause_mins = maybe_pause; }
                 let display = clean.trim();
                 if !display.is_empty() {
                     if let Err(e) = messenger.send_message(display) {
@@ -75,14 +78,15 @@ pub fn poll_and_dispatch(
         }
     }
 
-    Ok(restart_requested)
+    Ok((restart_requested, pause_mins))
 }
 
-/// Parse sentinel lines from a command reply, apply their side effects,
-/// and return the cleaned display text plus whether a restart was requested.
-fn apply_sentinels(reply: &str, sender: &mut SmsSender, store: &mut dyn Store) -> (String, bool) {
+/// Parse sentinel lines from a command reply, apply their side effects, and return
+/// `(display_text, restart_requested, pause_mins)`.
+fn apply_sentinels(reply: &str, sender: &mut SmsSender, store: &mut dyn Store) -> (String, bool, Option<u32>) {
     let mut display_lines = Vec::new();
     let mut restart = false;
+    let mut pause_mins: Option<u32> = None;
 
     for line in reply.lines() {
         if let Some(rest) = line.strip_prefix(SEND_SENTINEL) {
@@ -104,9 +108,10 @@ fn apply_sentinels(reply: &str, sender: &mut SmsSender, store: &mut dyn Store) -
             log::info!("[poller] sentinel: unblock {}", phone);
             let _ = crate::bridge::forwarder::remove_from_blocklist(phone, store);
         } else if let Some(rest) = line.strip_prefix(PAUSE_SENTINEL) {
-            let _mins: u32 = rest.trim().parse().unwrap_or(60);
-            log::info!("[poller] sentinel: pause forwarding");
+            let mins: u32 = rest.trim().parse().unwrap_or(60);
+            log::info!("[poller] sentinel: pause forwarding for {} min", mins);
             let _ = save_bool(store, keys::FWD_ENABLED, false);
+            pause_mins = Some(mins);
         } else if line.starts_with(RESUME_SENTINEL) {
             log::info!("[poller] sentinel: resume forwarding");
             let _ = save_bool(store, keys::FWD_ENABLED, true);
@@ -118,5 +123,5 @@ fn apply_sentinels(reply: &str, sender: &mut SmsSender, store: &mut dyn Store) -
         }
     }
 
-    (display_lines.join("\n"), restart)
+    (display_lines.join("\n"), restart, pause_mins)
 }

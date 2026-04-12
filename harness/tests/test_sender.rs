@@ -11,7 +11,7 @@ fn enqueue_and_drain_success() {
 
     let mut modem = ScriptedModem::new();
     let drained = sender.drain_once(&mut modem);
-    assert!(drained);
+    assert!(drained.attempted());
     assert!(sender.is_empty(), "queue should be empty after success");
     assert_eq!(modem.sent_pdus.len(), 1);
 }
@@ -69,7 +69,7 @@ fn drain_retry_on_failure() {
 
     let mut modem = FailingModem;
     let drained = sender.drain_once(&mut modem);
-    assert!(drained);
+    assert!(drained.attempted());
     // After 1 failed attempt, entry remains in queue (with retry scheduled)
     assert_eq!(sender.len(), 1);
 }
@@ -177,12 +177,12 @@ fn drain_once_returns_false_when_no_entry_ready() {
     sender.enqueue("+1".to_string(), "wait".to_string());
     // First drain — fails, entry gets a future next_attempt (2 s delay)
     let first = sender.drain_once(&mut FailingModem);
-    assert!(first, "first drain should return true (attempt was made)");
+    assert!(first.attempted(), "first drain should return true (attempt was made)");
     assert_eq!(sender.len(), 1, "entry should still be queued after failure");
 
     // Second drain immediately after — entry's next_attempt is in the future
     let second = sender.drain_once(&mut FailingModem);
-    assert!(!second, "second drain should return false (entry not ready yet)");
+    assert!(!second.attempted(), "second drain should return false (entry not ready yet)");
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn drain_drops_entry_when_pdu_build_fails() {
 
     let mut modem = ScriptedModem::new();
     let drained = sender.drain_once(&mut modem);
-    assert!(drained, "drain_once should return true even on PDU build failure");
+    assert!(drained.attempted(), "drain_once should return true even on PDU build failure");
     assert_eq!(sender.len(), 0, "failed PDU build should drop the entry");
     assert_eq!(modem.sent_pdus.len(), 0); // no PDU was sent
 }

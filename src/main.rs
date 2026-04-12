@@ -19,7 +19,7 @@ use smsgate::{
     modem::urc::{parse_urc, Urc},
     persist::nvs::NvsStore,
     sms::concat::ConcatReassembler,
-    sms::sender::SmsSender,
+    sms::sender::{DrainOutcome, SmsSender},
     timer::elapsed_since,
 };
 
@@ -145,6 +145,8 @@ fn main() {
     let boot_ms = now_ms();
     let mut consecutive_failures: u8 = 0;
     let mut last_status_update = now_ms();
+    let mut pause_until: Option<std::time::Instant> = None;
+    let mut wifi_info = fmt_wifi(None);
     // +CMT direct delivery is two lines: header then raw PDU hex.
     // This flag is set when the header arrives so the next poll_urc() line
     // is treated as the PDU rather than a new URC.
@@ -157,6 +159,16 @@ fn main() {
         // Kick the hardware watchdog (RFC-0001 §4.4)
         unsafe { esp_idf_sys::esp_task_wdt_reset(); }
 
+        // Auto-resume after timed /pause
+        if let Some(until) = pause_until {
+            if std::time::Instant::now() >= until {
+                pause_until = None;
+                let _ = smsgate::persist::save_bool(&mut *store, smsgate::persist::keys::FWD_ENABLED, true);
+                let _ = messenger.send_message(smsgate::i18n::resume_ok());
+                log::info!("[main] pause expired — forwarding re-enabled");
+            }
+        }
+
         // Update modem status every 30 s.
         // Skip while cmt_pdu_pending: send_at() drains the UART buffer and would
         // consume the PDU line that belongs to the pending +CMT delivery.
@@ -165,6 +177,17 @@ fn main() {
                 modem_status = s;
             }
             last_status_update = now;
+
+            // Refresh WiFi RSSI
+            let rssi = unsafe {
+                let mut ap: esp_idf_sys::wifi_ap_record_t = std::mem::zeroed();
+                if esp_idf_sys::esp_wifi_sta_get_ap_info(&mut ap) == esp_idf_sys::ESP_OK {
+                    Some(ap.rssi as i32)
+                } else {
+                    None
+                }
+            };
+            wifi_info = fmt_wifi(rssi);
 
             // Low-heap alert
             check_low_heap(&mut messenger);
@@ -202,12 +225,17 @@ fn main() {
         let free_heap = unsafe { esp_idf_sys::esp_get_free_heap_size() };
         let poll_result = poll_and_dispatch(
             &mut messenger, &mut sender, &router, &registry,
-            &mut *store, &log, &modem_status, uptime_ms, free_heap,
+            &mut *store, &log, &modem_status, uptime_ms, free_heap, &wifi_info,
             (Config::POLL_INTERVAL_MS / 1000).max(1),
         );
         match poll_result {
-            Ok(restart) => {
+            Ok((restart, maybe_pause)) => {
                 consecutive_failures = 0;
+                if let Some(mins) = maybe_pause {
+                    pause_until = Some(std::time::Instant::now()
+                        + std::time::Duration::from_secs(mins as u64 * 60));
+                    log::info!("[main] pause timer set for {} min", mins);
+                }
                 if restart {
                     log::info!("[main] restart requested via /restart command");
                     let _ = messenger.send_message(smsgate::i18n::rebooting());
@@ -227,7 +255,23 @@ fn main() {
         }
 
         // Drain outbound SMS queue
-        sender.drain_once(&mut *modem);
+        match sender.drain_once(&mut *modem) {
+            DrainOutcome::Sent { phone } => {
+                let _ = messenger.send_message(&smsgate::i18n::sms_sent_ok(&phone));
+            }
+            DrainOutcome::Dropped { phone } => {
+                let _ = messenger.send_message(&smsgate::i18n::sms_failed(&phone));
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(feature = "esp32")]
+fn fmt_wifi(rssi: Option<i32>) -> String {
+    match rssi {
+        Some(r) => format!("{} ({} dBm)", smsgate::config::Config::WIFI_SSID, r),
+        None    => format!("{} (--)", smsgate::config::Config::WIFI_SSID),
     }
 }
 
@@ -285,6 +329,6 @@ fn setup_wifi(
     wifi.start()?;
     wifi.connect()?;
     wifi.wait_netif_up()?;
-    log::info!("[wifi] connected, IP assigned");
+    log::info!("[wifi] connected");
     Ok(())
 }

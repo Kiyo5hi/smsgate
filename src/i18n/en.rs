@@ -15,6 +15,12 @@ pub fn rebooting() -> &'static str {
 pub fn low_heap(free_bytes: u32) -> String {
     format!("⚠️ Low heap: {} bytes", free_bytes)
 }
+pub fn sms_sent_ok(phone: &str) -> String {
+    format!("✅ SMS sent to {}", phone)
+}
+pub fn sms_failed(phone: &str) -> String {
+    format!("❌ SMS to {} failed (max retries)", phone)
+}
 
 // ── Forwarding ────────────────────────────────────────────────────────────────
 
@@ -43,9 +49,15 @@ pub fn format_status(
     log_n: usize,
     fwd_on: bool,
     last_sms: Option<(&str, &str)>,
+    wifi_info: &str,
 ) -> String {
     let reg = if registered { status_reg_ok() } else { status_reg_no() };
     let fwd = if fwd_on { status_fwd_on() } else { status_fwd_off() };
+    let wifi_line = if wifi_info.is_empty() {
+        String::new()
+    } else {
+        format!("📶 WiFi: {}\n", wifi_info)
+    };
     let heap_line = if free_heap_kb > 0 {
         format!("💾 Heap: {} KB free\n", free_heap_kb)
     } else {
@@ -58,7 +70,7 @@ pub fn format_status(
     format!(
         "📊 smsgate status\n\
          ⏱ Uptime: {:02}h {:02}m {:02}s\n\
-         📶 Signal: {} — {}\n\
+         {}📶 Signal: {} — {}\n\
          🌐 Network: {}\n\
          {}📬 Queue: {} pending\n\
          🚫 Blocked: {} number(s)\n\
@@ -66,6 +78,7 @@ pub fn format_status(
          🔄 Forwarding: {}\n\
          {}",
         h, m, s,
+        wifi_line,
         signal, operator,
         reg,
         heap_line,

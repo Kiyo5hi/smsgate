@@ -15,6 +15,12 @@ pub fn rebooting() -> &'static str {
 pub fn low_heap(free_bytes: u32) -> String {
     format!("⚠️ 可用内存不足：{} 字节", free_bytes)
 }
+pub fn sms_sent_ok(phone: &str) -> String {
+    format!("✅ 短信已发出：{}", phone)
+}
+pub fn sms_failed(phone: &str) -> String {
+    format!("❌ 发往 {} 的短信发送失败（已达最大重试次数）", phone)
+}
 
 // ── 转发 ────────────────────────────────────────────────────────────────────
 
@@ -43,9 +49,15 @@ pub fn format_status(
     log_n: usize,
     fwd_on: bool,
     last_sms: Option<(&str, &str)>,
+    wifi_info: &str,
 ) -> String {
     let reg = if registered { status_reg_ok() } else { status_reg_no() };
     let fwd = if fwd_on { status_fwd_on() } else { status_fwd_off() };
+    let wifi_line = if wifi_info.is_empty() {
+        String::new()
+    } else {
+        format!("📶 WiFi：{}\n", wifi_info)
+    };
     let heap_line = if free_heap_kb > 0 {
         format!("💾 内存：{} KB 可用\n", free_heap_kb)
     } else {
@@ -58,7 +70,7 @@ pub fn format_status(
     format!(
         "📊 smsgate 状态\n\
          ⏱ 运行时间：{:02}h {:02}m {:02}s\n\
-         📶 信号：{} — {}\n\
+         {}📶 信号：{} — {}\n\
          🌐 网络：{}\n\
          {}📬 队列：{} 条待发\n\
          🚫 屏蔽：{} 个号码\n\
@@ -66,6 +78,7 @@ pub fn format_status(
          🔄 转发：{}\n\
          {}",
         h, m, s,
+        wifi_line,
         signal, operator,
         reg,
         heap_line,

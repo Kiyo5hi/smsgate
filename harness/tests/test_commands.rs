@@ -31,7 +31,7 @@ fn ctx<'a>(
     log: &'a LogRing,
     queue: &'a SmsSender,
 ) -> CommandContext<'a> {
-    CommandContext { store, modem_status: status, log_ring: log, send_queue: queue, uptime_ms: 12345, free_heap_bytes: 0 }
+    CommandContext { store, modem_status: status, log_ring: log, send_queue: queue, uptime_ms: 12345, free_heap_bytes: 0, wifi_info: "" }
 }
 
 #[test]
@@ -85,7 +85,7 @@ fn status_command_shows_uptime() {
     let status = ModemStatus { csq: 20, operator: "China Mobile".to_string(), registered: true };
     let log = LogRing::new();
     let queue = SmsSender::new();
-    let ctx = CommandContext { store: &store, modem_status: &status, log_ring: &log, send_queue: &queue, uptime_ms: 3661_000, free_heap_bytes: 0 };
+    let ctx = CommandContext { store: &store, modem_status: &status, log_ring: &log, send_queue: &queue, uptime_ms: 3661_000, free_heap_bytes: 0, wifi_info: "" };
     let cmd = StatusCommand;
     let result = cmd.handle("", &ctx);
     assert!(result.contains("01h 01m 01s"), "uptime not found in: {}", result);
@@ -303,7 +303,7 @@ fn status_command_unknown_signal_and_operator() {
     let status = ModemStatus::default(); // csq=99, empty operator, not registered
     let log = LogRing::new();
     let queue = SmsSender::new();
-    let ctx = CommandContext { store: &store, modem_status: &status, log_ring: &log, send_queue: &queue, uptime_ms: 0, free_heap_bytes: 0 };
+    let ctx = CommandContext { store: &store, modem_status: &status, log_ring: &log, send_queue: &queue, uptime_ms: 0, free_heap_bytes: 0, wifi_info: "" };
     let result = StatusCommand.handle("", &ctx);
     assert!(result.contains("N/A"), "csq=99 should show N/A: {}", result);
     assert!(result.contains(i18n::status_op_unknown()), "empty operator: {}", result);
