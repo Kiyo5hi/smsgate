@@ -736,17 +736,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "harness"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "log",
- "serde",
- "serde_json",
- "smsgate",
-]
-
-[[package]]
 name = "hash32"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

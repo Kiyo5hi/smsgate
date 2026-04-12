@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "harness"]
+members = ["."]
 resolver = "2"
 
 [package]
@@ -17,6 +17,7 @@ esp32 = [
     "dep:esp-idf-svc",
     "dep:esp-idf-sys",
 ]
+testing = []
 
 [dependencies]
 # ESP32 HAL (omitted for host-side test builds)

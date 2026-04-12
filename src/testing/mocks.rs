@@ -1,7 +1,7 @@
 //! Mock implementations of ModemPort and Messenger.
 
-use smsgate::im::{InboundMessage, MessageId, Messenger, MessengerError};
-use smsgate::modem::{AtResponse, ModemError, ModemPort};
+use crate::im::{InboundMessage, MessageId, Messenger, MessengerError};
+use crate::modem::{AtResponse, ModemError, ModemPort};
 use std::collections::VecDeque;
 
 // ---------------------------------------------------------------------------

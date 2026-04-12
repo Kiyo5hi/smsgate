@@ -1,6 +1,6 @@
 //! Tests for bridge::sms_handler — CMTI processing and boot-time sweep.
 
-use harness::{mocks::{FailingMessenger, RecordingMessenger, ScriptedModem}, pdu};
+use smsgate::testing::{mocks::{FailingMessenger, RecordingMessenger, ScriptedModem}, pdu};
 use smsgate::bridge::reply_router::ReplyRouter;
 use smsgate::bridge::sms_handler::{handle_new_sms, process_pdu_hex, sweep_one_storage};
 use smsgate::log_ring::LogRing;

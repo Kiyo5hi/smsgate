@@ -1,6 +1,6 @@
 //! Outbound SMS queue tests.
 
-use harness::mocks::ScriptedModem;
+use smsgate::testing::mocks::ScriptedModem;
 use smsgate::sms::sender::SmsSender;
 
 #[test]

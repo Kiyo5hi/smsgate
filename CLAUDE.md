@@ -6,16 +6,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ESP32 firmware in Rust — bridges SMS and IM (Telegram and others); two-way forwarding.
 Hardware: LilyGo T-A7670X (ESP32 + A7670G modem, CH9102 USB bridge).
-This branch (`rust-rewrite`) is hardware-tested and boots to working state on real hardware.
+This branch (`main`) is hardware-tested and boots to working state on real hardware.
 
 ## Commands
 
 ```bash
 # Host tests — no hardware needed; use after every change
-cargo test -p harness
+cargo test --no-default-features --features testing
 
 # Single test file
-cargo test -p harness --test <name>
+cargo test --no-default-features --features testing --test <name>
 
 # Build firmware (requires Xtensa toolchain — see Toolchain Setup below)
 # Windows: must set CARGO_TARGET_DIR to a short path due to ESP-IDF path length limits
@@ -81,7 +81,7 @@ NVS stores exactly four keys: `im_cursor` (i64), `reply_map` (blob), `block_list
 2. `src/commands/builtin/mod.rs` — `pub use <name>::<Name>Command;`
 3. `src/main.rs` `build_registry()` — `registry.register(Box::new(<Name>Command));`
 4. `tests/command_dispatch.rs` — add a test using `RecordingMessenger` + `MemStore`
-5. `cargo test -p harness --test command_dispatch`
+5. `cargo test --no-default-features --features testing --test command_dispatch`
 
 ### Add a board
 1. `src/boards/<board>.rs` — implement `Board` trait

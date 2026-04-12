@@ -1,6 +1,6 @@
 //! PDU codec tests — ported from C++ test_sms_pdu.cpp, test_sms_pdu_encode.cpp, test_sms_codec.cpp
 
-use harness::pdu;
+use smsgate::testing::pdu;
 use smsgate::sms::codec::*;
 
 // ---------------------------------------------------------------------------

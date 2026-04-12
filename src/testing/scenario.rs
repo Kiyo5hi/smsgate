@@ -1,10 +1,10 @@
 //! Declarative Scenario DSL for end-to-end tests.
 
-use crate::mocks::{RecordingMessenger, ScriptedModem};
-use smsgate::bridge::{forwarder::forward_sms, reply_router::ReplyRouter};
-use smsgate::log_ring::LogRing;
-use smsgate::persist::mem::MemStore;
-use smsgate::sms::{codec::parse_sms_pdu, SmsMessage};
+use crate::testing::mocks::{RecordingMessenger, ScriptedModem};
+use crate::bridge::{forwarder::forward_sms, reply_router::ReplyRouter};
+use crate::log_ring::LogRing;
+use crate::persist::mem::MemStore;
+use crate::sms::{codec::parse_sms_pdu, SmsMessage};
 
 /// Assertion to check after the scenario runs.
 enum Assertion {

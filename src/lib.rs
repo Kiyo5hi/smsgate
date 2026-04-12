@@ -1,5 +1,4 @@
 //! smsgate — library root.
-//! Exposes all modules for use by the harness test crate.
 
 #[cfg(feature = "esp32")]
 pub mod boards;
@@ -13,3 +12,6 @@ pub mod modem;
 pub mod persist;
 pub mod sms;
 pub mod timer;
+
+#[cfg(feature = "testing")]
+pub mod testing;

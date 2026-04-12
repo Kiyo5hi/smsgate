@@ -5,7 +5,7 @@ use smsgate::bridge::reply_router::ReplyRouter;
 use smsgate::log_ring::LogRing;
 use smsgate::persist::{keys, mem::MemStore, save_bool};
 use smsgate::sms::SmsMessage;
-use harness::mocks::{FailingMessenger, RecordingMessenger};
+use smsgate::testing::mocks::{FailingMessenger, RecordingMessenger};
 
 fn make_sms(sender: &str, body: &str) -> SmsMessage {
     SmsMessage {

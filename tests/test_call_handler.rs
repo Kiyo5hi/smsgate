@@ -1,6 +1,6 @@
 //! CallHandler state machine tests.
 
-use harness::mocks::{RecordingMessenger, ScriptedModem};
+use smsgate::testing::mocks::{RecordingMessenger, ScriptedModem};
 use smsgate::bridge::call_handler::CallHandler;
 use smsgate::sms::sender::SmsSender;
 

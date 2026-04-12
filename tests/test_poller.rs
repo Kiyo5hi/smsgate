@@ -8,7 +8,7 @@ use smsgate::log_ring::LogRing;
 use smsgate::modem::ModemStatus;
 use smsgate::persist::{keys, load_bool, mem::MemStore};
 use smsgate::sms::sender::SmsSender;
-use harness::mocks::RecordingMessenger;
+use smsgate::testing::mocks::RecordingMessenger;
 
 fn make_registry() -> CommandRegistry {
     let mut r = CommandRegistry::new();

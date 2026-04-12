@@ -1,12 +1,12 @@
 //! End-to-end Scenario tests.
 
-use harness::{pdu, Scenario};
+use smsgate::testing::{pdu, Scenario};
 use smsgate::bridge::forwarder::{add_to_blocklist, forward_sms};
 use smsgate::bridge::reply_router::ReplyRouter;
 use smsgate::log_ring::LogRing;
 use smsgate::persist::{keys, mem::MemStore, save_bool};
 use smsgate::sms::{codec::build_sms_submit_pdus, SmsMessage};
-use harness::mocks::RecordingMessenger;
+use smsgate::testing::mocks::RecordingMessenger;
 
 // A known-good GSM-7 single-part DELIVER PDU for "+8613800138000", "Hello"
 // We build it by hand-coding a minimal SMS-DELIVER:
