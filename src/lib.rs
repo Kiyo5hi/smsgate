@@ -4,6 +4,7 @@
 #[cfg(feature = "esp32")]
 pub mod boards;
 pub mod bridge;
+pub mod i18n;
 pub mod commands;
 pub mod config;
 pub mod im;

@@ -1,0 +1,14 @@
+//! Compile-time locale selection.
+//!
+//! Set `[ui] locale = "zh"` in config.toml to compile Chinese strings.
+//! Defaults to English when the key is absent.
+
+#[cfg(locale_zh)]
+mod zh;
+#[cfg(locale_zh)]
+pub use zh::*;
+
+#[cfg(not(locale_zh))]
+mod en;
+#[cfg(not(locale_zh))]
+pub use en::*;

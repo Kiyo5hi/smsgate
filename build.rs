@@ -8,6 +8,7 @@ fn main() {
     // Instruct Cargo to rerun this script if config.toml changes.
     println!("cargo:rerun-if-changed=config.toml");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo::rustc-check-cfg=cfg(locale_zh)");
 
     let config_path = Path::new("config.toml");
     if !config_path.exists() {
@@ -51,6 +52,10 @@ fn main() {
     println!("cargo:rustc-env=CFG_BRIDGE_MAX_FAILURES={}", get("bridge", "max_failures_before_reboot"));
     println!("cargo:rustc-env=CFG_BRIDGE_POLL_INTERVAL_MS={}", get("bridge", "poll_interval_ms"));
     println!("cargo:rustc-env=CFG_BRIDGE_WATCHDOG_SEC={}", get("bridge", "watchdog_timeout_sec"));
+
+    if get("ui", "locale") == "zh" {
+        println!("cargo:rustc-cfg=locale_zh");
+    }
 }
 
 fn emit_empty_defaults() {

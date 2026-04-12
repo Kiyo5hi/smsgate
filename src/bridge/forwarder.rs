@@ -39,11 +39,10 @@ pub fn forward_sms(
     }
 
     let display = human_readable_phone(&sms.sender);
-    let text = format!(
-        "📱 SMS from {}\n🕐 {}\n\n{}",
-        display,
-        crate::sms::codec::timestamp_to_rfc3339(&sms.timestamp, 480),
-        sms.body
+    let text = crate::i18n::sms_received(
+        &display,
+        &crate::sms::codec::timestamp_to_rfc3339(&sms.timestamp, 480),
+        &sms.body,
     );
 
     match messenger.send_message(&text) {

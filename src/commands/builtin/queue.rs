@@ -4,14 +4,14 @@ pub struct QueueCommand;
 
 impl Command for QueueCommand {
     fn name(&self) -> &'static str { "queue" }
-    fn description(&self) -> &'static str { "Inspect the outbound SMS queue" }
+    fn description(&self) -> &'static str { crate::i18n::desc_queue() }
 
     fn handle(&self, _args: &str, ctx: &CommandContext) -> String {
         let entries = ctx.send_queue.snapshot();
         if entries.is_empty() {
-            return "Outbound queue is empty.".to_string();
+            return crate::i18n::queue_empty().to_string();
         }
-        let mut out = format!("{} pending:\n", entries.len());
+        let mut out = crate::i18n::queue_header(entries.len());
         for e in &entries {
             out.push_str(&format!(
                 "#{} → {} | attempt {} | {}s old | \"{}\"\n",

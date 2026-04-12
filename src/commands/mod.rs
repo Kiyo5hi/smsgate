@@ -14,6 +14,8 @@ pub struct CommandContext<'a> {
     pub log_ring: &'a LogRing,
     pub send_queue: &'a SmsSender,
     pub uptime_ms: u32,
+    /// Free heap in bytes (0 on host/tests; real value on device).
+    pub free_heap_bytes: u32,
 }
 
 /// A single bot command.

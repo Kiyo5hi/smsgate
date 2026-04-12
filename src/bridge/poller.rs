@@ -24,6 +24,7 @@ pub fn poll_and_dispatch(
     log: &LogRing,
     modem_status: &ModemStatus,
     uptime_ms: u32,
+    free_heap_bytes: u32,
     timeout_sec: u32,
 ) -> Result<bool, MessengerError> {
     let since = load_i64(store, keys::IM_CURSOR).unwrap_or(0);
@@ -44,6 +45,7 @@ pub fn poll_and_dispatch(
                 log_ring: log,
                 send_queue: sender,
                 uptime_ms,
+                free_heap_bytes,
             };
             if let Some(reply) = registry.dispatch(text, &ctx) {
                 let (clean, should_restart) = apply_sentinels(&reply, sender, store);

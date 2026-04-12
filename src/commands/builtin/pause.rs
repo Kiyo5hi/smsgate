@@ -11,24 +11,23 @@ pub struct ResumeCommand;
 
 impl Command for PauseCommand {
     fn name(&self) -> &'static str { "pause" }
-    fn description(&self) -> &'static str { "Pause SMS forwarding (default 60 min)" }
+    fn description(&self) -> &'static str { crate::i18n::desc_pause() }
 
     fn handle(&self, args: &str, _ctx: &CommandContext) -> String {
         let mins: u32 = args.trim().parse().unwrap_or(60);
-        format!("{}{}  \nForwarding paused for {} min.", PAUSE_SENTINEL, mins, mins)
+        format!("{}{}  \n{}", PAUSE_SENTINEL, mins, crate::i18n::pause_ok(mins))
     }
 }
 
 impl Command for ResumeCommand {
     fn name(&self) -> &'static str { "resume" }
-    fn description(&self) -> &'static str { "Resume SMS forwarding immediately" }
+    fn description(&self) -> &'static str { crate::i18n::desc_resume() }
 
     fn handle(&self, _args: &str, ctx: &CommandContext) -> String {
-        let enabled = load_bool(ctx.store, keys::FWD_ENABLED).unwrap_or(true);
-        if enabled {
-            "Forwarding is already active.".to_string()
+        if load_bool(ctx.store, keys::FWD_ENABLED).unwrap_or(true) {
+            crate::i18n::resume_already_active().to_string()
         } else {
-            format!("{}  \nForwarding resumed.", RESUME_SENTINEL)
+            format!("{}  \n{}", RESUME_SENTINEL, crate::i18n::resume_ok())
         }
     }
 }

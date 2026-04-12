@@ -121,7 +121,7 @@ impl CallHandler {
             Some(n) if !n.is_empty() => crate::sms::codec::human_readable_phone(n),
             _ => "unknown caller".to_string(),
         };
-        let text = format!("📞 Incoming call from {}", display);
+        let text = crate::i18n::incoming_call(&display);
         if let Err(e) = messenger.send_message(&text) {
             log::error!("[call] IM notify failed: {}", e);
         }

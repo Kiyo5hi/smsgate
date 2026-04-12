@@ -4,7 +4,7 @@ pub struct StatusCommand;
 
 impl Command for StatusCommand {
     fn name(&self) -> &'static str { "status" }
-    fn description(&self) -> &'static str { "Show device health and stats" }
+    fn description(&self) -> &'static str { crate::i18n::desc_status() }
 
     fn handle(&self, _args: &str, ctx: &CommandContext) -> String {
         let uptime_s = ctx.uptime_ms / 1000;
@@ -13,37 +13,36 @@ impl Command for StatusCommand {
         let s = uptime_s % 60;
 
         let csq = ctx.modem_status.csq;
-        let signal = if csq == 99 { "N/A".to_string() }
-                     else { format!("{}/31 ({} dBm)", csq, csq_to_dbm(csq)) };
+        let signal = if csq == 99 {
+            "N/A".to_string()
+        } else {
+            format!("{}/31 ({} dBm)", csq, csq_to_dbm(csq))
+        };
 
         let operator = if ctx.modem_status.operator.is_empty() {
-            "unknown".to_string()
+            crate::i18n::status_op_unknown().to_string()
         } else {
             ctx.modem_status.operator.clone()
         };
 
-        let reg = if ctx.modem_status.registered { "registered" } else { "not registered" };
+        let queue_n    = ctx.send_queue.len();
+        let log_n      = ctx.log_ring.len();
+        let blocked_n  = crate::bridge::forwarder::load_blocklist(ctx.store).len();
+        let fwd_on     = crate::persist::load_bool(ctx.store, crate::persist::keys::FWD_ENABLED)
+                             .unwrap_or(true);
+        let free_heap_kb = ctx.free_heap_bytes / 1024;
 
-        let queue_depth = ctx.send_queue.len();
-        let log_count = ctx.log_ring.len();
+        let last = ctx.log_ring.last_n(1);
+        let last_sms = last.first().map(|e| (e.sender.as_str(), e.timestamp.as_str()));
 
-        let fwd = crate::persist::load_bool(ctx.store, crate::persist::keys::FWD_ENABLED)
-            .unwrap_or(true);
-
-        format!(
-            "📊 smsgate status\n\
-             ⏱ Uptime: {:02}h {:02}m {:02}s\n\
-             📶 Signal: {} — {}\n\
-             🌐 Network: {}\n\
-             📬 Queue: {} pending\n\
-             📋 Log: {} messages\n\
-             🔄 Forwarding: {}\n",
+        crate::i18n::format_status(
             h, m, s,
-            signal, operator,
-            reg,
-            queue_depth,
-            log_count,
-            if fwd { "enabled" } else { "PAUSED" },
+            &signal, &operator,
+            ctx.modem_status.registered,
+            free_heap_kb,
+            queue_n, blocked_n, log_n,
+            fwd_on,
+            last_sms,
         )
     }
 }

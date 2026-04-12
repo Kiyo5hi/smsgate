@@ -121,9 +121,7 @@ fn main() {
 
     // RFC-0025: alert if NVS failed (now that we have a messenger)
     if nvs_failed {
-        let _ = messenger.send_message(
-            "⚠️ NVS init failed — running without persistence. Block list and cursor will reset on reboot."
-        );
+        let _ = messenger.send_message(smsgate::i18n::nvs_fail());
     }
 
     // ---- Sweep existing SMS from SIM on boot ----
@@ -137,7 +135,7 @@ fn main() {
     }
 
     log::info!("smsgate ready");
-    let _ = messenger.send_message("✅ smsgate started");
+    let _ = messenger.send_message(smsgate::i18n::started());
 
     // Subscribe main task to the Task WDT (RFC-0001 §4.4: 120s timeout).
     // The WDT fires if esp_task_wdt_reset() is not called within the timeout.
@@ -201,9 +199,10 @@ fn main() {
         call_handler.tick(&mut *modem, &mut messenger, &mut sender);
 
         // Poll IM messages and dispatch commands
+        let free_heap = unsafe { esp_idf_sys::esp_get_free_heap_size() };
         let poll_result = poll_and_dispatch(
             &mut messenger, &mut sender, &router, &registry,
-            &mut *store, &log, &modem_status, uptime_ms,
+            &mut *store, &log, &modem_status, uptime_ms, free_heap,
             (Config::POLL_INTERVAL_MS / 1000).max(1),
         );
         match poll_result {
@@ -211,7 +210,7 @@ fn main() {
                 consecutive_failures = 0;
                 if restart {
                     log::info!("[main] restart requested via /restart command");
-                    let _ = messenger.send_message("♻️ Rebooting now…");
+                    let _ = messenger.send_message(smsgate::i18n::rebooting());
                     esp_idf_hal::reset::restart();
                 }
             }
@@ -265,7 +264,7 @@ fn check_low_heap(messenger: &mut dyn smsgate::im::Messenger) {
     let free = unsafe { esp_idf_sys::esp_get_free_heap_size() };
     if free < 20 * 1024 {
         log::warn!("[main] low heap: {} bytes", free);
-        let _ = messenger.send_message(&format!("⚠️ Low heap: {} bytes", free));
+        let _ = messenger.send_message(&smsgate::i18n::low_heap(free));
     }
 }
 
