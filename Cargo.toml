@@ -7,7 +7,7 @@ name = "smsgate"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "ESP32 firmware that bridges SMS and IM (Telegram) via LilyGo T-A7670X"
+description = "ESP32 firmware that bridges SMS and Telegram — two-way forwarding via cellular modem"
 repository = "https://github.com/Kiyo5hi/smsgate"
 
 [features]
