@@ -4,6 +4,7 @@ use smsgate::bridge::forwarder::is_blocked;
 use smsgate::bridge::poller::poll_and_dispatch;
 use smsgate::bridge::reply_router::ReplyRouter;
 use smsgate::commands::{builtin::*, CommandRegistry};
+use smsgate::im::InboundMessage;
 use smsgate::log_ring::LogRing;
 use smsgate::modem::ModemStatus;
 use smsgate::persist::{keys, load_bool, mem::MemStore};
@@ -25,6 +26,14 @@ fn make_registry() -> CommandRegistry {
     r
 }
 
+fn msg(text: &str) -> InboundMessage {
+    InboundMessage { cursor: 1, text: text.to_string(), reply_to: None }
+}
+
+fn reply_msg(text: &str, reply_to: i64) -> InboundMessage {
+    InboundMessage { cursor: 1, text: text.to_string(), reply_to: Some(reply_to) }
+}
+
 #[test]
 fn send_sentinel_enqueues_sms() {
     let mut store = MemStore::new();
@@ -35,11 +44,10 @@ fn send_sentinel_enqueues_sms() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    messenger.inject(1, "/send +8613800138000 Hello world", None);
-
     let result = poll_and_dispatch(
+        &[msg("/send +8613800138000 Hello world")],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     );
     assert!(result.is_ok());
     assert!(!result.unwrap().0); // no restart
@@ -67,11 +75,10 @@ fn block_sentinel_adds_to_blocklist() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    messenger.inject(1, "/block 10086", None);
-
     poll_and_dispatch(
+        &[msg("/block 10086")],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
 
     assert!(is_blocked("10086", &store), "number should be blocked");
@@ -91,11 +98,10 @@ fn unblock_sentinel_removes_from_blocklist() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    messenger.inject(1, "/unblock 10086", None);
-
     poll_and_dispatch(
+        &[msg("/unblock 10086")],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
 
     assert!(!is_blocked("10086", &store), "number should be unblocked");
@@ -113,11 +119,10 @@ fn pause_sentinel_disables_forwarding() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    messenger.inject(1, "/pause 30", None);
-
     poll_and_dispatch(
+        &[msg("/pause 30")],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
 
     assert_eq!(load_bool(&store, keys::FWD_ENABLED), Some(false));
@@ -135,11 +140,10 @@ fn pause_sentinel_returns_duration() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    messenger.inject(1, "/pause 45", None);
-
     let (restart, pause_mins) = poll_and_dispatch(
+        &[msg("/pause 45")],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
     assert!(!restart);
     assert_eq!(pause_mins, Some(45), "pause duration must be returned to caller");
@@ -158,11 +162,10 @@ fn resume_sentinel_enables_forwarding() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    messenger.inject(1, "/resume", None);
-
     poll_and_dispatch(
+        &[msg("/resume")],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
 
     assert_eq!(load_bool(&store, keys::FWD_ENABLED), Some(true));
@@ -180,11 +183,10 @@ fn restart_sentinel_returns_true() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    messenger.inject(1, "/restart", None);
-
     let result = poll_and_dispatch(
+        &[msg("/restart")],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     );
     assert!(result.is_ok());
     assert!(result.unwrap().0, "restart should be signalled");
@@ -206,12 +208,10 @@ fn reply_to_sms_enqueues_outbound() {
     // Simulate a stored mapping: message 5000 → "+8613800138000"
     router.put(5000, "+8613800138000", &mut store);
 
-    // User replies to message 5000
-    messenger.inject(1, "Reply text here", Some(5000));
-
     poll_and_dispatch(
+        &[reply_msg("Reply text here", 5000)],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
 
     // SMS should be enqueued to the original sender
@@ -230,12 +230,10 @@ fn non_command_non_reply_is_ignored() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    // Plain text message (not a command, not a reply)
-    messenger.inject(1, "just some text", None);
-
     poll_and_dispatch(
+        &[msg("just some text")],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
 
     // Nothing enqueued, no IM reply
@@ -254,11 +252,10 @@ fn send_sentinel_body_with_pipe_char() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    messenger.inject(1, "/send +1 Hello|world|test", None);
-
     poll_and_dispatch(
+        &[msg("/send +1 Hello|world|test")],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
 
     assert_eq!(sender.len(), 1);
@@ -278,14 +275,10 @@ fn send_sentinel_body_with_newline() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    // Simulate a Telegram message where the body has a newline in it.
-    // dispatch() splits name/args on first whitespace, so args = "+1 line1\nline2"
-    // send.rs further splits on first whitespace: phone="+1", body="line1\nline2"
-    messenger.inject(1, "/send +1 line1\nline2", None);
-
     poll_and_dispatch(
+        &[msg("/send +1 line1\nline2")],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
 
     assert_eq!(sender.len(), 1);
@@ -306,11 +299,10 @@ fn send_body_preview_truncated_at_50_chars() {
     let mut sender = SmsSender::new();
 
     let long_body: String = "A".repeat(70);
-    messenger.inject(1, &format!("/send +1 {}", long_body), None);
-
     poll_and_dispatch(
+        &[msg(&format!("/send +1 {}", long_body))],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
 
     assert_eq!(sender.len(), 1);
@@ -334,12 +326,10 @@ fn reply_to_unknown_id_does_not_enqueue() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    // Reply to message ID 9999 which is not in the router
-    messenger.inject(1, "Reply to unknown", Some(9999));
-
     poll_and_dispatch(
+        &[reply_msg("Reply to unknown", 9999)],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
 
     assert_eq!(sender.len(), 0, "unknown reply_to should not enqueue SMS");
@@ -355,11 +345,10 @@ fn unknown_command_sends_no_reply() {
     let status = ModemStatus::default();
     let mut sender = SmsSender::new();
 
-    messenger.inject(1, "/nonexistent_cmd", None);
-
     poll_and_dispatch(
+        &[msg("/nonexistent_cmd")],
         &mut messenger, &mut sender, &router, &reg,
-        &mut store, &log, &status, 0, 0, "", 0,
+        &mut store, &log, &status, 0, 0, "",
     ).unwrap();
 
     // Unknown commands produce no reply

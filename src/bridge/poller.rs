@@ -1,8 +1,8 @@
 //! IM message poll loop and command dispatcher.
 
 use crate::commands::{CommandContext, CommandRegistry};
-use crate::im::{Messenger, MessengerError};
-use crate::persist::{keys, load_i64, save_bool, save_i64, Store};
+use crate::im::{InboundMessage, Messenger, MessengerError};
+use crate::persist::{keys, save_bool, Store};
 use crate::sms::sender::SmsSender;
 use crate::bridge::reply_router::ReplyRouter;
 use crate::log_ring::LogRing;
@@ -13,10 +13,14 @@ use crate::commands::builtin::pause::{PAUSE_SENTINEL, RESUME_SENTINEL};
 use crate::commands::builtin::restart::RESTART_SENTINEL;
 use crate::commands::builtin::send::SEND_SENTINEL;
 
-/// Process incoming IM messages: dispatch commands and route replies to SMS.
+/// Process a batch of inbound IM messages: dispatch commands and route replies to SMS.
 /// Returns `(restart_requested, pause_mins)` — `pause_mins` is `Some(n)` when a
 /// timed `/pause n` was processed; the caller is responsible for the auto-resume timer.
+///
+/// Polling is handled by a dedicated background thread; this function only processes
+/// messages that have already been received. Cursor persistence is the caller's responsibility.
 pub fn poll_and_dispatch(
+    messages: &[InboundMessage],
     messenger: &mut dyn Messenger,
     sender: &mut SmsSender,
     router: &ReplyRouter,
@@ -27,18 +31,12 @@ pub fn poll_and_dispatch(
     uptime_ms: u32,
     free_heap_bytes: u32,
     wifi_info: &str,
-    timeout_sec: u32,
 ) -> Result<(bool, Option<u32>), MessengerError> {
-    let since = load_i64(store, keys::IM_CURSOR).unwrap_or(0);
-    let messages = messenger.poll(since, timeout_sec)?;
     let mut restart_requested = false;
     let mut pause_mins: Option<u32> = None;
 
     for msg in messages {
         let text = msg.text.trim();
-
-        // Update cursor
-        let _ = save_i64(store, keys::IM_CURSOR, msg.cursor);
 
         if text.starts_with('/') {
             // Bot command

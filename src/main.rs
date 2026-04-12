@@ -145,6 +145,38 @@ fn main() {
     // The WDT fires if esp_task_wdt_reset() is not called within the timeout.
     unsafe { esp_idf_sys::esp_task_wdt_add(std::ptr::null_mut()); }
 
+    // ---- Telegram polling thread ----
+    // Runs getUpdates (long-poll) independently so the main loop is never blocked
+    // waiting for the network. The channel delivers batches of inbound messages.
+    let initial_cursor = smsgate::persist::load_i64(&*store, smsgate::persist::keys::IM_CURSOR)
+        .unwrap_or(0);
+    let (tg_tx, tg_rx) =
+        std::sync::mpsc::channel::<Vec<smsgate::im::InboundMessage>>();
+    std::thread::Builder::new()
+        .name("tg-poll".into())
+        .stack_size(16 * 1024)
+        .spawn(move || {
+            let http = TelegramHttpClient::new(None).expect("tg-poll: TLS init failed");
+            let mut poll_messenger = TelegramMessenger::new(http);
+            let mut cursor = initial_cursor;
+            loop {
+                match poll_messenger.poll(cursor, (Config::POLL_INTERVAL_MS / 1000).max(1)) {
+                    Ok(msgs) if !msgs.is_empty() => {
+                        cursor = msgs.iter().map(|m| m.cursor).max().unwrap_or(cursor);
+                        if tg_tx.send(msgs).is_err() {
+                            break; // main thread gone — exit cleanly
+                        }
+                    }
+                    Ok(_) => {} // no new messages, poll again immediately
+                    Err(e) => {
+                        log::error!("[tg-poll] error: {}", e);
+                        std::thread::sleep(std::time::Duration::from_secs(5));
+                    }
+                }
+            }
+        })
+        .expect("failed to spawn tg-poll thread");
+
     // ---- Main loop ----
     let boot_ms = now_ms();
     let mut consecutive_failures: u8 = 0;
@@ -225,36 +257,55 @@ fn main() {
         }
         call_handler.tick(&mut *modem, &mut messenger, &mut sender);
 
-        // Poll IM messages and dispatch commands
-        let free_heap = unsafe { esp_idf_sys::esp_get_free_heap_size() };
-        let poll_result = poll_and_dispatch(
-            &mut messenger, &mut sender, &router, &registry,
-            &mut *store, &log, &modem_status, uptime_ms, free_heap, &wifi_info,
-            (Config::POLL_INTERVAL_MS / 1000).max(1),
-        );
-        match poll_result {
-            Ok((restart, maybe_pause)) => {
-                consecutive_failures = 0;
-                if let Some(mins) = maybe_pause {
-                    pause_until = Some(std::time::Instant::now()
-                        + std::time::Duration::from_secs(mins as u64 * 60));
-                    log::info!("[main] pause timer set for {} min", mins);
-                }
-                if restart {
-                    log::info!("[main] restart requested via /restart command");
-                    let _ = messenger.send_message(smsgate::i18n::rebooting());
-                    esp_idf_hal::reset::restart();
+        // Collect any Telegram messages delivered by the polling thread
+        let tg_messages: Vec<smsgate::im::InboundMessage> = {
+            let mut batch = Vec::new();
+            loop {
+                match tg_rx.try_recv() {
+                    Ok(msgs) => batch.extend(msgs),
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        log::error!("[main] tg-poll thread died — rebooting");
+                        esp_idf_hal::reset::restart();
+                    }
                 }
             }
-            Err(e) => {
-                consecutive_failures += 1;
-                log::error!("[main] poll failed ({}): {}", consecutive_failures, e);
-                if consecutive_failures >= Config::MAX_FAILURES {
-                    log::error!("[main] max failures reached — rebooting");
-                    esp_idf_hal::reset::restart();
+            batch
+        };
+
+        // Dispatch commands and replies, update cursor in NVS
+        if !tg_messages.is_empty() {
+            if let Some(new_cursor) = tg_messages.iter().map(|m| m.cursor).max() {
+                let _ = smsgate::persist::save_i64(
+                    &mut *store, smsgate::persist::keys::IM_CURSOR, new_cursor,
+                );
+            }
+            let free_heap = unsafe { esp_idf_sys::esp_get_free_heap_size() };
+            match poll_and_dispatch(
+                &tg_messages, &mut messenger, &mut sender, &router, &registry,
+                &mut *store, &log, &modem_status, uptime_ms, free_heap, &wifi_info,
+            ) {
+                Ok((restart, maybe_pause)) => {
+                    consecutive_failures = 0;
+                    if let Some(mins) = maybe_pause {
+                        pause_until = Some(std::time::Instant::now()
+                            + std::time::Duration::from_secs(mins as u64 * 60));
+                        log::info!("[main] pause timer set for {} min", mins);
+                    }
+                    if restart {
+                        log::info!("[main] restart requested via /restart command");
+                        let _ = messenger.send_message(smsgate::i18n::rebooting());
+                        esp_idf_hal::reset::restart();
+                    }
                 }
-                std::thread::sleep(std::time::Duration::from_secs(5));
-                continue;
+                Err(e) => {
+                    consecutive_failures += 1;
+                    log::error!("[main] send failed ({}): {}", consecutive_failures, e);
+                    if consecutive_failures >= Config::MAX_FAILURES {
+                        log::error!("[main] max failures reached — rebooting");
+                        esp_idf_hal::reset::restart();
+                    }
+                }
             }
         }
 
@@ -268,6 +319,9 @@ fn main() {
             }
             _ => {}
         }
+
+        // Yield to other tasks; keeps URC latency under 100 ms without busy-looping.
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 
