@@ -61,7 +61,7 @@ impl ScriptedModem {
     pub fn check_consumed(&self) {
         if !self.script.is_empty() {
             let remaining: Vec<_> = self.script.iter().map(|s| &s.command_suffix).collect();
-            panic!("ScriptedModem: {} unconsummed script steps: {:?}", self.script.len(), remaining);
+            panic!("ScriptedModem: {} unconsumed script steps: {:?}", self.script.len(), remaining);
         }
     }
 }

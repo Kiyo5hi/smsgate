@@ -31,7 +31,7 @@ impl A76xxModem {
                 break;
             }
             if std::time::Instant::now() > probe_deadline {
-                log::error!("[a76xx] modem did not respond within 15 s");
+                log::error!("[a76xx] modem did not respond within 30 s");
                 return Err(ModemError::Timeout);
             }
             std::thread::sleep(std::time::Duration::from_millis(500));

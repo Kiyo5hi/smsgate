@@ -6,10 +6,9 @@ resolver = "2"
 name = "smsgate"
 version = "0.1.0"
 edition = "2021"
-
-# ESP32 target — build with:
-#   cargo build --release --target xtensa-esp32-espidf
-# Requires the Xtensa Rust toolchain from https://github.com/esp-rs/rust-build
+license = "MIT"
+description = "ESP32 firmware that bridges SMS and IM (Telegram) via LilyGo T-A7670X"
+repository = "https://github.com/kiyoshi-guo/smsgate"
 
 [features]
 default = ["esp32"]

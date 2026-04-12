@@ -32,6 +32,8 @@ fuzz_target!(|data: &[u8]| {
         log_ring: &log,
         send_queue: &queue,
         uptime_ms: 0,
+        free_heap_bytes: 0,
+        wifi_info: "",
     };
 
     let _ = reg.dispatch(s, &ctx);

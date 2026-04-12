@@ -18,3 +18,7 @@ pwrkey    = 4
 max_failures_before_reboot = 8
 poll_interval_ms           = 3000
 watchdog_timeout_sec       = 120
+
+[ui]
+# Locale: "en" (default) or "zh"
+# locale = "zh"
