@@ -59,10 +59,11 @@ impl Messenger for TelegramMessenger {
     fn send_message(&mut self, text: &str) -> Result<MessageId, MessengerError> {
         let escaped = types::json_escape(text);
         let body = format!(
-            r#"{{"chat_id":{},"text":"{}","parse_mode":""}}"#,
+            r#"{{"chat_id":{},"text":"{}"}}"#,
             self.chat_id, escaped
         );
         let resp = self.post_json("sendMessage", &body)?;
+        log::info!("[telegram] sendMessage response: {}", resp);
         let result: ApiResult<SendMessageResult> = serde_json::from_str(&resp)
             .map_err(|e| MessengerError::Json(e.to_string()))?;
         if result.ok {

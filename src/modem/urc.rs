@@ -42,8 +42,9 @@ pub enum Urc {
 
 /// Parse a URC line to a discriminant.
 pub fn parse_urc(line: &str) -> Urc {
-    if let Some(rest) = line.strip_prefix("+CMTI: ") {
-        // +CMTI: "SM",3  or  +CMTI: "ME",3
+    // +CMTI: "SM",3  or  +CMTI: "ME",3  or  +CMTI:"ME",3 (no space — some firmware variants)
+    if let Some(rest) = line.strip_prefix("+CMTI:") {
+        let rest = rest.trim_start();
         let mut parts = rest.splitn(2, ',');
         let mem = parts.next()
             .map(|s| s.trim().trim_matches('"').to_string())
@@ -59,7 +60,8 @@ pub fn parse_urc(line: &str) -> Urc {
     if line == "RING" || line.starts_with("RING") {
         return Urc::Ring;
     }
-    if let Some(rest) = line.strip_prefix("+CLIP: ") {
+    if let Some(rest) = line.strip_prefix("+CLIP:") {
+        let rest = rest.trim_start();
         let number = crate::sms::codec::parse_clip_line(&format!("+CLIP: {}", rest))
             .unwrap_or_default();
         return Urc::Clip(number);

@@ -45,9 +45,18 @@ impl A76xxModem {
         ];
         for cmd in &cmds {
             let r = self.send_at(cmd)?;
-            if !r.ok {
-                log::warn!("[a76xx] init cmd AT{} returned error", cmd);
+            if r.ok {
+                log::info!("[a76xx] init AT{} OK", cmd);
+            } else {
+                log::warn!("[a76xx] init AT{} ERROR: {}", cmd, r.body.trim());
             }
+        }
+
+        // Verify CNMI setting was accepted
+        match self.send_at("+CNMI?") {
+            Ok(r) if r.ok => log::info!("[a76xx] CNMI: {}", r.body.trim()),
+            Ok(r)         => log::warn!("[a76xx] CNMI? error: {}", r.body.trim()),
+            Err(_)        => log::warn!("[a76xx] CNMI? timed out"),
         }
 
         // Query active storage for diagnostics. Non-fatal; some SIM/modem combos

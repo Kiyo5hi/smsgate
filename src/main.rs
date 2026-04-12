@@ -166,6 +166,7 @@ fn main() {
 
         // Poll URCs (non-blocking)
         while let Some(urc) = modem.poll_urc() {
+            log::info!("[main] URC: {:?}", urc);
             match parse_urc(&urc) {
                 Urc::NewSms { mem, index } => {
                     handle_new_sms(&mem, index, &mut *modem, &mut router, &mut log,
@@ -239,6 +240,7 @@ fn handle_new_sms(
     let r = modem.send_at(&format!("+CMGR={}", index));
     let pdu_hex = match &r {
         Ok(resp) if resp.ok => {
+            log::info!("[main] AT+CMGR={} body: {:?}", index, resp.body);
             resp.body.lines()
                 .find(|l| !l.starts_with("+CMGR:") && !l.is_empty())
                 .map(|s| s.trim().to_string())
@@ -343,8 +345,15 @@ fn sweep_one_storage(
     store: &mut dyn smsgate::persist::Store,
 ) {
     let r = modem.send_at("+CMGL=4");
-    let Ok(resp) = r else { return; };
-    if !resp.ok { return; }
+    let resp = match r {
+        Ok(r) => r,
+        Err(e) => { log::warn!("[main] sweep {} AT+CMGL=4 failed: {:?}", mem, e); return; }
+    };
+    if !resp.ok {
+        log::warn!("[main] sweep {} AT+CMGL=4 error: {}", mem, resp.body.trim());
+        return;
+    }
+    log::info!("[main] sweep {} AT+CMGL=4 body: {:?}", mem, resp.body);
 
     let body = resp.body.clone();
     let mut lines = body.lines().peekable();

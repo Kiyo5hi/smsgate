@@ -144,3 +144,20 @@ fn parse_cmti_bad_index_defaults_zero() {
     let urc = parse_urc("+CMTI: \"SM\",abc");
     assert!(matches!(urc, Urc::NewSms { index: 0, .. }));
 }
+
+// Some A76xx firmware variants omit the space after the colon.
+#[test]
+fn parse_cmti_no_space_after_colon() {
+    if let Urc::NewSms { mem, index } = parse_urc("+CMTI:\"ME\",1") {
+        assert_eq!(mem, "ME");
+        assert_eq!(index, 1);
+    } else {
+        panic!("expected Urc::NewSms for +CMTI without space");
+    }
+}
+
+#[test]
+fn parse_clip_no_space_after_colon() {
+    let urc = parse_urc("+CLIP:\"+8613800138000\",145,\"\",,,\"\"");
+    assert!(matches!(urc, Urc::Clip(_)));
+}
