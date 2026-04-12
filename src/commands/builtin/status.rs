@@ -35,7 +35,7 @@ impl Command for StatusCommand {
         let last = ctx.log_ring.last_n(1);
         let last_sms = last.first().map(|e| (e.sender.as_str(), e.timestamp.as_str()));
 
-        crate::i18n::format_status(
+        let mut out = crate::i18n::format_status(
             h, m, s,
             &signal, &operator,
             ctx.modem_status.registered,
@@ -44,7 +44,9 @@ impl Command for StatusCommand {
             fwd_on,
             last_sms,
             ctx.wifi_info,
-        )
+        );
+        out.push_str(&crate::i18n::status_build(crate::config::Config::GIT_COMMIT));
+        out
     }
 }
 

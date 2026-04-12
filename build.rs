@@ -19,6 +19,7 @@ fn main() {
         // Emit empty-string placeholders so the crate still compiles; the
         // device will fail at runtime when it tries to connect.
         emit_empty_defaults();
+        emit_git_commit();
         return;
     }
 
@@ -56,6 +57,20 @@ fn main() {
     if get("ui", "locale") == "zh" {
         println!("cargo:rustc-cfg=locale_zh");
     }
+
+    emit_git_commit();
+}
+
+fn emit_git_commit() {
+    let commit = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    println!("cargo:rustc-env=CFG_GIT_COMMIT={}", commit);
+    println!("cargo:rerun-if-changed=.git/HEAD");
 }
 
 fn emit_empty_defaults() {

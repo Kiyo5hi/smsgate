@@ -38,6 +38,7 @@ pub fn status_reg_ok()     -> &'static str { "registered" }
 pub fn status_reg_no()     -> &'static str { "not registered" }
 pub fn status_fwd_on()     -> &'static str { "enabled" }
 pub fn status_fwd_off()    -> &'static str { "PAUSED" }
+pub fn status_build(commit: &str) -> String { format!("🔖 Build: {}", commit) }
 
 pub fn format_status(
     h: u32, m: u32, s: u32,

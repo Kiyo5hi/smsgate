@@ -38,6 +38,7 @@ pub fn status_reg_ok()     -> &'static str { "已注册" }
 pub fn status_reg_no()     -> &'static str { "未注册" }
 pub fn status_fwd_on()     -> &'static str { "已启用" }
 pub fn status_fwd_off()    -> &'static str { "已暂停" }
+pub fn status_build(commit: &str) -> String { format!("🔖 版本：{}", commit) }
 
 pub fn format_status(
     h: u32, m: u32, s: u32,

@@ -20,6 +20,7 @@ impl Config {
     pub const MAX_FAILURES: u8 = parse_u8_const(env!("CFG_BRIDGE_MAX_FAILURES"));
     pub const POLL_INTERVAL_MS: u32 = parse_u32_const(env!("CFG_BRIDGE_POLL_INTERVAL_MS"));
     pub const WATCHDOG_TIMEOUT_SEC: u32 = parse_u32_const(env!("CFG_BRIDGE_WATCHDOG_SEC"));
+    pub const GIT_COMMIT: &'static str = env!("CFG_GIT_COMMIT");
 }
 
 const fn parse_u8_const(s: &str) -> u8 {
