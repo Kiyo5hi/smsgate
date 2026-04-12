@@ -14,27 +14,22 @@ pub fn forward_sms(
     log: &mut LogRing,
     store: &mut dyn Store,
 ) -> Option<MessageId> {
-    // Check forwarding paused
+    let log_entry = |forwarded| LogEntry {
+        sender: sms.sender.clone(),
+        body_preview: sms.body.chars().take(80).collect(),
+        timestamp: sms.timestamp.clone(),
+        forwarded,
+    };
+
     if load_bool(store, keys::FWD_ENABLED) == Some(false) {
         log::info!("[forwarder] forwarding paused — dropping SMS from {}", sms.sender);
-        log.push(LogEntry {
-            sender: sms.sender.clone(),
-            body_preview: sms.body.chars().take(80).collect(),
-            timestamp: sms.timestamp.clone(),
-            forwarded: false,
-        });
+        log.push(log_entry(false));
         return None;
     }
 
-    // Check block list
     if is_blocked(&sms.sender, store) {
         log::info!("[forwarder] {} is blocked — dropped", sms.sender);
-        log.push(LogEntry {
-            sender: sms.sender.clone(),
-            body_preview: sms.body.chars().take(80).collect(),
-            timestamp: sms.timestamp.clone(),
-            forwarded: false,
-        });
+        log.push(log_entry(false));
         return None;
     }
 
@@ -48,12 +43,7 @@ pub fn forward_sms(
     match messenger.send_message(&text) {
         Ok(msg_id) => {
             router.put(msg_id, &sms.sender, store);
-            log.push(LogEntry {
-                sender: sms.sender.clone(),
-                body_preview: sms.body.chars().take(80).collect(),
-                timestamp: sms.timestamp.clone(),
-                forwarded: true,
-            });
+            log.push(log_entry(true));
             log::info!("[forwarder] forwarded SMS from {} → msg_id={}", sms.sender, msg_id);
             Some(msg_id)
         }

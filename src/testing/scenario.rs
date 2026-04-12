@@ -85,7 +85,8 @@ impl Scenario {
         let mut log = LogRing::new();
 
         // Process PDU inputs
-        for hex in &self.sms_pdu_inputs.clone() {
+        let pdu_inputs = std::mem::take(&mut self.sms_pdu_inputs);
+        for hex in &pdu_inputs {
             let pdu = parse_sms_pdu(hex).expect("invalid PDU in scenario");
             let sms = SmsMessage {
                 sender: pdu.sender,

@@ -6,6 +6,9 @@ pub mod sender;
 
 use thiserror::Error;
 
+/// Maximum number of concatenated SMS parts for a single outbound message.
+pub const MAX_SMS_PARTS: usize = 10;
+
 /// A fully-decoded inbound SMS message.
 #[derive(Debug, Clone)]
 pub struct SmsMessage {

@@ -91,32 +91,9 @@ fn main() {
     let mut modem_status = smsgate::modem::ModemStatus::default();
 
     // ---- Command registry ----
-    let mut registry = CommandRegistry::new();
-    // Build help text first (needs to know all commands — use placeholder, updated below)
-    registry.register(Box::new(HelpCommand { help_text: String::new() }));
-    registry.register(Box::new(StatusCommand));
-    registry.register(Box::new(SendCommand));
-    registry.register(Box::new(LogCommand));
-    registry.register(Box::new(QueueCommand));
-    registry.register(Box::new(BlockCommand));
-    registry.register(Box::new(UnblockCommand));
-    registry.register(Box::new(PauseCommand));
-    registry.register(Box::new(ResumeCommand));
-    registry.register(Box::new(RestartCommand));
-
-    // Re-create with correct help text (registry is rebuilt after all commands registered)
-    let help_text = registry.help_text();
-    let mut registry = CommandRegistry::new();
-    registry.register(Box::new(HelpCommand { help_text }));
-    registry.register(Box::new(StatusCommand));
-    registry.register(Box::new(SendCommand));
-    registry.register(Box::new(LogCommand));
-    registry.register(Box::new(QueueCommand));
-    registry.register(Box::new(BlockCommand));
-    registry.register(Box::new(UnblockCommand));
-    registry.register(Box::new(PauseCommand));
-    registry.register(Box::new(ResumeCommand));
-    registry.register(Box::new(RestartCommand));
+    // Two-pass: first pass generates help text, second bakes it into HelpCommand.
+    let help_text = build_registry("").help_text();
+    let registry = build_registry(&help_text);
 
     // Register bot commands with Telegram
     if let Err(e) = messenger.register_commands(&registry.command_list()) {
@@ -159,6 +136,7 @@ fn main() {
             let http = TelegramHttpClient::new(None).expect("tg-poll: TLS init failed");
             let mut poll_messenger = TelegramMessenger::new(http);
             let mut cursor = initial_cursor;
+            const HEARTBEAT_INTERVAL: u8 = 20;
             let mut heartbeat_counter: u8 = 0;
             loop {
                 match poll_messenger.poll(cursor, (Config::POLL_INTERVAL_MS / 1000).max(1)) {
@@ -171,7 +149,7 @@ fn main() {
                     }
                     Ok(_) => {
                         heartbeat_counter += 1;
-                        if heartbeat_counter >= 20 {
+                        if heartbeat_counter >= HEARTBEAT_INTERVAL {
                             heartbeat_counter = 0;
                             if tg_tx.send(Vec::new()).is_err() {
                                 break;
@@ -240,9 +218,9 @@ fn main() {
             // Low-heap alert
             check_low_heap(&mut messenger);
 
-            // Poll thread health: alert once after 5 min of silence
+            const POLL_STALE_SECS: u64 = 300;
             let stale_secs = last_tg_activity.elapsed().as_secs();
-            if stale_secs >= 300 && !tg_stale_alerted {
+            if stale_secs >= POLL_STALE_SECS && !tg_stale_alerted {
                 tg_stale_alerted = true;
                 let mins = (stale_secs / 60) as u32;
                 log::warn!("[main] tg-poll stale for {} min", mins);
@@ -356,6 +334,22 @@ fn main() {
 }
 
 #[cfg(feature = "esp32")]
+fn build_registry(help_text: &str) -> CommandRegistry {
+    let mut r = CommandRegistry::new();
+    r.register(Box::new(HelpCommand { help_text: help_text.to_string() }));
+    r.register(Box::new(StatusCommand));
+    r.register(Box::new(SendCommand));
+    r.register(Box::new(LogCommand));
+    r.register(Box::new(QueueCommand));
+    r.register(Box::new(BlockCommand));
+    r.register(Box::new(UnblockCommand));
+    r.register(Box::new(PauseCommand));
+    r.register(Box::new(ResumeCommand));
+    r.register(Box::new(RestartCommand));
+    r
+}
+
+#[cfg(feature = "esp32")]
 fn fmt_wifi(rssi: Option<i32>) -> String {
     match rssi {
         Some(r) => format!("{} ({} dBm)", smsgate::config::Config::WIFI_SSID, r),
@@ -375,7 +369,7 @@ fn a76xx_update_status(modem: &mut dyn smsgate::modem::ModemPort)
     let mut s = smsgate::modem::ModemStatus::default();
     if let Ok(r) = modem.send_at("+CSQ") {
         if let Some(v) = r.body.strip_prefix("+CSQ: ") {
-            s.csq = v.split(',').next().and_then(|x| x.trim().parse().ok()).unwrap_or(99);
+            s.csq = v.split(',').next().and_then(|x| x.trim().parse().ok()).unwrap_or(smsgate::modem::CSQ_UNKNOWN);
         }
     }
     if let Ok(r) = modem.send_at("+COPS?") {
@@ -386,15 +380,18 @@ fn a76xx_update_status(modem: &mut dyn smsgate::modem::ModemPort)
         }
     }
     if let Ok(r) = modem.send_at("+CREG?") {
-        s.registered = r.body.contains(",1") || r.body.contains(",5");
+        s.registered = smsgate::modem::creg_registered(&r.body);
     }
     Ok(s)
 }
 
 #[cfg(feature = "esp32")]
+const LOW_HEAP_THRESHOLD: u32 = 20 * 1024;
+
+#[cfg(feature = "esp32")]
 fn check_low_heap(messenger: &mut dyn smsgate::im::Messenger) {
     let free = unsafe { esp_idf_sys::esp_get_free_heap_size() };
-    if free < 20 * 1024 {
+    if free < LOW_HEAP_THRESHOLD {
         log::warn!("[main] low heap: {} bytes", free);
         let _ = messenger.send_message(&smsgate::i18n::low_heap(free));
     }

@@ -7,6 +7,17 @@ use crate::modem::ModemStatus;
 use crate::persist::Store;
 use crate::sms::sender::SmsSender;
 
+/// Sentinel prefixes embedded in command replies. The poller strips these
+/// lines and applies their side effects (enqueue SMS, toggle blocklist, etc.).
+/// Defined here so both `builtin/` and `bridge/poller.rs` share one source.
+pub const SEND_SENTINEL: &str = "__SEND__:";
+pub const BLOCK_SENTINEL: &str = "__BLOCK__:";
+pub const UNBLOCK_SENTINEL: &str = "__UNBLOCK__:";
+pub const PAUSE_SENTINEL: &str = "__PAUSE__:";
+pub const RESUME_SENTINEL: &str = "__RESUME__";
+pub const RESTART_SENTINEL: &str = "__RESTART__";
+// Keep `pub` (not `pub(crate)`) — integration tests import them.
+
 /// Read-only context available to a command handler.
 pub struct CommandContext<'a> {
     pub store: &'a dyn Store,

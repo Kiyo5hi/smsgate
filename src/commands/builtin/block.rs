@@ -1,12 +1,9 @@
 //! /block and /unblock commands.
 
-use crate::commands::{Command, CommandContext};
+use crate::commands::{Command, CommandContext, BLOCK_SENTINEL, UNBLOCK_SENTINEL};
 
 pub struct BlockCommand;
 pub struct UnblockCommand;
-
-pub const BLOCK_SENTINEL: &str = "__BLOCK__:";
-pub const UNBLOCK_SENTINEL: &str = "__UNBLOCK__:";
 
 impl Command for BlockCommand {
     fn name(&self) -> &'static str { "block" }

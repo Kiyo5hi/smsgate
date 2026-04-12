@@ -1,10 +1,7 @@
 //! /pause and /resume commands.
 
-use crate::commands::{Command, CommandContext};
+use crate::commands::{Command, CommandContext, PAUSE_SENTINEL, RESUME_SENTINEL};
 use crate::persist::{keys, load_bool};
-
-pub const PAUSE_SENTINEL: &str = "__PAUSE__:";
-pub const RESUME_SENTINEL: &str = "__RESUME__";
 
 pub struct PauseCommand;
 pub struct ResumeCommand;

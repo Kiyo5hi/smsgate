@@ -42,10 +42,19 @@ pub struct ModemStatus {
     pub registered: bool,
 }
 
+/// CSQ value representing "unknown signal".
+pub const CSQ_UNKNOWN: u8 = 99;
+
 impl Default for ModemStatus {
     fn default() -> Self {
-        ModemStatus { csq: 99, operator: String::new(), registered: false }
+        ModemStatus { csq: CSQ_UNKNOWN, operator: String::new(), registered: false }
     }
+}
+
+/// Parse a +CREG? response body for registration status.
+/// Returns true when stat is 1 (home) or 5 (roaming).
+pub fn creg_registered(body: &str) -> bool {
+    body.contains(",1") || body.contains(",5")
 }
 
 /// Abstracts the modem's serial port and AT command interface.

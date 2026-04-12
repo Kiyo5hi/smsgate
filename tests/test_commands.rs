@@ -1,7 +1,7 @@
 //! Command dispatch and handler tests.
 
 use smsgate::commands::{
-    builtin::{self, *},
+    builtin::*,
     Command, CommandContext, CommandRegistry,
 };
 use smsgate::i18n;
@@ -179,7 +179,7 @@ fn block_command_valid() {
     let queue = SmsSender::new();
     let result = BlockCommand.handle("10086", &ctx(&store, &status, &log, &queue));
     assert!(result.contains("10086"));
-    assert!(result.contains(builtin::block::BLOCK_SENTINEL));
+    assert!(result.contains(smsgate::commands::BLOCK_SENTINEL));
 }
 
 #[test]
@@ -230,7 +230,7 @@ fn resume_command_when_paused() {
     let log = LogRing::new();
     let queue = SmsSender::new();
     let result = ResumeCommand.handle("", &ctx(&store, &status, &log, &queue));
-    assert!(result.contains(builtin::pause::RESUME_SENTINEL));
+    assert!(result.contains(smsgate::commands::RESUME_SENTINEL));
 }
 
 #[test]
@@ -240,7 +240,7 @@ fn restart_command_contains_sentinel() {
     let log = LogRing::new();
     let queue = SmsSender::new();
     let result = RestartCommand.handle("", &ctx(&store, &status, &log, &queue));
-    assert!(result.contains(builtin::restart::RESTART_SENTINEL));
+    assert!(result.contains(smsgate::commands::RESTART_SENTINEL));
 }
 
 #[test]
@@ -272,7 +272,7 @@ fn unblock_command_when_blocked() {
     let log = LogRing::new();
     let queue = SmsSender::new();
     let result = UnblockCommand.handle("10086", &ctx(&store, &status, &log, &queue));
-    assert!(result.contains(builtin::block::UNBLOCK_SENTINEL));
+    assert!(result.contains(smsgate::commands::UNBLOCK_SENTINEL));
 }
 
 #[test]

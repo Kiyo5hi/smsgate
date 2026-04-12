@@ -1,17 +1,16 @@
 //! IM message poll loop and command dispatcher.
 
-use crate::commands::{CommandContext, CommandRegistry};
+use crate::commands::{
+    CommandContext, CommandRegistry,
+    SEND_SENTINEL, BLOCK_SENTINEL, UNBLOCK_SENTINEL,
+    PAUSE_SENTINEL, RESUME_SENTINEL, RESTART_SENTINEL,
+};
 use crate::im::{InboundMessage, Messenger, MessengerError};
 use crate::persist::{keys, save_bool, Store};
 use crate::sms::sender::SmsSender;
 use crate::bridge::reply_router::ReplyRouter;
 use crate::log_ring::LogRing;
 use crate::modem::ModemStatus;
-
-use crate::commands::builtin::block::{BLOCK_SENTINEL, UNBLOCK_SENTINEL};
-use crate::commands::builtin::pause::{PAUSE_SENTINEL, RESUME_SENTINEL};
-use crate::commands::builtin::restart::RESTART_SENTINEL;
-use crate::commands::builtin::send::SEND_SENTINEL;
 
 /// Process a batch of inbound IM messages: dispatch commands and route replies to SMS.
 /// Returns `(restart_requested, pause_mins)` — `pause_mins` is `Some(n)` when a

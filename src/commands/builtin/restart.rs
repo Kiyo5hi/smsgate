@@ -1,8 +1,6 @@
-use crate::commands::{Command, CommandContext};
+use crate::commands::{Command, CommandContext, RESTART_SENTINEL};
 
 pub struct RestartCommand;
-
-pub const RESTART_SENTINEL: &str = "__RESTART__";
 
 impl Command for RestartCommand {
     fn name(&self) -> &'static str { "restart" }

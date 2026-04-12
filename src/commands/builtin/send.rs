@@ -2,12 +2,10 @@
 //!
 //! Returns a sentinel line for poller.rs to parse + a user-visible confirmation.
 
-use crate::commands::{Command, CommandContext};
-use crate::sms::codec::count_sms_parts;
+use crate::commands::{Command, CommandContext, SEND_SENTINEL};
+use crate::sms::{MAX_SMS_PARTS, codec::count_sms_parts};
 
 pub struct SendCommand;
-
-pub const SEND_SENTINEL: &str = "__SEND__:";
 
 impl Command for SendCommand {
     fn name(&self) -> &'static str { "send" }
@@ -26,7 +24,7 @@ impl Command for SendCommand {
         if body.is_empty() {
             return crate::i18n::send_empty_body().to_string();
         }
-        let parts = count_sms_parts(body, 10);
+        let parts = count_sms_parts(body, MAX_SMS_PARTS);
         if parts == 0 {
             return crate::i18n::send_too_long().to_string();
         }

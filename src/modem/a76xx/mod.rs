@@ -2,9 +2,8 @@
 
 pub mod at;
 pub mod sms;
-pub use super::urc;
 
-use super::{AtResponse, ModemError, ModemPort};
+use super::{AtResponse, ModemError, ModemPort, creg_registered};
 use at::AtPort;
 
 /// A76xx modem driver (A7670, A7608, A7672, etc.).
@@ -71,8 +70,7 @@ impl A76xxModem {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
             let r = self.send_at("+CREG?")?;
-            // +CREG: 0,1 or +CREG: 0,5 = registered
-            if r.body.contains(",1") || r.body.contains(",5") {
+            if creg_registered(&r.body) {
                 log::info!("[a76xx] network registered");
                 break;
             }
@@ -91,7 +89,7 @@ impl A76xxModem {
         if let Ok(r) = self.send_at("+CSQ") {
             // +CSQ: 20,0
             if let Some(v) = r.body.strip_prefix("+CSQ: ") {
-                let csq: u8 = v.split(',').next().and_then(|x| x.trim().parse().ok()).unwrap_or(99);
+                let csq: u8 = v.split(',').next().and_then(|x| x.trim().parse().ok()).unwrap_or(super::CSQ_UNKNOWN);
                 s.csq = csq;
             }
         }
@@ -104,7 +102,7 @@ impl A76xxModem {
             }
         }
         if let Ok(r) = self.send_at("+CREG?") {
-            s.registered = r.body.contains(",1") || r.body.contains(",5");
+            s.registered = creg_registered(&r.body);
         }
         s
     }

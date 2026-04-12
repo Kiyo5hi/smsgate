@@ -1,4 +1,5 @@
 use crate::commands::{Command, CommandContext};
+use crate::modem::CSQ_UNKNOWN;
 
 pub struct StatusCommand;
 
@@ -13,7 +14,7 @@ impl Command for StatusCommand {
         let s = uptime_s % 60;
 
         let csq = ctx.modem_status.csq;
-        let signal = if csq == 99 {
+        let signal = if csq == CSQ_UNKNOWN {
             "N/A".to_string()
         } else {
             format!("{}/31 ({} dBm)", csq, csq_to_dbm(csq))

@@ -103,7 +103,7 @@ impl SmsSender {
 
         log::info!("[sender] attempt {} for {} ({}..)", attempt, phone, &body[..body.len().min(20)]);
 
-        let pdus = build_sms_submit_pdus(&phone, &body, 10, false);
+        let pdus = build_sms_submit_pdus(&phone, &body, super::MAX_SMS_PARTS, false);
         if pdus.is_empty() {
             log::error!("[sender] PDU build failed for {} — dropping", phone);
             self.entries.remove(idx);
