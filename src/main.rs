@@ -159,8 +159,10 @@ fn main() {
         // Kick the hardware watchdog (RFC-0001 §4.4)
         unsafe { esp_idf_sys::esp_task_wdt_reset(); }
 
-        // Update modem status every 30 s
-        if elapsed_since(last_status_update, now) > 30_000 {
+        // Update modem status every 30 s.
+        // Skip while cmt_pdu_pending: send_at() drains the UART buffer and would
+        // consume the PDU line that belongs to the pending +CMT delivery.
+        if elapsed_since(last_status_update, now) > 30_000 && !cmt_pdu_pending {
             if let Ok(s) = a76xx_update_status(&mut *modem) {
                 modem_status = s;
             }

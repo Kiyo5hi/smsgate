@@ -1,6 +1,6 @@
 //! End-to-end Scenario tests.
 
-use harness::Scenario;
+use harness::{pdu, Scenario};
 use smsgate::bridge::forwarder::{add_to_blocklist, forward_sms};
 use smsgate::bridge::reply_router::ReplyRouter;
 use smsgate::log_ring::LogRing;
@@ -14,11 +14,6 @@ use harness::mocks::RecordingMessenger;
 // PID=00, DCS=00 (GSM7), SCTS=62400110000000 (some timestamp)
 // UDL=05, UD=C8329BFD06 (packed "Hello")
 const HELLO_PDU: &str = "00040D91683108108300F0000062400110000000 05C8329BFD06";
-
-// Helper to build a clean PDU string
-fn pdu(hex: &str) -> String {
-    hex.chars().filter(|c| !c.is_whitespace()).collect()
-}
 
 #[test]
 fn scenario_sms_forward_basic() {

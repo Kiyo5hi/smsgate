@@ -25,7 +25,6 @@ pub fn handle_new_sms(
 ) -> bool {
     log::info!("[sms_handler] +CMTI: mem={} index={}", mem, index);
 
-    // Switch to the memory where the modem stored the SMS.
     let _ = modem.send_at(&format!("+CPMS=\"{}\"", mem));
 
     let r = modem.send_at(&format!("+CMGR={}", index));

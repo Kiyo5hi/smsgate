@@ -1,5 +1,6 @@
 //! PDU codec tests — ported from C++ test_sms_pdu.cpp, test_sms_pdu_encode.cpp, test_sms_codec.cpp
 
+use harness::pdu;
 use smsgate::sms::codec::*;
 
 // ---------------------------------------------------------------------------
@@ -199,15 +200,13 @@ fn parse_deliver_gsm7_hello() {
     // Using a hand-crafted PDU from the C++ test suite:
     // SCA=00, FO=04 (SMS-DELIVER), OA=0D918136001380F0, PID=00, DCS=00,
     // SCTS=62400110000000, UDL=05, UD=C8329BFD06
-    let hex = "0004\
+    let hex = pdu("0004\
                0D91683108108300F0\
                00\
                00\
                62400110000000\
                05\
-               C8329BFD06";
-    // Remove spaces
-    let hex: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
+               C8329BFD06");
     let pdu = parse_sms_pdu(&hex);
     assert!(pdu.is_ok(), "parse failed: {:?}", pdu.err());
     let pdu = pdu.unwrap();
@@ -223,14 +222,13 @@ fn parse_deliver_ucs2() {
     // Let me use a known-good test PDU.
     // Sender: "+8613800138000" (OA=0D918136001380F0)
     // UCS-2 "Hi" = 0x00480069
-    let hex = "0004\
+    let hex = pdu("0004\
                0D91683108108300F0\
                00\
                08\
                62400110000000\
                04\
-               00480069";
-    let hex: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
+               00480069");
     let pdu = parse_sms_pdu(&hex);
     assert!(pdu.is_ok());
     assert_eq!(pdu.unwrap().content, "Hi");
@@ -403,13 +401,12 @@ fn parse_status_report_delivered() {
     // SCTS: 7 bytes zeros (00000000000000)
     // DT: 7 bytes zeros
     // ST: 00 (delivered)
-    let hex = "0006\
+    let hex = pdu("0006\
                01\
                0D91683108108300F0\
                00000000000000\
                00000000000000\
-               00";
-    let hex: String = hex.chars().filter(|c| !c.is_whitespace()).collect();
+               00");
     let r = parse_status_report(&hex);
     assert!(r.is_ok(), "{:?}", r);
     let r = r.unwrap();

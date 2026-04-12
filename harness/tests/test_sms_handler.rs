@@ -1,6 +1,6 @@
 //! Tests for bridge::sms_handler — CMTI processing and boot-time sweep.
 
-use harness::mocks::{FailingMessenger, RecordingMessenger, ScriptedModem};
+use harness::{mocks::{FailingMessenger, RecordingMessenger, ScriptedModem}, pdu};
 use smsgate::bridge::reply_router::ReplyRouter;
 use smsgate::bridge::sms_handler::{handle_new_sms, process_pdu_hex, sweep_one_storage};
 use smsgate::log_ring::LogRing;
@@ -18,10 +18,6 @@ const CONCAT_PART1_PDU: &str = "00440D91683108108300F0000062400110000000 09 0500
 // Concat part 2/2: same sender, ref=1, total=2, part=2; body "!" (0x21 GSM-7)
 // UDL=08 septets (7 header + 1 body), UD=UDH(05 00 03 01 02 02)+body(42)
 const CONCAT_PART2_PDU: &str = "00440D91683108108300F0000062400110000000 08 050003010202 42";
-
-fn pdu(hex: &str) -> String {
-    hex.chars().filter(|c| !c.is_whitespace()).collect()
-}
 
 // ---------------------------------------------------------------------------
 // process_pdu_hex
