@@ -54,6 +54,12 @@ To build with Chinese UI strings, add to your `config.toml`:
 locale = "zh"
 ```
 
+## Design Tradeoffs
+
+**`serde_json` for Telegram API parsing** — The Telegram HTTP layer uses `serde_json`, which requires heap allocation. This is a deliberate tradeoff: the ESP32 has ample SRAM (320 KB + optional PSRAM), a typical Telegram API response is a few kilobytes, and `serde-json-core` (the `no_std` alternative) would add significant implementation complexity for marginal gain. If you port this to a more constrained MCU, swapping out `im/telegram/` is the only change needed.
+
+**Compile-time configuration** — WiFi credentials, bot token, and pin assignments all live in `config.toml` and are baked into the binary at build time. Runtime configuration (e.g. over BLE or a captive portal) is out of scope for a single-owner personal device and would add substantial complexity.
+
 ## Architecture
 
 See [`rfc/0001-foundation.md`](rfc/0001-foundation.md) for the full design document.

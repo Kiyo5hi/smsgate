@@ -1,4 +1,8 @@
 //! smsgate — composition root.
+//!
+//! `anyhow` is intentionally limited to this file: it handles the startup
+//! sequence where ergonomic error propagation matters and heap allocation is
+//! acceptable. All inner modules use concrete `thiserror`-derived error types.
 
 #[cfg(feature = "esp32")]
 use smsgate::{
