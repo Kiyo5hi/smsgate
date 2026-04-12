@@ -7,7 +7,7 @@ use smsgate::{
         call_handler::CallHandler,
         poller::poll_and_dispatch,
         reply_router::ReplyRouter,
-        sms_handler::{handle_new_sms, sweep_one_storage},
+        sms_handler::{handle_new_sms, process_pdu_hex, sweep_one_storage},
     },
     commands::{
         builtin::*,
@@ -147,6 +147,10 @@ fn main() {
     let boot_ms = now_ms();
     let mut consecutive_failures: u8 = 0;
     let mut last_status_update = now_ms();
+    // +CMT direct delivery is two lines: header then raw PDU hex.
+    // This flag is set when the header arrives so the next poll_urc() line
+    // is treated as the PDU rather than a new URC.
+    let mut cmt_pdu_pending = false;
 
     loop {
         let now = now_ms();
@@ -169,14 +173,23 @@ fn main() {
         // Poll URCs (non-blocking)
         while let Some(urc) = modem.poll_urc() {
             log::info!("[main] URC: {:?}", urc);
+
+            // +CMT two-line protocol: header sets the flag, next line is the PDU.
+            // Direct delivery has no modem slot — nothing to delete afterwards.
+            if cmt_pdu_pending {
+                cmt_pdu_pending = false;
+                process_pdu_hex(urc.trim(), 0, &mut router, &mut log,
+                                &mut concat, &mut messenger, &mut *store);
+                continue;
+            }
+
             match parse_urc(&urc) {
                 Urc::NewSms { mem, index } => {
                     handle_new_sms(&mem, index, &mut *modem, &mut router, &mut log,
                                    &mut concat, &mut messenger, &mut *store);
                 }
                 Urc::SmsDelivery => {
-                    // Direct CMT delivery — the next URC line is the PDU
-                    // (handled in the next poll_urc iteration via modem driver)
+                    cmt_pdu_pending = true; // next poll_urc() line is the raw PDU
                 }
                 _ => {
                     call_handler.handle_urc(&urc, &mut *modem, &mut messenger, &mut sender);
