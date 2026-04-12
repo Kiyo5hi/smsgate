@@ -159,15 +159,25 @@ fn main() {
             let http = TelegramHttpClient::new(None).expect("tg-poll: TLS init failed");
             let mut poll_messenger = TelegramMessenger::new(http);
             let mut cursor = initial_cursor;
+            let mut heartbeat_counter: u8 = 0;
             loop {
                 match poll_messenger.poll(cursor, (Config::POLL_INTERVAL_MS / 1000).max(1)) {
                     Ok(msgs) if !msgs.is_empty() => {
+                        heartbeat_counter = 0;
                         cursor = msgs.iter().map(|m| m.cursor).max().unwrap_or(cursor);
                         if tg_tx.send(msgs).is_err() {
-                            break; // main thread gone — exit cleanly
+                            break;
                         }
                     }
-                    Ok(_) => {} // no new messages, poll again immediately
+                    Ok(_) => {
+                        heartbeat_counter += 1;
+                        if heartbeat_counter >= 20 {
+                            heartbeat_counter = 0;
+                            if tg_tx.send(Vec::new()).is_err() {
+                                break;
+                            }
+                        }
+                    }
                     Err(e) => {
                         log::error!("[tg-poll] error: {}", e);
                         std::thread::sleep(std::time::Duration::from_secs(5));
@@ -183,6 +193,8 @@ fn main() {
     let mut last_status_update = now_ms();
     let mut pause_until: Option<std::time::Instant> = None;
     let mut wifi_info = fmt_wifi(None);
+    let mut last_tg_activity = std::time::Instant::now();
+    let mut tg_stale_alerted = false;
     // +CMT direct delivery is two lines: header then raw PDU hex.
     // This flag is set when the header arrives so the next poll_urc() line
     // is treated as the PDU rather than a new URC.
@@ -227,6 +239,15 @@ fn main() {
 
             // Low-heap alert
             check_low_heap(&mut messenger);
+
+            // Poll thread health: alert once after 5 min of silence
+            let stale_secs = last_tg_activity.elapsed().as_secs();
+            if stale_secs >= 300 && !tg_stale_alerted {
+                tg_stale_alerted = true;
+                let mins = (stale_secs / 60) as u32;
+                log::warn!("[main] tg-poll stale for {} min", mins);
+                let _ = messenger.send_message(&smsgate::i18n::poll_thread_stale(mins));
+            }
         }
 
         // Poll URCs (non-blocking)
@@ -260,15 +281,20 @@ fn main() {
         // Collect any Telegram messages delivered by the polling thread
         let tg_messages: Vec<smsgate::im::InboundMessage> = {
             let mut batch = Vec::new();
+            let mut channel_active = false;
             loop {
                 match tg_rx.try_recv() {
-                    Ok(msgs) => batch.extend(msgs),
+                    Ok(msgs) => { channel_active = true; batch.extend(msgs); }
                     Err(std::sync::mpsc::TryRecvError::Empty) => break,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         log::error!("[main] tg-poll thread died — rebooting");
                         esp_idf_hal::reset::restart();
                     }
                 }
+            }
+            if channel_active {
+                last_tg_activity = std::time::Instant::now();
+                tg_stale_alerted = false;
             }
             batch
         };
@@ -310,18 +336,22 @@ fn main() {
         }
 
         // Drain outbound SMS queue
-        match sender.drain_once(&mut *modem) {
+        let drain = sender.drain_once(&mut *modem);
+        match &drain {
             DrainOutcome::Sent { phone } => {
-                let _ = messenger.send_message(&smsgate::i18n::sms_sent_ok(&phone));
+                let _ = messenger.send_message(&smsgate::i18n::sms_sent_ok(phone));
             }
             DrainOutcome::Dropped { phone } => {
-                let _ = messenger.send_message(&smsgate::i18n::sms_failed(&phone));
+                let _ = messenger.send_message(&smsgate::i18n::sms_failed(phone));
             }
             _ => {}
         }
 
-        // Yield to other tasks; keeps URC latency under 100 ms without busy-looping.
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        // Skip sleep when drain_once did real work (AT exchange already took ~200ms);
+        // otherwise yield to keep URC latency under 100 ms without busy-looping.
+        if !drain.attempted() {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
     }
 }
 

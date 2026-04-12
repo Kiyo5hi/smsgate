@@ -21,6 +21,9 @@ pub fn sms_sent_ok(phone: &str) -> String {
 pub fn sms_failed(phone: &str) -> String {
     format!("❌ SMS to {} failed (max retries)", phone)
 }
+pub fn poll_thread_stale(mins: u32) -> String {
+    format!("⚠️ Telegram polling thread unresponsive for {} min", mins)
+}
 
 // ── Forwarding ────────────────────────────────────────────────────────────────
 
