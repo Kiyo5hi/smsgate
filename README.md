@@ -34,13 +34,14 @@ cp config.toml.example config.toml
 cargo test --no-default-features --features testing
 
 # 4. Build firmware
-# Windows: use short CARGO_TARGET_DIR to avoid ESP-IDF path length limits
-CARGO_TARGET_DIR=/c/t cargo +esp build --release --target xtensa-esp32-espidf
+cargo +esp build --release --target xtensa-esp32-espidf
+# Windows note: ESP-IDF has path-length limits. Set a short target dir:
+#   CARGO_TARGET_DIR=C:\t cargo +esp build --release --target xtensa-esp32-espidf
 
 # 5. Flash
 cargo install espflash
-espflash flash target/xtensa-esp32-espidf/release/smsgate --port /dev/cu.wchusbserial*
-# Windows: espflash flash /c/t/xtensa-esp32-espidf/release/smsgate --port COM3
+espflash flash target/xtensa-esp32-espidf/release/smsgate --port <PORT>
+# PORT is /dev/ttyUSB0 (Linux), /dev/cu.wchusbserial* (macOS), or COM3 (Windows)
 ```
 
 ## Configuration
@@ -84,6 +85,7 @@ The system is built around four core traits. All business logic depends only on 
 ## USB Driver
 
 The T-A7670X uses a CH9102 USB bridge.
+- **Linux**: typically works out of the box (`/dev/ttyUSB0`); if not, load the `ch341` kernel module
 - **macOS**: [CH34x driver](https://www.wch-ic.com/downloads/CH34XSER_MAC_ZIP.html) (approve kext in System Settings > Privacy & Security)
 - **Windows**: usually auto-detected; if not, install from [WCH](https://www.wch-ic.com/downloads/CH343SER_ZIP.html)
 

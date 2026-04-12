@@ -18,12 +18,14 @@ cargo test --no-default-features --features testing
 cargo test --no-default-features --features testing --test <name>
 
 # Build firmware (requires Xtensa toolchain — see Toolchain Setup below)
-# Windows: must set CARGO_TARGET_DIR to a short path due to ESP-IDF path length limits
-CARGO_TARGET_DIR=/c/t cargo +esp build --release --target xtensa-esp32-espidf
+cargo +esp build --release --target xtensa-esp32-espidf
+# Windows: ESP-IDF has path-length limits; use a short target dir:
+#   CARGO_TARGET_DIR=C:\t cargo +esp build --release --target xtensa-esp32-espidf
 
-# Flash + monitor (Windows COM port, e.g. COM3)
-espflash flash /c/t/xtensa-esp32-espidf/release/smsgate --port COM3
-espflash monitor --port COM3 --non-interactive
+# Flash + monitor
+# PORT: /dev/ttyUSB0 (Linux), /dev/cu.wchusbserial* (macOS), COM3 (Windows)
+espflash flash target/xtensa-esp32-espidf/release/smsgate --port <PORT>
+espflash monitor --port <PORT> --non-interactive
 
 # Fuzz smoke (nightly, run after touching PDU/URC/command parsers)
 # Note: requires cargo-fuzz and Linux/macOS (Windows DLL issue with libFuzzer)
@@ -32,21 +34,24 @@ cargo +nightly fuzz run urc_parse     -- -max_total_time=60
 cargo +nightly fuzz run command_parse -- -max_total_time=60
 ```
 
-## Toolchain Setup (Windows)
+## Toolchain Setup
 
 ```bash
-# 1. Install Xtensa Rust toolchain
+# 1. Install Xtensa Rust toolchain (all platforms)
 cargo install espup && espup install
-# Sets up ~/.rustup/toolchains/esp + exports in ~/export-esp.ps1
+# Linux/macOS: source ~/export-esp.sh in each session (or add to shell profile)
+# Windows:     source ~/export-esp.ps1 in each session
 
-# 2. Set environment before building (run each session)
-export LIBCLANG_PATH="$HOME/.rustup/toolchains/esp/xtensa-esp32-elf-clang/esp-clang/bin/libclang.dll"
-export PATH="$HOME/.rustup/toolchains/esp/xtensa-esp32-elf-clang/esp-clang/bin:$PATH"
-export PATH="$HOME/.rustup/toolchains/esp/xtensa-esp-elf/bin:$PATH"
-export PATH="$HOME/AppData/Local/Programs/Python/Python312:$PATH"
-
-# 3. Flash tool
+# 2. Flash tool
 cargo install espflash ldproxy
+```
+
+On **Windows**, if `espup install` does not set the environment automatically,
+set these before building:
+
+```powershell
+$env:LIBCLANG_PATH = "$env:USERPROFILE\.rustup\toolchains\esp\xtensa-esp32-elf-clang\esp-clang\bin\libclang.dll"
+$env:PATH = "$env:USERPROFILE\.rustup\toolchains\esp\xtensa-esp32-elf-clang\esp-clang\bin;$env:USERPROFILE\.rustup\toolchains\esp\xtensa-esp-elf\bin;$env:PATH"
 ```
 
 ## Architecture
@@ -114,7 +119,8 @@ root, and silently produces the wrong (default) sdkconfig values.
 If you change `sdkconfig.defaults` and the change doesn't seem to take effect, delete the cached
 sdkconfig to force kconfgen to regenerate from scratch:
 ```bash
-rm /c/t/xtensa-esp32-espidf/release/build/esp-idf-sys-*/out/sdkconfig
+rm target/xtensa-esp32-espidf/release/build/esp-idf-sys-*/out/sdkconfig
+# (adjust path if you used a custom CARGO_TARGET_DIR)
 ```
 Then rebuild. The `sdkconfig.defaults` is applied as a *seed* (lower priority than existing
 sdkconfig), so deleting the cache is required for changes to take effect.
