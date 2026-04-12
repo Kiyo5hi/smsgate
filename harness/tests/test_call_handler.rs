@@ -64,3 +64,36 @@ fn no_carrier_resets_to_idle() {
     assert_eq!(modem.hang_up_count, 1);
     assert_eq!(messenger.sent_count(), 1);
 }
+
+#[test]
+fn second_ring_while_ringing_is_noop() {
+    // A second RING while already in Ringing state must not duplicate state or hang-up.
+    let (mut h, mut modem, mut messenger, mut sender) = make_handler();
+    h.handle_urc("RING", &mut modem, &mut messenger, &mut sender);
+    h.handle_urc("RING", &mut modem, &mut messenger, &mut sender); // second RING — ignored
+    h.handle_urc(r#"+CLIP: "+1",129,"",,"",0"#, &mut modem, &mut messenger, &mut sender);
+    // Only one hang-up and one notification
+    assert_eq!(modem.hang_up_count, 1);
+    assert_eq!(messenger.sent_count(), 1);
+}
+
+#[test]
+fn no_carrier_while_idle_is_safe() {
+    // NO CARRIER with no preceding RING must not panic or corrupt state.
+    let (mut h, mut modem, mut messenger, mut sender) = make_handler();
+    h.handle_urc("NO CARRIER", &mut modem, &mut messenger, &mut sender);
+    // Subsequent RING should still work
+    h.handle_urc("RING", &mut modem, &mut messenger, &mut sender);
+    h.handle_urc(r#"+CLIP: "+1",129,"",,"",0"#, &mut modem, &mut messenger, &mut sender);
+    assert_eq!(modem.hang_up_count, 1);
+    assert_eq!(messenger.sent_count(), 1);
+}
+
+#[test]
+fn clip_without_prior_ring_is_ignored() {
+    // CLIP arriving without RING must not cause a spurious hang-up or notification.
+    let (mut h, mut modem, mut messenger, mut sender) = make_handler();
+    h.handle_urc(r#"+CLIP: "+1",129,"",,"",0"#, &mut modem, &mut messenger, &mut sender);
+    assert_eq!(modem.hang_up_count, 0);
+    assert_eq!(messenger.sent_count(), 0);
+}
