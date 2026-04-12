@@ -1,7 +1,7 @@
 # RFC-0001 — Rust Rewrite Foundation
 ## smsgate — Scope, Architecture & Constraints
 
-**Status**: Accepted | **Branch**: rust-rewrite
+**Status**: Accepted | **Branch**: main
 
 ---
 
@@ -552,8 +552,7 @@ impl Board for TA7670X {
 ## 9. Migration Plan
 
 The C++ `main` / `stable` branches remain live throughout the migration.
-The Rust rewrite is developed on the `rust-rewrite` orphan branch.
-**No big-bang cutover.**
+The Rust firmware lives on `main`; the original C++ code is archived on `cpp-archive`.
 
 ### Phase 1 — Pure library (no hardware required)
 Port `sms_codec.cpp` to `src/sms/codec.rs`.

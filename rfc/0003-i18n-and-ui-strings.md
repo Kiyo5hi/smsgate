@@ -203,6 +203,6 @@ No EN strings change meaning. The only edits are the ones listed above.
 ## 8. Test impact
 
 - Existing tests assert on English strings. After this RFC, tests must import
-  `harness::i18n_en` (or similar) and match against `i18n::log_empty()` rather than
+  `smsgate::i18n` functions directly and match against `i18n::log_empty()` rather than
   the literal `"No SMS history."`.
 - No new test infrastructure needed; the locale module is just a thin string layer.

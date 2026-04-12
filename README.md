@@ -31,7 +31,7 @@ cp config.toml.example config.toml
 # Edit config.toml with your WiFi credentials, Telegram bot token, and chat ID
 
 # 3. Run host tests (no hardware needed)
-cargo test -p harness
+cargo test --no-default-features --features testing
 
 # 4. Build firmware
 # Windows: use short CARGO_TARGET_DIR to avoid ESP-IDF path length limits

@@ -1,7 +1,7 @@
 # RFC-0002 — Agent-Friendly Harness
 ## LilyGo SMS-IM Bridge — Agent Infrastructure Design
 
-**Status**: Accepted | **Branch**: rust-rewrite
+**Status**: Accepted | **Branch**: main
 
 ---
 
@@ -70,7 +70,7 @@ details live in the other documents; `CLAUDE.md` provides pointers and recipes o
 
 ```
 1. One-line project description
-2. Branch orientation (main = C++ stable; rust-rewrite = this branch)
+2. Branch orientation (main = Rust firmware; cpp-archive = original C++ code)
 3. Key document index (pointers, no content duplication)
 4. Common commands (test, build, flash, fuzz)
 5. Task recipes (add a command, add a board, add a test scenario)
@@ -233,7 +233,7 @@ Agents do **not** need to: connect a development board, install the ESP-IDF tool
 | Priority | Deliverable | Depends on |
 |----------|------------|-----------|
 | P0 | `CLAUDE.md` (real file) | `rfc/0001-foundation.md` stable |
-| P0 | `harness/` mock layer + Scenario DSL | Phase 1 code started |
+| P0 | `src/testing/` mock layer + Scenario DSL | Phase 1 code started |
 | P1 | `AGENTS.md` (real file) | `CLAUDE.md` complete |
 | P1 | `/add-command` skill | First command implemented |
 | P2 | `/add-board` skill | `Board` trait implemented |
