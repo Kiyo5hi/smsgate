@@ -3,7 +3,7 @@
 //! Extracted from main.rs so it can be unit-tested against ScriptedModem.
 
 use crate::bridge::{forwarder::forward_sms, reply_router::ReplyRouter};
-use crate::im::Messenger;
+use crate::im::MessageSink;
 use crate::log_ring::LogRing;
 use crate::modem::ModemPort;
 use crate::persist::Store;
@@ -20,7 +20,7 @@ pub fn handle_new_sms(
     router: &mut ReplyRouter,
     log: &mut LogRing,
     concat: &mut ConcatReassembler,
-    messenger: &mut dyn Messenger,
+    messenger: &mut dyn MessageSink,
     store: &mut dyn Store,
 ) -> bool {
     log::info!("[sms_handler] +CMTI: mem={} index={}", mem, index);
@@ -66,7 +66,7 @@ pub fn sweep_one_storage(
     router: &mut ReplyRouter,
     log: &mut LogRing,
     concat: &mut ConcatReassembler,
-    messenger: &mut dyn Messenger,
+    messenger: &mut dyn MessageSink,
     store: &mut dyn Store,
 ) {
     let r = modem.send_at("+CMGL=4");
@@ -117,7 +117,7 @@ pub fn process_pdu_hex(
     router: &mut ReplyRouter,
     log: &mut LogRing,
     concat: &mut ConcatReassembler,
-    messenger: &mut dyn Messenger,
+    messenger: &mut dyn MessageSink,
     store: &mut dyn Store,
 ) -> bool {
     let pdu = match parse_sms_pdu(hex) {

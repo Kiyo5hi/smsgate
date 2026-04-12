@@ -54,6 +54,20 @@ fn main() {
     println!("cargo:rustc-env=CFG_BRIDGE_POLL_INTERVAL_MS={}", get("bridge", "poll_interval_ms"));
     println!("cargo:rustc-env=CFG_BRIDGE_WATCHDOG_SEC={}", get("bridge", "watchdog_timeout_sec"));
 
+    // Serialize [[sink]] array as JSON for runtime parsing
+    let sinks_json = config.get("sink")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            let entries: Vec<String> = arr.iter().filter_map(|entry| {
+                let t = entry.get("type")?.as_str()?;
+                let url = entry.get("url")?.as_str()?;
+                Some(format!(r#"{{"type":"{}","url":"{}"}}"#, t, url))
+            }).collect();
+            format!("[{}]", entries.join(","))
+        })
+        .unwrap_or_else(|| "[]".to_string());
+    println!("cargo:rustc-env=CFG_SINKS={}", sinks_json);
+
     if get("ui", "locale") == "zh" {
         println!("cargo:rustc-cfg=locale_zh");
     }
@@ -87,4 +101,5 @@ fn emit_empty_defaults() {
     println!("cargo:rustc-env=CFG_BRIDGE_MAX_FAILURES=8");
     println!("cargo:rustc-env=CFG_BRIDGE_POLL_INTERVAL_MS=3000");
     println!("cargo:rustc-env=CFG_BRIDGE_WATCHDOG_SEC=120");
+    println!("cargo:rustc-env=CFG_SINKS=[]");
 }

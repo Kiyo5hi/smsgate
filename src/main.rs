@@ -18,7 +18,11 @@ use smsgate::{
         CommandRegistry,
     },
     config::Config,
-    im::{Messenger, telegram::{http::TelegramHttpClient, TelegramMessenger}},
+    im::{
+        MessageSink, MessageSource,
+        fanout::FanoutSink,
+        telegram::{http::TelegramHttpClient, TelegramMessenger},
+    },
     log_ring::LogRing,
     modem::urc::{parse_urc, Urc},
     persist::nvs::NvsStore,
@@ -77,9 +81,9 @@ fn main() {
     setup_wifi(&mut wifi).expect("WiFi connect failed");
     let _wifi = wifi; // keep WiFi driver alive
 
-    // ---- IM (Telegram) ----
+    // ---- IM (Telegram as primary) ----
     let http = TelegramHttpClient::new(None).expect("TLS init failed");
-    let mut messenger = TelegramMessenger::new(http);
+    let mut tg_messenger = TelegramMessenger::new(http);
 
     // ---- Subsystems ----
     let mut sender = SmsSender::new();
@@ -96,9 +100,29 @@ fn main() {
     let registry = build_registry(&help_text);
 
     // Register bot commands with Telegram
-    if let Err(e) = messenger.register_commands(&registry.command_list()) {
+    if let Err(e) = tg_messenger.register_commands(&registry.command_list()) {
         log::warn!("[main] register_commands failed: {} — continuing", e);
     }
+
+    // ---- Build fanout sink (Telegram + any configured extra sinks) ----
+    let mut sinks: Vec<Box<dyn MessageSink>> = Vec::new();
+    sinks.push(Box::new(tg_messenger));
+    for sink_cfg in parse_sink_config() {
+        match sink_cfg.sink_type.as_str() {
+            "webhook" => {
+                match smsgate::im::webhook::WebhookSink::from_url(&sink_cfg.url) {
+                    Ok(ws) => {
+                        log::info!("[main] added webhook sink: {}", sink_cfg.url);
+                        sinks.push(Box::new(ws));
+                    }
+                    Err(e) => log::error!("[main] invalid webhook URL '{}': {}", sink_cfg.url, e),
+                }
+            }
+            other => log::warn!("[main] unknown sink type '{}' — skipped", other),
+        }
+    }
+    log::info!("[main] fanout: {} sink(s) configured", sinks.len());
+    let mut messenger = FanoutSink::new(sinks);
 
     // RFC-0025: alert if NVS failed (now that we have a messenger)
     if nvs_failed {
@@ -389,7 +413,7 @@ fn a76xx_update_status(modem: &mut dyn smsgate::modem::ModemPort)
 const LOW_HEAP_THRESHOLD: u32 = 20 * 1024;
 
 #[cfg(feature = "esp32")]
-fn check_low_heap(messenger: &mut dyn smsgate::im::Messenger) {
+fn check_low_heap(messenger: &mut dyn smsgate::im::MessageSink) {
     let free = unsafe { esp_idf_sys::esp_get_free_heap_size() };
     if free < LOW_HEAP_THRESHOLD {
         log::warn!("[main] low heap: {} bytes", free);
@@ -416,4 +440,22 @@ fn setup_wifi(
     wifi.wait_netif_up()?;
     log::info!("[wifi] connected");
     Ok(())
+}
+
+#[cfg(feature = "esp32")]
+struct SinkCfg {
+    sink_type: String,
+    url: String,
+}
+
+#[cfg(feature = "esp32")]
+fn parse_sink_config() -> Vec<SinkCfg> {
+    let json = smsgate::config::Config::SINKS;
+    let arr: Vec<serde_json::Value> = serde_json::from_str(json).unwrap_or_default();
+    arr.into_iter().filter_map(|v| {
+        Some(SinkCfg {
+            sink_type: v.get("type")?.as_str()?.to_string(),
+            url: v.get("url")?.as_str()?.to_string(),
+        })
+    }).collect()
 }

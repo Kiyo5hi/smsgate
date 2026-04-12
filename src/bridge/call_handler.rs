@@ -1,6 +1,6 @@
 //! Incoming call state machine: Idle → Ringing → Cooldown.
 
-use crate::im::Messenger;
+use crate::im::MessageSink;
 use crate::modem::ModemPort;
 use crate::sms::sender::SmsSender;
 use std::time::{Duration, Instant};
@@ -30,7 +30,7 @@ impl CallHandler {
         &mut self,
         line: &str,
         modem: &mut dyn ModemPort,
-        messenger: &mut dyn Messenger,
+        messenger: &mut dyn MessageSink,
         sender: &mut SmsSender,
     ) {
         if line == "RING" || line.starts_with("RING") {
@@ -52,7 +52,7 @@ impl CallHandler {
     pub fn tick(
         &mut self,
         modem: &mut dyn ModemPort,
-        messenger: &mut dyn Messenger,
+        messenger: &mut dyn MessageSink,
         sender: &mut SmsSender,
     ) {
         match &self.state {
@@ -76,7 +76,7 @@ impl CallHandler {
     fn on_ring(
         &mut self,
         _modem: &mut dyn ModemPort,
-        _messenger: &mut dyn Messenger,
+        _messenger: &mut dyn MessageSink,
         _sender: &mut SmsSender,
     ) {
         if matches!(self.state, State::Cooldown { .. }) {
@@ -95,7 +95,7 @@ impl CallHandler {
         &mut self,
         number: String,
         modem: &mut dyn ModemPort,
-        messenger: &mut dyn Messenger,
+        messenger: &mut dyn MessageSink,
         sender: &mut SmsSender,
     ) {
         if let State::Ringing { .. } = &mut self.state {
@@ -108,7 +108,7 @@ impl CallHandler {
         &mut self,
         number: Option<String>,
         modem: &mut dyn ModemPort,
-        messenger: &mut dyn Messenger,
+        messenger: &mut dyn MessageSink,
         _sender: &mut SmsSender,
     ) {
         // Auto-hang-up

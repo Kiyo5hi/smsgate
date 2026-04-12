@@ -1,6 +1,6 @@
 //! Mock implementations of ModemPort and Messenger.
 
-use crate::im::{InboundMessage, MessageId, Messenger, MessengerError};
+use crate::im::{InboundMessage, MessageId, MessageSink, MessageSource, MessengerError};
 use crate::modem::{AtResponse, ModemError, ModemPort};
 use std::collections::VecDeque;
 
@@ -142,14 +142,16 @@ impl RecordingMessenger {
     }
 }
 
-impl Messenger for RecordingMessenger {
+impl MessageSink for RecordingMessenger {
     fn send_message(&mut self, text: &str) -> Result<MessageId, MessengerError> {
         let id = self.next_id;
         self.next_id += 1;
         self.sent.push(SentMessage { text: text.to_string(), id });
         Ok(id)
     }
+}
 
+impl MessageSource for RecordingMessenger {
     fn poll(&mut self, _since: i64, _timeout_sec: u32) -> Result<Vec<InboundMessage>, MessengerError> {
         let msgs: Vec<_> = self.inbound.drain(..).collect();
         Ok(msgs)
@@ -167,11 +169,13 @@ impl Default for RecordingMessenger {
 /// A messenger that always returns an HTTP error on `send_message`.
 pub struct FailingMessenger;
 
-impl Messenger for FailingMessenger {
+impl MessageSink for FailingMessenger {
     fn send_message(&mut self, _text: &str) -> Result<MessageId, MessengerError> {
         Err(MessengerError::Http("simulated failure".into()))
     }
+}
 
+impl MessageSource for FailingMessenger {
     fn poll(&mut self, _since: i64, _timeout_sec: u32) -> Result<Vec<InboundMessage>, MessengerError> {
         Ok(vec![])
     }

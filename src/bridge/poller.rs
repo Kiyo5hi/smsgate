@@ -5,7 +5,7 @@ use crate::commands::{
     SEND_SENTINEL, BLOCK_SENTINEL, UNBLOCK_SENTINEL,
     PAUSE_SENTINEL, RESUME_SENTINEL, RESTART_SENTINEL,
 };
-use crate::im::{InboundMessage, Messenger, MessengerError};
+use crate::im::{InboundMessage, MessageSink, MessengerError};
 use crate::persist::{keys, save_bool, Store};
 use crate::sms::sender::SmsSender;
 use crate::bridge::reply_router::ReplyRouter;
@@ -20,7 +20,7 @@ use crate::modem::ModemStatus;
 /// messages that have already been received. Cursor persistence is the caller's responsibility.
 pub fn poll_and_dispatch(
     messages: &[InboundMessage],
-    messenger: &mut dyn Messenger,
+    messenger: &mut dyn MessageSink,
     sender: &mut SmsSender,
     router: &ReplyRouter,
     registry: &CommandRegistry,

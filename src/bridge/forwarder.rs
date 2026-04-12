@@ -1,6 +1,6 @@
 //! SMS → IM forwarding core logic.
 
-use crate::im::{MessageId, Messenger};
+use crate::im::{MessageId, MessageSink};
 use crate::persist::{load_bool, keys, Store};
 use crate::sms::{codec::human_readable_phone, SmsMessage};
 use crate::log_ring::{LogEntry, LogRing};
@@ -9,7 +9,7 @@ use crate::bridge::reply_router::ReplyRouter;
 /// Process and forward one SMS. Returns the IM MessageId on success.
 pub fn forward_sms(
     sms: &SmsMessage,
-    messenger: &mut dyn Messenger,
+    messenger: &mut dyn MessageSink,
     router: &mut ReplyRouter,
     log: &mut LogRing,
     store: &mut dyn Store,

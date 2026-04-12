@@ -5,7 +5,7 @@ pub mod http;
 pub mod types;
 
 #[cfg(feature = "esp32")]
-use super::{InboundMessage, MessageId, Messenger, MessengerError};
+use super::{InboundMessage, MessageId, MessageSink, MessageSource, MessengerError};
 #[cfg(feature = "esp32")]
 use crate::config::Config;
 #[cfg(feature = "esp32")]
@@ -65,7 +65,7 @@ impl TelegramMessenger {
 }
 
 #[cfg(feature = "esp32")]
-impl Messenger for TelegramMessenger {
+impl MessageSink for TelegramMessenger {
     fn send_message(&mut self, text: &str) -> Result<MessageId, MessengerError> {
         let escaped = types::json_escape(text);
         let body = format!(
@@ -76,7 +76,10 @@ impl Messenger for TelegramMessenger {
         let r = Self::check_ok(result)?;
         Ok(r.map(|r| r.message_id).unwrap_or(0))
     }
+}
 
+#[cfg(feature = "esp32")]
+impl MessageSource for TelegramMessenger {
     fn poll(&mut self, since: i64, timeout_sec: u32) -> Result<Vec<InboundMessage>, MessengerError> {
         let body = format!(
             r#"{{"offset":{},"timeout":{},"limit":100,"allowed_updates":["message"]}}"#,

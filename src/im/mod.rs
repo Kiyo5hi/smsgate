@@ -1,6 +1,16 @@
 //! IM backend abstraction.
+//!
+//! Two orthogonal traits:
+//! - `MessageSink`   — fire-and-forget outbound delivery (SMS → IM / webhook / MQ)
+//! - `MessageSource` — inbound command polling (Telegram only, typically)
+//!
+//! The legacy `Messenger` trait is kept as a convenience super-trait for backends
+//! that implement both (e.g. Telegram).
 
+pub mod fanout;
 pub mod telegram;
+#[cfg(feature = "esp32")]
+pub mod webhook;
 
 use thiserror::Error;
 
@@ -31,15 +41,23 @@ pub enum MessengerError {
     Disconnected,
 }
 
-/// Abstracts any IM backend capable of sending and receiving messages.
-///
-/// Implementing this trait = supporting a new IM app.
-/// All business logic in bridge/, commands/, etc. depends only on this trait.
-pub trait Messenger {
-    /// Send a text message to the admin; return the sent message's ID.
+/// Outbound-only delivery target. Implement this for webhooks, MQ, etc.
+pub trait MessageSink {
+    /// Deliver a text notification. Returns a backend-specific message ID
+    /// (0 if the backend doesn't track IDs).
     fn send_message(&mut self, text: &str) -> Result<MessageId, MessengerError>;
+}
 
+/// Inbound command source. Only the "primary" backend (e.g. Telegram) needs this.
+pub trait MessageSource {
     /// Poll for new messages. `since` = cursor from last poll (0 on first call).
-    /// `timeout_sec = 0` → short poll (return immediately).
     fn poll(&mut self, since: i64, timeout_sec: u32) -> Result<Vec<InboundMessage>, MessengerError>;
 }
+
+/// Full bidirectional backend (sink + source). Telegram implements this.
+/// All business logic in bridge/, commands/, etc. depends only on `MessageSink`.
+/// Only the polling thread depends on `MessageSource`.
+pub trait Messenger: MessageSink + MessageSource {}
+
+/// Blanket impl: anything that is both a sink and a source is a Messenger.
+impl<T: MessageSink + MessageSource> Messenger for T {}

@@ -58,16 +58,21 @@ $env:PATH = "$env:USERPROFILE\.rustup\toolchains\esp\xtensa-esp32-elf-clang\esp-
 
 Full design: `rfc/0001-foundation.md` (shared with humans — agents implement, humans review)
 
-The system is built around four traits. All business logic depends only on these;
+The system is built around core traits. All business logic depends only on these;
 nothing in `bridge/`, `commands/`, or `sms/` imports a concrete implementation.
 
 | Trait | Defined in | Abstracts |
 |-------|-----------|-----------|
 | `ModemPort` | `modem/mod.rs` | AT commands, URC polling, PDU SMS send |
-| `Messenger` | `im/mod.rs` | send IM message, poll for inbound messages |
+| `MessageSink` | `im/mod.rs` | outbound delivery (Telegram, webhook, MQ, etc.) |
+| `MessageSource` | `im/mod.rs` | inbound command polling (Telegram only) |
 | `Store` | `persist/mod.rs` | NVS key-value persistence |
 | `Board` | `boards/mod.rs` | pin layout, power-on sequence, builds `ModemPort` |
 | `Command` | `commands/mod.rs` | single bot command (name, description, handler) |
+
+`FanoutSink` wraps multiple `MessageSink`s and delivers to all of them.
+The first sink is the primary (its `MessageId` is used for reply routing);
+the rest are fire-and-forget. See `rfc/0004-fanout-delivery.md`.
 
 `Board` is used only during startup in `main.rs` to produce a `ModemPort`.
 After that, `Board` disappears from the call graph entirely.

@@ -21,6 +21,8 @@ impl Config {
     pub const POLL_INTERVAL_MS: u32 = parse_u32_const(env!("CFG_BRIDGE_POLL_INTERVAL_MS"));
     pub const WATCHDOG_TIMEOUT_SEC: u32 = parse_u32_const(env!("CFG_BRIDGE_WATCHDOG_SEC"));
     pub const GIT_COMMIT: &'static str = env!("CFG_GIT_COMMIT");
+    /// JSON array of extra sinks, e.g. `[{"type":"webhook","url":"https://..."}]`
+    pub const SINKS: &'static str = env!("CFG_SINKS");
 }
 
 const fn parse_u8_const(s: &str) -> u8 {
