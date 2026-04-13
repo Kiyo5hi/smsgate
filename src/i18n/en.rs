@@ -110,11 +110,6 @@ pub fn send_queued(phone: &str, preview: &str, parts: usize) -> String {
 pub fn log_empty()       -> &'static str { "No SMS history." }
 pub fn log_header(n: usize) -> String    { format!("Last {} SMS:\n", n) }
 
-// ── /queue ────────────────────────────────────────────────────────────────────
-
-pub fn queue_empty()        -> &'static str { "Outbound queue is empty." }
-pub fn queue_header(n: usize) -> String     { format!("{} pending:\n", n) }
-
 // ── /block + /unblock ─────────────────────────────────────────────────────────
 
 pub fn block_usage()   -> &'static str { "Usage: /block <number>" }
@@ -134,15 +129,26 @@ pub fn resume_ok()                 -> &'static str { "Forwarding resumed." }
 
 pub fn restart_ok() -> &'static str { "Rebooting…" }
 
+// ── /update ─────────────────────────────────────────────────────────────────
+
+pub fn update_disabled()          -> &'static str { "OTA is disabled (no URL configured)." }
+pub fn update_starting()          -> &'static str { "Starting OTA update… do not power off." }
+pub fn update_confirming()        -> &'static str { "Marking current firmware as valid." }
+pub fn update_confirm_not_manual() -> &'static str { "Confirm mode is \"auto\" — nothing to confirm." }
+pub fn update_usage()             -> &'static str { "Usage: /update or /update confirm" }
+pub fn update_success()           -> String        { "OTA complete — rebooting…".into() }
+pub fn update_failed(e: &str)     -> String        { format!("OTA failed: {}", e) }
+pub fn update_confirmed()         -> &'static str { "Firmware confirmed — rollback disabled." }
+
 // ── Command descriptions (shown in Telegram autocomplete) ─────────────────────
 
 pub fn desc_help()    -> &'static str { "List all commands" }
 pub fn desc_status()  -> &'static str { "Show device health and stats" }
 pub fn desc_send()    -> &'static str { "Send an SMS: /send <number> <text>" }
 pub fn desc_log()     -> &'static str { "Last N forwarded messages (default 10)" }
-pub fn desc_queue()   -> &'static str { "Inspect the outbound SMS queue" }
 pub fn desc_block()   -> &'static str { "Block SMS from a number" }
 pub fn desc_unblock() -> &'static str { "Unblock SMS from a number" }
 pub fn desc_pause()   -> &'static str { "Pause SMS forwarding (default 60 min)" }
 pub fn desc_resume()  -> &'static str { "Resume SMS forwarding immediately" }
 pub fn desc_restart() -> &'static str { "Reboot the device" }
+pub fn desc_update()  -> &'static str { "OTA firmware update (/update confirm to verify)" }

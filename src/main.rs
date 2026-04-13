@@ -139,6 +139,14 @@ fn main() {
                           &mut messenger, &mut *store);
     }
 
+    // ---- OTA auto-confirm ----
+    if !smsgate::ota::is_manual_confirm() {
+        match smsgate::ota::confirm_running() {
+            Ok(()) => log::info!("[main] OTA auto-confirm: running slot marked valid"),
+            Err(e) => log::warn!("[main] OTA auto-confirm skipped: {}", e),
+        }
+    }
+
     log::info!("smsgate ready");
     let _ = messenger.send_message(smsgate::i18n::started());
 
@@ -313,12 +321,44 @@ fn main() {
                 &tg_messages, &mut messenger, &mut sender, &router, &registry,
                 &mut *store, &log, &modem_status, uptime_ms, free_heap, &wifi_info,
             ) {
-                Ok((restart, maybe_pause)) => {
+                Ok((restart, maybe_pause, ota_action)) => {
                     consecutive_failures = 0;
                     if let Some(mins) = maybe_pause {
                         pause_until = Some(std::time::Instant::now()
                             + std::time::Duration::from_secs(mins as u64 * 60));
                         log::info!("[main] pause timer set for {} min", mins);
+                    }
+                    match ota_action {
+                        smsgate::bridge::poller::OtaAction::Update => {
+                            log::info!("[main] OTA update requested");
+                            match smsgate::ota::perform_update(|written, total| {
+                                if written % (128 * 1024) == 0 {
+                                    log::info!("[ota] progress: {} / {:?} bytes", written, total);
+                                }
+                            }) {
+                                Ok(()) => {
+                                    let _ = messenger.send_message(&smsgate::i18n::update_success());
+                                    esp_idf_hal::reset::restart();
+                                }
+                                Err(e) => {
+                                    log::error!("[main] OTA failed: {}", e);
+                                    let _ = messenger.send_message(&smsgate::i18n::update_failed(&e.to_string()));
+                                }
+                            }
+                        }
+                        smsgate::bridge::poller::OtaAction::Confirm => {
+                            match smsgate::ota::confirm_running() {
+                                Ok(()) => {
+                                    log::info!("[main] OTA confirm: running slot marked valid");
+                                    let _ = messenger.send_message(smsgate::i18n::update_confirmed());
+                                }
+                                Err(e) => {
+                                    log::error!("[main] OTA confirm failed: {}", e);
+                                    let _ = messenger.send_message(&smsgate::i18n::update_failed(&e.to_string()));
+                                }
+                            }
+                        }
+                        smsgate::bridge::poller::OtaAction::None => {}
                     }
                     if restart {
                         log::info!("[main] restart requested via /restart command");
@@ -364,12 +404,12 @@ fn build_registry(help_text: &str) -> CommandRegistry {
     r.register(Box::new(StatusCommand));
     r.register(Box::new(SendCommand));
     r.register(Box::new(LogCommand));
-    r.register(Box::new(QueueCommand));
     r.register(Box::new(BlockCommand));
     r.register(Box::new(UnblockCommand));
     r.register(Box::new(PauseCommand));
     r.register(Box::new(ResumeCommand));
     r.register(Box::new(RestartCommand));
+    r.register(Box::new(UpdateCommand));
     r
 }
 

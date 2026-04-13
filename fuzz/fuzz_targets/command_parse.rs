@@ -15,12 +15,12 @@ fuzz_target!(|data: &[u8]| {
     reg.register(Box::new(StatusCommand));
     reg.register(Box::new(SendCommand));
     reg.register(Box::new(LogCommand));
-    reg.register(Box::new(QueueCommand));
     reg.register(Box::new(BlockCommand));
     reg.register(Box::new(UnblockCommand));
     reg.register(Box::new(PauseCommand));
     reg.register(Box::new(ResumeCommand));
     reg.register(Box::new(RestartCommand));
+    reg.register(Box::new(UpdateCommand));
 
     let store = MemStore::new();
     let status = ModemStatus::default();

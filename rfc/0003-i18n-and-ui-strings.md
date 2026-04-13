@@ -126,14 +126,7 @@ Call sites change from inline literals to `i18n::started()`, `i18n::low_heap(fre
 | `log_empty` | No SMS history. | 暂无短信记录。 |
 | `log_header(n)` | Last {n} SMS: | 最近 {n} 条短信： |
 
-### 5.7 `/queue`
-
-| Key | EN | ZH |
-|-----|----|----|
-| `queue_empty` | Outbound queue is empty. | 发送队列为空。 |
-| `queue_header(n)` | {n} pending: | {n} 条待发： |
-
-### 5.8 `/block` and `/unblock`
+### 5.7 `/block` and `/unblock`
 
 | Key | EN | ZH |
 |-----|----|----|

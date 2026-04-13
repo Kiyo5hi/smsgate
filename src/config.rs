@@ -23,6 +23,10 @@ impl Config {
     pub const GIT_COMMIT: &'static str = env!("CFG_GIT_COMMIT");
     /// JSON array of extra sinks, e.g. `[{"type":"webhook","url":"https://..."}]`
     pub const SINKS: &'static str = env!("CFG_SINKS");
+    /// HTTPS URL to the firmware .bin (empty = OTA disabled)
+    pub const OTA_URL: &'static str = env!("CFG_OTA_URL");
+    /// "auto" or "manual"
+    pub const OTA_CONFIRM: &'static str = env!("CFG_OTA_CONFIRM");
 }
 
 const fn parse_u8_const(s: &str) -> u8 {

@@ -16,12 +16,12 @@ fn make_registry() -> CommandRegistry {
     r.register(Box::new(StatusCommand));
     r.register(Box::new(SendCommand));
     r.register(Box::new(LogCommand));
-    r.register(Box::new(QueueCommand));
     r.register(Box::new(BlockCommand));
     r.register(Box::new(UnblockCommand));
     r.register(Box::new(PauseCommand));
     r.register(Box::new(ResumeCommand));
     r.register(Box::new(RestartCommand));
+    r.register(Box::new(UpdateCommand));
     r
 }
 
@@ -71,12 +71,12 @@ fn registry_command_list_includes_all() {
     assert!(names.contains(&"status"));
     assert!(names.contains(&"send"));
     assert!(names.contains(&"log"));
-    assert!(names.contains(&"queue"));
     assert!(names.contains(&"block"));
     assert!(names.contains(&"unblock"));
     assert!(names.contains(&"pause"));
     assert!(names.contains(&"resume"));
     assert!(names.contains(&"restart"));
+    assert!(names.contains(&"update"));
 }
 
 #[test]
@@ -128,15 +128,6 @@ fn log_command_shows_entries() {
     assert!(result.contains("✅"));
 }
 
-#[test]
-fn queue_command_empty() {
-    let store = MemStore::new();
-    let status = ModemStatus::default();
-    let log = LogRing::new();
-    let queue = SmsSender::new();
-    let result = QueueCommand.handle("", &ctx(&store, &status, &log, &queue));
-    assert!(result.contains(i18n::queue_empty()));
-}
 
 #[test]
 fn send_command_missing_args() {
@@ -275,16 +266,6 @@ fn unblock_command_when_blocked() {
     assert!(result.contains(smsgate::commands::UNBLOCK_SENTINEL));
 }
 
-#[test]
-fn queue_command_with_entries() {
-    let store = MemStore::new();
-    let status = ModemStatus::default();
-    let log = LogRing::new();
-    let mut queue = SmsSender::new();
-    queue.enqueue("+441234567890".to_string(), "Hello test".to_string());
-    let result = QueueCommand.handle("", &ctx(&store, &status, &log, &queue));
-    assert!(result.contains("+441234567890"));
-}
 
 #[test]
 fn send_command_empty_body() {
@@ -333,6 +314,37 @@ fn registry_strips_bot_username_suffix() {
     let queue = SmsSender::new();
     let result = reg.dispatch("/help@mybot", &ctx(&store, &status, &log, &queue));
     assert!(result.is_some());
+}
+
+// OTA is disabled in tests (empty CFG_OTA_URL), so /update should return "disabled".
+#[test]
+fn update_command_disabled_when_no_url() {
+    let store = MemStore::new();
+    let status = ModemStatus::default();
+    let log = LogRing::new();
+    let queue = SmsSender::new();
+    let result = UpdateCommand.handle("", &ctx(&store, &status, &log, &queue));
+    assert!(result.contains(i18n::update_disabled()), "expected disabled message: {}", result);
+}
+
+#[test]
+fn update_confirm_auto_mode_rejected() {
+    let store = MemStore::new();
+    let status = ModemStatus::default();
+    let log = LogRing::new();
+    let queue = SmsSender::new();
+    let result = UpdateCommand.handle("confirm", &ctx(&store, &status, &log, &queue));
+    assert!(result.contains(i18n::update_confirm_not_manual()), "expected auto-mode message: {}", result);
+}
+
+#[test]
+fn update_command_invalid_subcommand() {
+    let store = MemStore::new();
+    let status = ModemStatus::default();
+    let log = LogRing::new();
+    let queue = SmsSender::new();
+    let result = UpdateCommand.handle("foobar", &ctx(&store, &status, &log, &queue));
+    assert!(result.contains(i18n::update_usage()), "expected usage: {}", result);
 }
 
 #[test]

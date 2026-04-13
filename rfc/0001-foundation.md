@@ -70,7 +70,7 @@ That is the complete product. Everything else is decoration.
 | `/status` | Uptime, signal strength, heap, last SMS time, queue depth |
 | `/send <number> <text>` | Send an SMS immediately |
 | `/log [N]` | Last N forwarded messages (default 10) |
-| `/queue` | Inspect the outbound queue |
+| `/update [confirm]` | Check for OTA firmware update; `/update confirm` for manual confirmation |
 | `/block <number>` | Add to blocklist |
 | `/unblock <number>` | Remove from blocklist |
 | `/pause [minutes]` | Pause forwarding (default 60 min) |
@@ -156,12 +156,14 @@ src/
       sms.rs               — PDU send + read + delete (AT+CMGS flow)
 
   im/
-    mod.rs                 — Messenger trait + InboundMessage + MessageId + MessengerError
+    mod.rs                 — MessageSink + MessageSource + Messenger traits
+    fanout.rs              — FanoutSink: broadcasts to multiple sinks (RFC-0004)
     telegram/              — Telegram backend (medium size, split into submodules)
-      mod.rs               — TelegramMessenger struct + Messenger impl
+      mod.rs               — TelegramMessenger struct (implements both traits)
       http.rs              — raw HTTPS request/response layer over EspTls
       types.rs             — Update / Message JSON deserialisation types
-    // future: signal/, whatsapp/, each in its own subdirectory
+    webhook/               — Generic HTTP(S) POST sink (MessageSink only)
+      mod.rs               — WebhookSink (one-shot connection per message)
 
   sms/
     mod.rs                 — shared types (SmsMessage + SmsError)
@@ -232,22 +234,19 @@ pub struct InboundMessage {
     pub reply_to: Option<MessageId>,
 }
 
-/// Abstracts any IM backend capable of sending and receiving text messages.
-///
-/// Implementing this trait = supporting a new IM app.
-/// All business logic in bridge/, commands/, etc. depends only on this trait
-/// and knows nothing about Telegram, Signal, or any other backend.
-pub trait Messenger {
-    /// Send a text message to the admin; return the sent message's ID.
+/// Outbound-only delivery target (Telegram, webhook, MQ, etc.).
+/// Business logic in bridge/, commands/, etc. depends only on this trait.
+pub trait MessageSink {
     fn send_message(&mut self, text: &str) -> Result<MessageId, MessengerError>;
-    /// Poll for new messages. `since` is the cursor from the last poll (0 on first call).
-    /// `timeout_sec = 0` means return immediately (short poll).
-    fn poll(
-        &mut self,
-        since: i64,
-        timeout_sec: u32,
-    ) -> Result<Vec<InboundMessage>, MessengerError>;
 }
+
+/// Inbound command source. Only the "primary" backend (e.g. Telegram) needs this.
+pub trait MessageSource {
+    fn poll(&mut self, since: i64, timeout_sec: u32) -> Result<Vec<InboundMessage>, MessengerError>;
+}
+
+/// Full bidirectional backend. Blanket impl: MessageSink + MessageSource = Messenger.
+pub trait Messenger: MessageSink + MessageSource {}
 
 /// Abstracts key-value persistence (NVS on device; in-memory in tests).
 pub trait Store {
@@ -280,7 +279,7 @@ pub trait Command: Send + Sync {
 ### 6.3 Adding a New IM Backend
 
 1. Create a subdirectory under `src/im/`, e.g. `src/im/signal/`.
-2. Implement the `Messenger` trait (`send_message` + `poll`).
+2. Implement `MessageSink` (and optionally `MessageSource` if bidirectional).
 3. Add a corresponding feature in `Cargo.toml` (`im-signal`).
 4. Add a config section in `config.toml` (`[signal]`).
 5. In `main.rs`, select which backend to instantiate based on the feature flag.
@@ -565,7 +564,7 @@ Validate against real hardware serial captures and C++ output.
 **Milestone**: receive a `+CMTI` URC and parse the SMS index.
 
 ### Phase 3 — IM client
-Implement the `Messenger` trait using `esp-idf-svc::tls::EspTls` (Telegram first).
+Implement `MessageSink + MessageSource` using `esp-idf-svc::tls::EspTls` (Telegram first).
 **Milestone**: `/status` command works end-to-end.
 
 ### Phase 4 — SMS forwarding bridge
@@ -593,7 +592,7 @@ Wire `SmsProcessor` + `Forwarder` + `poller`.
 | Single-threaded main loop | Simpler to reason about; no mutexes needed; same model as C++ |
 | Traits at all I/O boundaries | Every subsystem can be host-tested without hardware |
 | `wrapping_sub` only | Eliminates an entire class of bugs at the language level |
-| `Messenger` trait instead of hard-coded `BotApi` | Switching IM backend = one new file; `bridge/` and `commands/` know nothing about Telegram |
+| `MessageSink` / `MessageSource` traits instead of hard-coded `BotApi` | Switching IM backend = one new file; `bridge/` and `commands/` know nothing about Telegram |
 | `MessageId` is an opaque `i64` | Consistent semantics across backends; format differences are encapsulated in each impl |
 | Compile-time `config.toml` instead of runtime config | No filesystem on embedded; compile-time injection is ESP-IDF convention; NVS stores only runtime state |
 | All pins and baud rates from `config.toml` | Zero source changes when switching boards; open-source users only need to fill in a config file |
@@ -604,3 +603,11 @@ Wire `SmsProcessor` + `Forwarder` + `poller`.
 
 *This document is the single authoritative source for the scope of the Rust rewrite.
 Changes to §4 or §5 must be committed to this file with a documented justification.*
+
+---
+
+### Revision Log
+
+| Date | Section | Change |
+|------|---------|--------|
+| 2026-04-12 | §4.2, §6.2, §6.5, §7 | `Messenger` → `MessageSink` + `MessageSource` trait split (RFC-0004); `/queue` replaced by `/update` for OTA (RFC-0005) |

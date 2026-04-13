@@ -16,6 +16,8 @@ pub const UNBLOCK_SENTINEL: &str = "__UNBLOCK__:";
 pub const PAUSE_SENTINEL: &str = "__PAUSE__:";
 pub const RESUME_SENTINEL: &str = "__RESUME__";
 pub const RESTART_SENTINEL: &str = "__RESTART__";
+pub const UPDATE_SENTINEL: &str = "__UPDATE__";
+pub const UPDATE_CONFIRM_SENTINEL: &str = "__UPDATE_CONFIRM__";
 // Keep `pub` (not `pub(crate)`) — integration tests import them.
 
 /// Read-only context available to a command handler.

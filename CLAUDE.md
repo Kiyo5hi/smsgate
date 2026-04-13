@@ -84,6 +84,13 @@ in the parent `mod.rs`.
 NVS stores exactly four keys: `im_cursor` (i64), `reply_map` (blob), `block_list` (blob),
 `fwd_enabled` (bool). Configuration lives in compile-time `config.toml`, not NVS.
 
+### OTA Updates
+
+Dual-partition OTA via ESP-IDF (`partitions_ota.csv`). The `/update` command
+downloads firmware from the configured HTTPS URL, writes to the inactive slot,
+and reboots. Rollback is automatic if the new firmware fails to boot.
+See `rfc/0005-ota.md` for full details. Configure via `[ota]` in `config.toml`.
+
 ## Task Recipes
 
 ### Add a bot command (hard cap: 10 — check count first)

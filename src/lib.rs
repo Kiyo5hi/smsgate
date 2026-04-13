@@ -9,6 +9,7 @@ pub mod config;
 pub mod im;
 pub mod log_ring;
 pub mod modem;
+pub mod ota;
 pub mod persist;
 pub mod sms;
 pub mod timer;

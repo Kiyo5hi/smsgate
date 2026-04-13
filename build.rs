@@ -8,6 +8,29 @@ fn main() {
     // Instruct Cargo to rerun this script if config.toml changes.
     println!("cargo:rerun-if-changed=config.toml");
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed=partitions_ota.csv");
+
+    // ESP-IDF's cmake resolves CONFIG_PARTITION_TABLE_CUSTOM_FILENAME relative
+    // to its project root, which for esp-idf-sys is <OUT_DIR>/../../out/.
+    // Copy our CSV there so the build can find it.
+    if let Ok(out_dir) = std::env::var("OUT_DIR") {
+        let src = Path::new("partitions_ota.csv");
+        // OUT_DIR = .../build/smsgate-<hash>/out  →  we need .../build/esp-idf-sys-<hash>/out/
+        // but we can't predict the esp-idf-sys hash. Instead, copy to OUT_DIR's grandparent's
+        // sibling. Easier: just search for the esp-idf-sys out dir.
+        let build_dir = Path::new(&out_dir).parent().unwrap().parent().unwrap();
+        if src.exists() {
+            for entry in std::fs::read_dir(build_dir).into_iter().flatten() {
+                if let Ok(e) = entry {
+                    let name = e.file_name();
+                    if name.to_string_lossy().starts_with("esp-idf-sys-") && e.path().is_dir() {
+                        let dst = e.path().join("out").join("partitions_ota.csv");
+                        let _ = std::fs::copy(src, &dst);
+                    }
+                }
+            }
+        }
+    }
     println!("cargo::rustc-check-cfg=cfg(locale_zh)");
 
     let config_path = Path::new("config.toml");
@@ -68,6 +91,10 @@ fn main() {
         .unwrap_or_else(|| "[]".to_string());
     println!("cargo:rustc-env=CFG_SINKS={}", sinks_json);
 
+    // OTA config
+    println!("cargo:rustc-env=CFG_OTA_URL={}", get("ota", "url"));
+    println!("cargo:rustc-env=CFG_OTA_CONFIRM={}", get("ota", "confirm"));
+
     if get("ui", "locale") == "zh" {
         println!("cargo:rustc-cfg=locale_zh");
     }
@@ -102,4 +129,6 @@ fn emit_empty_defaults() {
     println!("cargo:rustc-env=CFG_BRIDGE_POLL_INTERVAL_MS=3000");
     println!("cargo:rustc-env=CFG_BRIDGE_WATCHDOG_SEC=120");
     println!("cargo:rustc-env=CFG_SINKS=[]");
+    println!("cargo:rustc-env=CFG_OTA_URL=");
+    println!("cargo:rustc-env=CFG_OTA_CONFIRM=auto");
 }

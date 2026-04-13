@@ -2,16 +2,16 @@ pub mod block;
 pub mod help;
 pub mod log_cmd;
 pub mod pause;
-pub mod queue;
 pub mod restart;
 pub mod send;
 pub mod status;
+pub mod update;
 
 pub use block::{BlockCommand, UnblockCommand};
 pub use help::HelpCommand;
 pub use log_cmd::LogCommand;
 pub use pause::{PauseCommand, ResumeCommand};
-pub use queue::QueueCommand;
 pub use restart::RestartCommand;
 pub use send::SendCommand;
 pub use status::StatusCommand;
+pub use update::UpdateCommand;
