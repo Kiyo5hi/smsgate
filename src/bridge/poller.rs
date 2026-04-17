@@ -8,7 +8,7 @@ use crate::commands::{
 };
 use crate::im::{InboundMessage, MessageSink, MessengerError};
 use crate::persist::{keys, save_bool, Store};
-use crate::sms::sender::SmsSender;
+use crate::sms::sender::{CmdSendResult, SmsSender};
 use crate::bridge::reply_router::ReplyRouter;
 use crate::log_ring::LogRing;
 use crate::modem::ModemStatus;
@@ -105,8 +105,14 @@ fn apply_sentinels(reply: &str, sender: &mut SmsSender, store: &mut dyn Store) -
                     .replace("\\r", "\r")
                     .replace("\\\\", "\\");
                 log::info!("[poller] sentinel: enqueue SMS to {}", phone);
-                if sender.enqueue(phone.to_string(), body).is_none() {
-                    log::warn!("[poller] queue full — /send dropped");
+                match sender.enqueue_command_send(phone.to_string(), body) {
+                    CmdSendResult::Enqueued(_) => {}
+                    CmdSendResult::QueueFull => {
+                        log::warn!("[poller] queue full — /send dropped");
+                    }
+                    CmdSendResult::RateLimited => {
+                        display_lines.push(crate::i18n::send_rate_limited());
+                    }
                 }
             }
         } else if let Some(phone) = line.strip_prefix(BLOCK_SENTINEL) {

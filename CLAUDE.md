@@ -91,6 +91,40 @@ downloads firmware from the configured HTTPS URL, writes to the inactive slot,
 and reboots. Rollback is automatic if the new firmware fails to boot.
 See `rfc/0005-ota.md` for full details. Configure via `[ota]` in `config.toml`.
 
+First flash must include the partition table:
+```bash
+espflash flash smsgate --port <PORT> --partition-table partitions_ota.bin
+```
+
+`partitions_ota.bin` is not tracked in git (generated artifact). Regenerate it from
+the CSV whenever the partition layout changes:
+```bash
+# Using ESP-IDF Python environment:
+python $IDF_PATH/components/partition_table/gen_esp32part.py partitions_ota.csv partitions_ota.bin
+# Or using the PlatformIO Python on Windows:
+"/c/Users/$USER/.platformio/penv/Scripts/python.exe" \
+  ~/.platformio/packages/framework-espidf/components/partition_table/gen_esp32part.py \
+  partitions_ota.csv partitions_ota.bin
+```
+
+### Nightly CI / OTA Release
+
+`.github/workflows/nightly.yml` builds firmware every night and publishes a
+`nightly` GitHub Release. The released `smsgate.bin` is an OTA-ready app image.
+
+Required GitHub Secrets (Settings → Secrets and variables → Actions):
+
+| Secret | Example |
+|--------|---------|
+| `WIFI_SSID` | `MyNetwork` |
+| `WIFI_PASSWORD` | `hunter2` |
+| `TELEGRAM_BOT_TOKEN` | `123456:ABC-DEF...` |
+| `TELEGRAM_CHAT_ID` | `8024680950` |
+| `UI_LOCALE` *(optional)* | `zh` (default) or `en` |
+
+The OTA URL in the built firmware points to the same repo's nightly release,
+so `/update` always fetches the latest nightly build.
+
 ## Task Recipes
 
 ### Add a bot command (hard cap: 10 — check count first)

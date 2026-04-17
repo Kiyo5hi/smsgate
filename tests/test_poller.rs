@@ -66,6 +66,42 @@ fn send_sentinel_enqueues_sms() {
 }
 
 #[test]
+fn send_sentinel_rate_limited_after_5() {
+    let mut store = MemStore::new();
+    let mut messenger = RecordingMessenger::new();
+    let router = ReplyRouter::new();
+    let reg = make_registry();
+    let log = LogRing::new();
+    let status = ModemStatus::default();
+    let mut sender = SmsSender::new();
+
+    // Send 5 — all succeed
+    for i in 0..5u8 {
+        messenger = RecordingMessenger::new();
+        poll_and_dispatch(
+            &[msg(&format!("/send +{} hello", i))],
+            &mut messenger, &mut sender, &router, &reg,
+            &mut store, &log, &status, 0, 0, "",
+        ).unwrap();
+        assert_eq!(sender.len(), (i + 1) as usize);
+        let reply = messenger.last_sent().unwrap_or_default();
+        assert!(!reply.contains("Rate limit"), "send {} should not be rate limited", i);
+    }
+
+    // 6th in the same window — rate limited, IM reply contains the error
+    messenger = RecordingMessenger::new();
+    poll_and_dispatch(
+        &[msg("/send +9 hello")],
+        &mut messenger, &mut sender, &router, &reg,
+        &mut store, &log, &status, 0, 0, "",
+    ).unwrap();
+    assert_eq!(sender.len(), 5, "no new SMS queued when rate limited");
+    let reply = messenger.last_sent().unwrap_or_default();
+    assert!(reply.contains("Rate limit") || reply.contains("频率限制"),
+        "rate limit message expected, got: {}", reply);
+}
+
+#[test]
 fn block_sentinel_adds_to_blocklist() {
     let mut store = MemStore::new();
     let mut messenger = RecordingMessenger::new();

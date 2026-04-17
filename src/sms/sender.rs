@@ -15,6 +15,11 @@ const RETRY_DELAYS: [Duration; 3] = [
 /// Maximum delivery attempts per entry.
 const MAX_ATTEMPTS: usize = 4; // 1 initial + 3 retries
 
+/// Rate limit for /send bot commands: at most this many per window.
+const CMD_SEND_LIMIT: u8 = 5;
+/// Rate limit window duration in seconds.
+const CMD_SEND_WINDOW_SECS: u64 = 60;
+
 /// A pending outbound SMS entry.
 #[derive(Debug)]
 pub struct QueueEntry {
@@ -45,6 +50,16 @@ pub struct QueueSnapshot {
     pub age_secs: u64,
 }
 
+/// Result of `enqueue_command_send` (the rate-limited path for /send commands).
+#[derive(Debug, PartialEq)]
+pub enum CmdSendResult {
+    Enqueued(u32),
+    /// Queue full or exact duplicate already pending.
+    QueueFull,
+    /// Rate limit exceeded: too many /send commands in the current window.
+    RateLimited,
+}
+
 /// Result of a single `drain_once` call.
 #[derive(Debug)]
 pub enum DrainOutcome {
@@ -64,11 +79,20 @@ impl DrainOutcome {
 pub struct SmsSender {
     entries: Vec<QueueEntry>,
     next_id: u32,
+    /// Start of the current /send command rate-limit window (None = no sends yet).
+    cmd_window_start: Option<Instant>,
+    /// Number of /send commands issued in the current window.
+    cmd_window_count: u8,
 }
 
 impl SmsSender {
     pub fn new() -> Self {
-        SmsSender { entries: Vec::with_capacity(QUEUE_DEPTH), next_id: 1 }
+        SmsSender {
+            entries: Vec::with_capacity(QUEUE_DEPTH),
+            next_id: 1,
+            cmd_window_start: None,
+            cmd_window_count: 0,
+        }
     }
 
     /// Enqueue a message. Returns the assigned queue ID, or None if queue is full.
@@ -88,6 +112,36 @@ impl SmsSender {
             id, phone, body, attempts: 0, next_attempt: None, enqueued_at: Instant::now(),
         });
         Some(id)
+    }
+
+    /// Enqueue an SMS from a /send bot command, subject to rate limiting.
+    ///
+    /// At most `CMD_SEND_LIMIT` sends are allowed per `CMD_SEND_WINDOW_SECS`-second
+    /// window. Reply-to-SMS routing bypasses this limit; only explicit `/send`
+    /// commands use this path.
+    pub fn enqueue_command_send(&mut self, phone: String, body: String) -> CmdSendResult {
+        let now = Instant::now();
+        let window_expired = self.cmd_window_start
+            .map(|s| now.duration_since(s) >= Duration::from_secs(CMD_SEND_WINDOW_SECS))
+            .unwrap_or(true);
+        if window_expired {
+            self.cmd_window_start = Some(now);
+            self.cmd_window_count = 0;
+        }
+        if self.cmd_window_count >= CMD_SEND_LIMIT {
+            log::warn!(
+                "[sender] /send rate limit: {}/{} in {}s window",
+                self.cmd_window_count, CMD_SEND_LIMIT, CMD_SEND_WINDOW_SECS
+            );
+            return CmdSendResult::RateLimited;
+        }
+        match self.enqueue(phone, body) {
+            Some(id) => {
+                self.cmd_window_count += 1;
+                CmdSendResult::Enqueued(id)
+            }
+            None => CmdSendResult::QueueFull,
+        }
     }
 
     /// Process one ready entry against the modem. Called from the main loop.

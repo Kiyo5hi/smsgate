@@ -113,6 +113,9 @@ pub fn send_too_long()       -> &'static str { "Message too long (> 10 SMS parts
 pub fn send_queued(phone: &str, preview: &str, parts: usize) -> String {
     format!("Queued: {} → \"{}…\" ({} part(s))", phone, preview, parts)
 }
+pub fn send_rate_limited() -> &'static str {
+    "Rate limit: at most 5 /send commands per minute."
+}
 
 // ── /log ──────────────────────────────────────────────────────────────────────
 

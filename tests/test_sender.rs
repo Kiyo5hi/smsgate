@@ -1,7 +1,7 @@
 //! Outbound SMS queue tests.
 
 use smsgate::testing::mocks::ScriptedModem;
-use smsgate::sms::sender::SmsSender;
+use smsgate::sms::sender::{CmdSendResult, SmsSender};
 
 #[test]
 fn enqueue_and_drain_success() {
@@ -195,6 +195,34 @@ fn drain_once_returns_false_when_no_entry_ready() {
     // Second drain immediately after — entry's next_attempt is in the future
     let second = sender.drain_once(&mut FailingModem);
     assert!(!second.attempted(), "second drain should return false (entry not ready yet)");
+}
+
+#[test]
+fn cmd_send_rate_limit_blocks_after_5_sends() {
+    let mut sender = SmsSender::new();
+    // First 5 sends should succeed
+    for i in 0..5u8 {
+        let r = sender.enqueue_command_send(format!("+{}", i), format!("body{}", i));
+        assert!(matches!(r, CmdSendResult::Enqueued(_)), "send {} should succeed", i);
+    }
+    // 6th send in the same window should be rate limited
+    let r = sender.enqueue_command_send("+9".to_string(), "extra".to_string());
+    assert_eq!(r, CmdSendResult::RateLimited, "6th send should be rate limited");
+    // Queue should have only 5 entries (rate limited one was not enqueued)
+    assert_eq!(sender.len(), 5);
+}
+
+#[test]
+fn cmd_send_rate_limit_does_not_affect_regular_enqueue() {
+    let mut sender = SmsSender::new();
+    // Hit the rate limit
+    for i in 0..5u8 {
+        sender.enqueue_command_send(format!("+{}", i), format!("body{}", i));
+    }
+    assert_eq!(sender.enqueue_command_send("+9".to_string(), "x".to_string()), CmdSendResult::RateLimited);
+    // Direct enqueue (reply routing) bypasses the rate limit
+    assert!(sender.enqueue("+9".to_string(), "x".to_string()).is_some());
+    assert_eq!(sender.len(), 6);
 }
 
 #[test]
