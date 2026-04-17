@@ -24,7 +24,7 @@ use smsgate::{
         telegram::{http::TelegramHttpClient, TelegramMessenger},
     },
     log_ring::LogRing,
-    modem::urc::{parse_urc, Urc},
+    modem::{urc::{parse_urc, Urc}, a76xx::qhttp},
     persist::nvs::NvsStore,
     sms::concat::ConcatReassembler,
     sms::sender::{DrainOutcome, SmsSender},
@@ -47,7 +47,7 @@ fn main() {
     let mut peripherals = esp_idf_hal::peripherals::Peripherals::take().unwrap();
     let board = TA7670X;
     board.init(&mut peripherals).expect("board init failed");
-    let mut modem = board.build_modem_port(&mut peripherals).expect("modem init failed");
+    let modem = board.build_modem_port(&mut peripherals).expect("modem init failed");
 
     // ---- NVS store (RFC-0025: fall back to MemStore on NVS failure) ----
     let nvs_partition = esp_idf_svc::nvs::EspDefaultNvsPartition::take().unwrap();
@@ -78,12 +78,31 @@ fn main() {
     };
     let mut wifi = esp_idf_svc::wifi::BlockingWifi::wrap(wifi_inner, sysloop.clone())
         .expect("WiFi wrap failed");
-    setup_wifi(&mut wifi).expect("WiFi connect failed");
+    let wifi_ok = setup_wifi(&mut wifi).is_ok();
+    if !wifi_ok {
+        log::warn!("[wifi] failed after retries");
+        if Config::CELLULAR_FALLBACK && !Config::MODEM_APN.is_empty() {
+            log::info!("[main] cellular fallback: attaching PDP context");
+            qhttp::attach_pdp(
+                &mut *modem.lock().unwrap(),
+                Config::MODEM_APN,
+                Config::MODEM_APN_USER,
+                Config::MODEM_APN_PASS,
+            ).expect("PDP attach failed");
+        } else {
+            panic!(
+                "no WiFi and no cellular fallback (set modem.cellular_fallback + modem.apn, or fix WiFi)"
+            );
+        }
+    }
     let _wifi = wifi; // keep WiFi driver alive
 
     // ---- IM (Telegram as primary) ----
-    let http = TelegramHttpClient::new(None).expect("TLS init failed");
-    let mut tg_messenger = TelegramMessenger::new(http);
+    let mut tg_messenger = if wifi_ok {
+        TelegramMessenger::new_wifi(TelegramHttpClient::new(None).expect("TLS init failed"))
+    } else {
+        TelegramMessenger::new_modem(modem.clone())
+    };
 
     // ---- Subsystems ----
     let mut sender = SmsSender::new();
@@ -132,11 +151,14 @@ fn main() {
     // ---- Sweep existing SMS from SIM on boot ----
     // Sweep both SM (SIM) and ME (device flash) in case SMS arrived before
     // CPMS was explicitly configured. Normal operation after init stores in ME.
-    for mem in &["SM", "ME"] {
-        let _ = modem.send_at(&format!("+CPMS=\"{}\",\"{}\",\"{}\"", mem, mem, mem));
-        log::info!("[main] sweeping {} storage…", mem);
-        sweep_one_storage(mem, &mut *modem, &mut router, &mut log, &mut concat,
-                          &mut messenger, &mut *store);
+    {
+        let mut md = modem.lock().unwrap();
+        for mem in &["SM", "ME"] {
+            let _ = md.send_at(&format!("+CPMS=\"{}\",\"{}\",\"{}\"", mem, mem, mem));
+            log::info!("[main] sweeping {} storage…", mem);
+            sweep_one_storage(mem, &mut *md, &mut router, &mut log, &mut concat,
+                              &mut messenger, &mut *store);
+        }
     }
 
     // ---- OTA auto-confirm ----
@@ -161,17 +183,29 @@ fn main() {
         .unwrap_or(0);
     let (tg_tx, tg_rx) =
         std::sync::mpsc::channel::<Vec<smsgate::im::InboundMessage>>();
+    let modem_tg = modem.clone();
+    let wifi_ok_poll = wifi_ok;
     std::thread::Builder::new()
         .name("tg-poll".into())
         .stack_size(16 * 1024)
         .spawn(move || {
-            let http = TelegramHttpClient::new(None).expect("tg-poll: TLS init failed");
-            let mut poll_messenger = TelegramMessenger::new(http);
+            let mut poll_messenger = if wifi_ok_poll {
+                TelegramMessenger::new_wifi(
+                    TelegramHttpClient::new(None).expect("tg-poll: TLS init failed"),
+                )
+            } else {
+                TelegramMessenger::new_modem(modem_tg)
+            };
+            let poll_secs = if wifi_ok_poll {
+                (Config::POLL_INTERVAL_MS / 1000).max(1)
+            } else {
+                5u32
+            };
             let mut cursor = initial_cursor;
             const HEARTBEAT_INTERVAL: u8 = 20;
             let mut heartbeat_counter: u8 = 0;
             loop {
-                match poll_messenger.poll(cursor, (Config::POLL_INTERVAL_MS / 1000).max(1)) {
+                match poll_messenger.poll(cursor, poll_secs) {
                     Ok(msgs) if !msgs.is_empty() => {
                         heartbeat_counter = 0;
                         cursor = msgs.iter().map(|m| m.cursor).max().unwrap_or(cursor);
@@ -202,9 +236,11 @@ fn main() {
     let mut consecutive_failures: u8 = 0;
     let mut last_status_update = now_ms();
     let mut pause_until: Option<std::time::Instant> = None;
-    let mut wifi_info = fmt_wifi(None);
+    let mut wifi_info = fmt_wifi(wifi_ok, None);
     let mut last_tg_activity = std::time::Instant::now();
     let mut tg_stale_alerted = false;
+    let mut low_signal_alerted = false;
+    let mut last_operator = String::new();
     // +CMT direct delivery is two lines: header then raw PDU hex.
     // This flag is set when the header arrives so the next poll_urc() line
     // is treated as the PDU rather than a new URC.
@@ -231,24 +267,52 @@ fn main() {
         // Skip while cmt_pdu_pending: send_at() drains the UART buffer and would
         // consume the PDU line that belongs to the pending +CMT delivery.
         if elapsed_since(last_status_update, now) > 30_000 && !cmt_pdu_pending {
-            if let Ok(s) = a76xx_update_status(&mut *modem) {
+            if let Ok(s) = a76xx_update_status(&mut *modem.lock().unwrap()) {
                 modem_status = s;
             }
             last_status_update = now;
 
             // Refresh WiFi RSSI
-            let rssi = unsafe {
-                let mut ap: esp_idf_sys::wifi_ap_record_t = std::mem::zeroed();
-                if esp_idf_sys::esp_wifi_sta_get_ap_info(&mut ap) == esp_idf_sys::ESP_OK {
-                    Some(ap.rssi as i32)
-                } else {
-                    None
+            let rssi = if wifi_ok {
+                unsafe {
+                    let mut ap: esp_idf_sys::wifi_ap_record_t = std::mem::zeroed();
+                    if esp_idf_sys::esp_wifi_sta_get_ap_info(&mut ap) == esp_idf_sys::ESP_OK {
+                        Some(ap.rssi as i32)
+                    } else {
+                        None
+                    }
                 }
+            } else {
+                None
             };
-            wifi_info = fmt_wifi(rssi);
+            wifi_info = fmt_wifi(wifi_ok, rssi);
 
             // Low-heap alert
             check_low_heap(&mut messenger);
+
+            // CSQ low-signal alert (threshold: CSQ ≤ 5, roughly < −103 dBm)
+            const CSQ_WEAK: u8 = 5;
+            if modem_status.csq != smsgate::modem::CSQ_UNKNOWN {
+                if modem_status.csq <= CSQ_WEAK && !low_signal_alerted {
+                    low_signal_alerted = true;
+                    let _ = messenger.send_message(&smsgate::i18n::low_signal(modem_status.csq));
+                } else if modem_status.csq > CSQ_WEAK && low_signal_alerted {
+                    low_signal_alerted = false;
+                    let _ = messenger.send_message(&smsgate::i18n::signal_restored(modem_status.csq));
+                }
+            }
+
+            // Operator change alert (skip the initial "" → "SomeOp" transition)
+            if !modem_status.operator.is_empty() && !last_operator.is_empty()
+                && modem_status.operator != last_operator
+            {
+                let _ = messenger.send_message(
+                    &smsgate::i18n::operator_changed(&last_operator, &modem_status.operator),
+                );
+            }
+            if !modem_status.operator.is_empty() {
+                last_operator.clone_from(&modem_status.operator);
+            }
 
             const POLL_STALE_SECS: u64 = 300;
             let stale_secs = last_tg_activity.elapsed().as_secs();
@@ -260,33 +324,36 @@ fn main() {
             }
         }
 
-        // Poll URCs (non-blocking)
-        while let Some(urc) = modem.poll_urc() {
-            log::info!("[main] URC: {:?}", urc);
+        // Poll URCs (non-blocking); hold one lock for URC + tick (avoid nested lock with tg thread).
+        {
+            let mut md = modem.lock().unwrap();
+            while let Some(urc) = md.poll_urc() {
+                log::info!("[main] URC: {:?}", urc);
 
-            // +CMT two-line protocol: header sets the flag, next line is the PDU.
-            // Direct delivery has no modem slot — nothing to delete afterwards.
-            if cmt_pdu_pending {
-                cmt_pdu_pending = false;
-                process_pdu_hex(urc.trim(), 0, &mut router, &mut log,
-                                &mut concat, &mut messenger, &mut *store);
-                continue;
-            }
+                // +CMT two-line protocol: header sets the flag, next line is the PDU.
+                // Direct delivery has no modem slot — nothing to delete afterwards.
+                if cmt_pdu_pending {
+                    cmt_pdu_pending = false;
+                    process_pdu_hex(urc.trim(), 0, &mut router, &mut log,
+                                    &mut concat, &mut messenger, &mut *store);
+                    continue;
+                }
 
-            match parse_urc(&urc) {
-                Urc::NewSms { mem, index } => {
-                    handle_new_sms(&mem, index, &mut *modem, &mut router, &mut log,
-                                   &mut concat, &mut messenger, &mut *store);
-                }
-                Urc::SmsDelivery => {
-                    cmt_pdu_pending = true; // next poll_urc() line is the raw PDU
-                }
-                _ => {
-                    call_handler.handle_urc(&urc, &mut *modem, &mut messenger, &mut sender);
+                match parse_urc(&urc) {
+                    Urc::NewSms { mem, index } => {
+                        handle_new_sms(&mem, index, &mut *md, &mut router, &mut log,
+                                       &mut concat, &mut messenger, &mut *store);
+                    }
+                    Urc::SmsDelivery => {
+                        cmt_pdu_pending = true; // next poll_urc() line is the raw PDU
+                    }
+                    _ => {
+                        call_handler.handle_urc(&urc, &mut *md, &mut messenger, &mut sender);
+                    }
                 }
             }
+            call_handler.tick(&mut *md, &mut messenger, &mut sender);
         }
-        call_handler.tick(&mut *modem, &mut messenger, &mut sender);
 
         // Collect any Telegram messages delivered by the polling thread
         let tg_messages: Vec<smsgate::im::InboundMessage> = {
@@ -377,8 +444,11 @@ fn main() {
             }
         }
 
-        // Drain outbound SMS queue
-        let drain = sender.drain_once(&mut *modem);
+        let drain = {
+            let mut md = modem.lock().unwrap();
+            sender.drain_once(&mut *md)
+        };
+
         match &drain {
             DrainOutcome::Sent { phone } => {
                 let _ = messenger.send_message(&smsgate::i18n::sms_sent_ok(phone));
@@ -414,7 +484,10 @@ fn build_registry(help_text: &str) -> CommandRegistry {
 }
 
 #[cfg(feature = "esp32")]
-fn fmt_wifi(rssi: Option<i32>) -> String {
+fn fmt_wifi(wifi_ok: bool, rssi: Option<i32>) -> String {
+    if !wifi_ok {
+        return "cellular (Telegram via modem)".to_string();
+    }
     match rssi {
         Some(r) => format!("{} ({} dBm)", smsgate::config::Config::WIFI_SSID, r),
         None    => format!("{} (--)", smsgate::config::Config::WIFI_SSID),
@@ -467,6 +540,7 @@ fn setup_wifi(
 ) -> anyhow::Result<()> {
     use esp_idf_svc::wifi::{AuthMethod, ClientConfiguration, Configuration};
     use smsgate::config::Config;
+    use std::time::Duration;
 
     let config = Configuration::Client(ClientConfiguration {
         ssid: Config::WIFI_SSID.try_into().map_err(|_| anyhow::anyhow!("SSID too long"))?,
@@ -476,10 +550,21 @@ fn setup_wifi(
     });
     wifi.set_configuration(&config)?;
     wifi.start()?;
-    wifi.connect()?;
-    wifi.wait_netif_up()?;
-    log::info!("[wifi] connected");
-    Ok(())
+
+    const ATTEMPTS: u32 = 5;
+    for attempt in 1..=ATTEMPTS {
+        let ok = wifi.connect().is_ok() && wifi.wait_netif_up().is_ok();
+        if ok {
+            log::info!("[wifi] connected (attempt {}/{})", attempt, ATTEMPTS);
+            return Ok(());
+        }
+        log::warn!("[wifi] attempt {}/{} failed", attempt, ATTEMPTS);
+        let _ = wifi.disconnect();
+        if attempt < ATTEMPTS {
+            std::thread::sleep(Duration::from_secs(3));
+        }
+    }
+    anyhow::bail!("WiFi failed after {} attempts", ATTEMPTS);
 }
 
 #[cfg(feature = "esp32")]

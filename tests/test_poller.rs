@@ -359,6 +359,12 @@ fn unknown_command_sends_no_reply() {
 fn update_command_returns_disabled_ota() {
     use smsgate::bridge::poller::OtaAction;
 
+    // Skip when OTA is configured in developer's config.toml — can't override
+    // compile-time env vars at test time, and the test is checking disabled case.
+    if smsgate::ota::is_enabled() {
+        return;
+    }
+
     let mut store = MemStore::new();
     let mut messenger = RecordingMessenger::new();
     let router = ReplyRouter::new();

@@ -24,6 +24,15 @@ pub fn sms_failed(phone: &str) -> String {
 pub fn poll_thread_stale(mins: u32) -> String {
     format!("⚠️ Telegram polling thread unresponsive for {} min", mins)
 }
+pub fn low_signal(csq: u8) -> String {
+    format!("⚠️ Weak cellular signal (CSQ {})", csq)
+}
+pub fn signal_restored(csq: u8) -> String {
+    format!("✅ Cellular signal restored (CSQ {})", csq)
+}
+pub fn operator_changed(old: &str, new: &str) -> String {
+    format!("⚠️ Operator changed: {} → {}", old, new)
+}
 
 // ── Forwarding ────────────────────────────────────────────────────────────────
 

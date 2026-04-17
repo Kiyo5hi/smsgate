@@ -316,9 +316,14 @@ fn registry_strips_bot_username_suffix() {
     assert!(result.is_some());
 }
 
-// OTA is disabled in tests (empty CFG_OTA_URL), so /update should return "disabled".
+// When no OTA URL is configured the /update command should report "disabled".
+// Skip when the developer's config.toml has an OTA URL — the compile-time env
+// var CFG_OTA_URL is not empty and testing the opposite branch here is a no-op.
 #[test]
 fn update_command_disabled_when_no_url() {
+    if smsgate::ota::is_enabled() {
+        return; // OTA URL is set in developer's config.toml — skip
+    }
     let store = MemStore::new();
     let status = ModemStatus::default();
     let log = LogRing::new();

@@ -9,32 +9,64 @@ use super::{InboundMessage, MessageId, MessageSink, MessageSource, MessengerErro
 #[cfg(feature = "esp32")]
 use crate::config::Config;
 #[cfg(feature = "esp32")]
+use crate::modem::ModemPort;
+#[cfg(feature = "esp32")]
 use http::TelegramHttpClient;
 #[cfg(feature = "esp32")]
+use std::sync::{Arc, Mutex};
+#[cfg(feature = "esp32")]
 use types::{ApiResult, SendMessageResult, Update};
+
+#[cfg(feature = "esp32")]
+enum Transport {
+    Wifi(TelegramHttpClient),
+    Modem(Arc<Mutex<dyn ModemPort + Send>>),
+}
 
 /// Telegram Bot API messenger.
 #[cfg(feature = "esp32")]
 pub struct TelegramMessenger {
-    http: TelegramHttpClient,
+    transport: Transport,
     chat_id: i64,
     token: String,
 }
 
 #[cfg(feature = "esp32")]
 impl TelegramMessenger {
-    pub fn new(http: TelegramHttpClient) -> Self {
+    pub fn new_wifi(http: TelegramHttpClient) -> Self {
         TelegramMessenger {
-            http,
+            transport: Transport::Wifi(http),
             chat_id: Config::CHAT_ID,
             token: Config::BOT_TOKEN.to_string(),
         }
     }
 
+    /// IM over the modem's built-in HTTP stack (cellular PDP).
+    /// Use a short `timeout_sec` in `poll` — the UART is shared with SMS.
+    pub fn new_modem(modem: Arc<Mutex<dyn ModemPort + Send>>) -> Self {
+        TelegramMessenger {
+            transport: Transport::Modem(modem),
+            chat_id: Config::CHAT_ID,
+            token: Config::BOT_TOKEN.to_string(),
+        }
+    }
+
+    pub fn new(http: TelegramHttpClient) -> Self {
+        Self::new_wifi(http)
+    }
+
     fn post_json(&mut self, method: &str, body: &str) -> Result<String, MessengerError> {
         let path = format!("/bot{}/{}", self.token, method);
-        self.http.post(&path, body)
-            .map_err(|e| MessengerError::Http(e.to_string()))
+        match &mut self.transport {
+            Transport::Wifi(http) => http.post(&path, body)
+                .map_err(|e| MessengerError::Http(e.to_string())),
+            Transport::Modem(m) => {
+                let mut g = m.lock().map_err(|_| MessengerError::Disconnected)?;
+                let raw = g.post_telegram_https(&path, body)
+                    .map_err(|e| MessengerError::Http(format!("modem {}", e)))?;
+                Ok(raw)
+            }
+        }
     }
 
     fn post_and_parse<T: serde::de::DeserializeOwned>(
@@ -89,6 +121,12 @@ impl MessageSource for TelegramMessenger {
         let updates = Self::check_ok(result)?.unwrap_or_default();
         let messages = updates.into_iter().filter_map(|u| {
             let msg = u.message?;
+            // Reject messages from any chat other than the configured one.
+            // Without this, anyone who adds the bot to a group can trigger commands.
+            if msg.chat.id != self.chat_id {
+                log::warn!("[tg] message from unexpected chat {} — ignored", msg.chat.id);
+                return None;
+            }
             let text = msg.text.clone().unwrap_or_default();
             if text.is_empty() { return None; }
             Some(InboundMessage {

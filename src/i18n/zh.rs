@@ -24,6 +24,15 @@ pub fn sms_failed(phone: &str) -> String {
 pub fn poll_thread_stale(mins: u32) -> String {
     format!("⚠️ Telegram 轮询线程已 {} 分钟无响应", mins)
 }
+pub fn low_signal(csq: u8) -> String {
+    format!("⚠️ 蜂窝信号弱（CSQ {}）", csq)
+}
+pub fn signal_restored(csq: u8) -> String {
+    format!("✅ 蜂窝信号已恢复（CSQ {}）", csq)
+}
+pub fn operator_changed(old: &str, new: &str) -> String {
+    format!("⚠️ 运营商变更：{} → {}", old, new)
+}
 
 // ── 转发 ────────────────────────────────────────────────────────────────────
 
