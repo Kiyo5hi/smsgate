@@ -267,9 +267,7 @@ fn main() {
         // Skip while cmt_pdu_pending: send_at() drains the UART buffer and would
         // consume the PDU line that belongs to the pending +CMT delivery.
         if elapsed_since(last_status_update, now) > 30_000 && !cmt_pdu_pending {
-            if let Ok(s) = a76xx_update_status(&mut *modem.lock().unwrap()) {
-                modem_status = s;
-            }
+            modem_status = modem.lock().unwrap().update_status();
             last_status_update = now;
 
             // Refresh WiFi RSSI
@@ -497,29 +495,6 @@ fn fmt_wifi(wifi_ok: bool, rssi: Option<i32>) -> String {
 #[cfg(feature = "esp32")]
 fn now_ms() -> u32 {
     (esp_idf_svc::systime::EspSystemTime.now().as_millis() & 0xFFFF_FFFF) as u32
-}
-
-#[cfg(feature = "esp32")]
-fn a76xx_update_status(modem: &mut dyn smsgate::modem::ModemPort)
-    -> Result<smsgate::modem::ModemStatus, smsgate::modem::ModemError>
-{
-    let mut s = smsgate::modem::ModemStatus::default();
-    if let Ok(r) = modem.send_at("+CSQ") {
-        if let Some(v) = r.body.strip_prefix("+CSQ: ") {
-            s.csq = v.split(',').next().and_then(|x| x.trim().parse().ok()).unwrap_or(smsgate::modem::CSQ_UNKNOWN);
-        }
-    }
-    if let Ok(r) = modem.send_at("+COPS?") {
-        if let Some(start) = r.body.find('"') {
-            if let Some(end) = r.body[start + 1..].find('"') {
-                s.operator = r.body[start + 1..start + 1 + end].to_string();
-            }
-        }
-    }
-    if let Ok(r) = modem.send_at("+CREG?") {
-        s.registered = smsgate::modem::creg_registered(&r.body);
-    }
-    Ok(s)
 }
 
 #[cfg(feature = "esp32")]

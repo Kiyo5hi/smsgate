@@ -127,4 +127,27 @@ pub trait ModemPort: AtTransport {
         let _ = (path, json);
         Err(ModemError::NotSupported)
     }
+
+    /// Query CSQ, operator name, and registration status from the modem.
+    fn update_status(&mut self) -> ModemStatus {
+        let mut s = ModemStatus::default();
+        if let Ok(r) = self.send_at("+CSQ") {
+            if let Some(v) = r.body.strip_prefix("+CSQ: ") {
+                s.csq = v.split(',').next()
+                    .and_then(|x| x.trim().parse().ok())
+                    .unwrap_or(CSQ_UNKNOWN);
+            }
+        }
+        if let Ok(r) = self.send_at("+COPS?") {
+            if let Some(start) = r.body.find('"') {
+                if let Some(end) = r.body[start + 1..].find('"') {
+                    s.operator = r.body[start + 1..start + 1 + end].to_string();
+                }
+            }
+        }
+        if let Ok(r) = self.send_at("+CREG?") {
+            s.registered = creg_registered(&r.body);
+        }
+        s
+    }
 }

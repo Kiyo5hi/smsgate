@@ -105,29 +105,6 @@ impl A76xxModem {
         Ok(())
     }
 
-    /// Query signal strength and operator; update the supplied status.
-    pub fn update_status(&mut self) -> super::ModemStatus {
-        let mut s = super::ModemStatus::default();
-        if let Ok(r) = self.send_at("+CSQ") {
-            // +CSQ: 20,0
-            if let Some(v) = r.body.strip_prefix("+CSQ: ") {
-                let csq: u8 = v.split(',').next().and_then(|x| x.trim().parse().ok()).unwrap_or(super::CSQ_UNKNOWN);
-                s.csq = csq;
-            }
-        }
-        if let Ok(r) = self.send_at("+COPS?") {
-            // +COPS: 0,0,"China Mobile",7
-            if let Some(start) = r.body.find('"') {
-                if let Some(end) = r.body[start + 1..].find('"') {
-                    s.operator = r.body[start + 1..start + 1 + end].to_string();
-                }
-            }
-        }
-        if let Ok(r) = self.send_at("+CREG?") {
-            s.registered = creg_registered(&r.body);
-        }
-        s
-    }
 }
 
 impl AtTransport for A76xxModem {
