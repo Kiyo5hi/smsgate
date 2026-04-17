@@ -92,7 +92,7 @@ where
     tls.write_all(request.as_bytes())
         .map_err(|e| OtaError::Http(format!("write: {}", e)))?;
 
-    let (status, content_length, header_remainder) = read_headers(&mut tls)?;
+    let (status, content_length, header_remainder, _) = read_headers(&mut tls)?;
     if status < 200 || status >= 300 {
         return Err(OtaError::Http(format!("HTTP {}", status)));
     }
@@ -182,19 +182,13 @@ fn parse_url(url: &str) -> Result<(String, u16, String, bool), OtaError> {
 
 #[cfg(feature = "esp32")]
 fn connect_tls(host: &str, port: u16, use_tls: bool) -> Result<EspTls<InternalSocket>, OtaError> {
-    let conf = if use_tls {
-        esp_idf_svc::tls::Config::default()
-    } else {
-        esp_idf_svc::tls::Config::default()
+    let conf = esp_idf_svc::tls::Config {
+        use_crt_bundle_attach: use_tls,
+        ..Default::default()
     };
     let mut tls = EspTls::new().map_err(|e| OtaError::Http(format!("TLS init: {}", e)))?;
-    if use_tls {
-        tls.connect(host, port, &conf)
-            .map_err(|e| OtaError::Http(format!("TLS connect: {}", e)))?;
-    } else {
-        tls.connect(host, port, &esp_idf_svc::tls::Config::default())
-            .map_err(|e| OtaError::Http(format!("TCP connect: {}", e)))?;
-    }
+    tls.connect(host, port, &conf)
+        .map_err(|e| OtaError::Http(format!("connect: {}", e)))?;
     Ok(tls)
 }
 
@@ -220,9 +214,9 @@ fn follow_redirects(
         tls.write_all(request.as_bytes())
             .map_err(|e| OtaError::Http(format!("write: {}", e)))?;
 
-        let (status, _, _) = read_headers(&mut tls)?;
+        let (status, _, _, location) = read_headers(&mut tls)?;
         if (300..400).contains(&status) {
-            if let Some(loc) = find_header_in_last_response("location") {
+            if let Some(loc) = location {
                 let (h, p, pa, t) = parse_url(&loc)?;
                 cur_host = h;
                 cur_port = p;
@@ -237,11 +231,11 @@ fn follow_redirects(
     Ok((cur_host, cur_port, cur_path, cur_tls))
 }
 
-/// Read HTTP response headers, returning (status_code, content_length, leftover_body_bytes).
+/// Read HTTP response headers, returning (status_code, content_length, leftover_body_bytes, location).
 #[cfg(feature = "esp32")]
 fn read_headers(
     tls: &mut EspTls<InternalSocket>,
-) -> Result<(u16, Option<usize>, Vec<u8>), OtaError> {
+) -> Result<(u16, Option<usize>, Vec<u8>, Option<String>), OtaError> {
     let mut raw = Vec::with_capacity(2048);
     let mut buf = [0u8; 512];
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -267,29 +261,15 @@ fn read_headers(
                 .find(|l| l.to_lowercase().starts_with("content-length:"))
                 .and_then(|l| l.splitn(2, ':').nth(1))
                 .and_then(|v| v.trim().parse().ok());
-
-            // Stash the Location header for redirect following
-            if let Some(loc) = header_str
+            let location = header_str
                 .lines()
                 .find(|l| l.to_lowercase().starts_with("location:"))
                 .and_then(|l| l.splitn(2, ':').nth(1))
-            {
-                LAST_LOCATION.lock().unwrap().replace(loc.trim().to_string());
-            } else {
-                LAST_LOCATION.lock().unwrap().take();
-            }
+                .map(|v| v.trim().to_string());
 
-            return Ok((status, content_length, remainder));
+            return Ok((status, content_length, remainder, location));
         }
     }
-}
-
-#[cfg(feature = "esp32")]
-static LAST_LOCATION: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-
-#[cfg(feature = "esp32")]
-fn find_header_in_last_response(_name: &str) -> Option<String> {
-    LAST_LOCATION.lock().unwrap().take()
 }
 
 #[cfg(feature = "esp32")]
