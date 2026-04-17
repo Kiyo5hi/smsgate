@@ -1,11 +1,16 @@
+# Copy this file to config.toml and fill in your values.
+# SECURITY: config.toml is git-ignored. Never commit your real values.
+# A leaked bot_token lets anyone send commands to your device and trigger /send
+# from your SIM card. If leaked, revoke it immediately via @BotFather.
+
 [wifi]
 ssid     = "YOUR_WIFI_SSID"
-password = "YOUR_WIFI_PASSWORD"
+password = "YOUR_WIFI_PASSWORD"  # DO NOT COMMIT
 
 [im]
 backend   = "telegram"
-bot_token = "123456:ABC-DEF..."
-chat_id   = 987654321
+bot_token = "123456:ABC-DEF..."  # DO NOT COMMIT — revoke at @BotFather if leaked
+chat_id   = 987654321            # Your Telegram user ID (not a group ID)
 
 [modem]
 # Default pins for LilyGo T-A7670X — edit when switching boards
@@ -13,6 +18,13 @@ uart_tx   = 26
 uart_rx   = 27
 uart_baud = 115200
 pwrkey    = 4
+# Packet-switched attachment (LTE/GPRS “data”). Default off — SMS/voice use CS / NAS; WiFi carries HTTPS.
+cellular_data = false
+# If WiFi fails after retries, attach PDP and use modem HTTPS for Telegram (same UART as SMS — use short poll timeouts).
+cellular_fallback = false
+apn       = ""
+apn_user  = ""
+apn_pass  = ""
 
 [bridge]
 max_failures_before_reboot = 8
