@@ -3,7 +3,10 @@
 #[cfg(feature = "esp32")]
 pub mod ta7670x;
 
+#[cfg(feature = "esp32")]
 use crate::modem::ModemPort;
+#[cfg(feature = "esp32")]
+use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -24,8 +27,10 @@ pub enum ModemVariant {
 
 /// Board-level abstraction: pin layout + power-on sequence.
 ///
-/// Used only in `main.rs` during startup.
-/// After `build_modem_port()` returns, everything else uses `ModemPort`.
+/// Used only in `main.rs` during startup to build the modem driver.
+/// Returns `Arc<Mutex<dyn ModemPort + Send>>` so the rest of the system is
+/// insulated from the concrete modem type — adding a new board (SIM800,
+/// A7608, EC21, …) only requires a new `Board` impl; no other file changes.
 #[cfg(feature = "esp32")]
 pub trait Board {
     fn modem_variant(&self) -> ModemVariant;
@@ -35,15 +40,16 @@ pub trait Board {
     fn pwrkey_pin(&self) -> u8;
     fn reset_pin(&self) -> Option<u8>;
 
-    /// Configure GPIO, perform power-on sequence.
+    /// Configure GPIO and run the board-specific power-on sequence.
     fn init(
         &self,
         peripherals: &mut esp_idf_hal::peripherals::Peripherals,
     ) -> Result<(), BoardError>;
 
-    /// Build a configured ModemPort.
+    /// Build the UART driver + modem, shared across main and polling threads.
+    /// Returns a type-erased handle so callers never depend on the concrete modem type.
     fn build_modem_port(
         &self,
         peripherals: &mut esp_idf_hal::peripherals::Peripherals,
-    ) -> Result<Box<dyn ModemPort>, BoardError>;
+    ) -> Result<Arc<Mutex<dyn ModemPort + Send>>, BoardError>;
 }

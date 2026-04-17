@@ -1,12 +1,16 @@
-//! PDU send/read/delete AT command flows for A76xx.
+//! PDU send/read/delete AT command flows — generic over `AtTransport`.
+//!
+//! `send_pdu` is the standard AT+CMGS sequence (send command, wait for `>`,
+//! write PDU hex, send Ctrl-Z, collect +CMGS: response).  It works for any
+//! modem that implements `AtTransport`; the A76xx-specific `send_pdu_sms`
+//! default in `ModemPort` delegates here.
 
-use crate::modem::ModemError;
-use super::at::AtPort;
+use crate::modem::{AtTransport, ModemError};
 use std::time::Duration;
 
-/// Send a PDU SMS via AT+CMGS.
+/// Send a PDU SMS via the standard `AT+CMGS` handshake.
 /// Returns the message reference number (MR) on success.
-pub fn send_pdu(port: &mut AtPort, hex: &str, tpdu_len: u8) -> Result<u8, ModemError> {
+pub fn send_pdu<P: AtTransport + ?Sized>(port: &mut P, hex: &str, tpdu_len: u8) -> Result<u8, ModemError> {
     // Issue AT+CMGS=<tpduLen>
     let cmd = format!("+CMGS={}", tpdu_len);
     port.write_raw(format!("AT{}\r", cmd).as_bytes())?;
@@ -56,7 +60,7 @@ pub fn send_pdu(port: &mut AtPort, hex: &str, tpdu_len: u8) -> Result<u8, ModemE
     Ok(0)
 }
 
-fn read_line_raw(port: &mut AtPort, timeout: Duration) -> Option<String> {
+fn read_line_raw<P: AtTransport + ?Sized>(port: &mut P, timeout: Duration) -> Option<String> {
     // We reuse poll_urc which has a short timeout — call in loop until we get a real line
     let deadline = std::time::Instant::now() + timeout;
     loop {

@@ -5,8 +5,8 @@
 
 use super::{Board, BoardError, ModemVariant};
 use crate::config::Config;
-use crate::modem::ModemPort;
-use crate::modem::a76xx::{at::AtPort, A76xxModem};
+use crate::modem::{ModemPort, a76xx::{at::AtPort, A76xxModem}};
+use std::sync::{Arc, Mutex};
 use esp_idf_hal::{
     peripherals::Peripherals,
     uart::{config::Config as UartConfig, UartDriver},
@@ -82,7 +82,7 @@ impl Board for TA7670X {
     fn build_modem_port(
         &self,
         peripherals: &mut Peripherals,
-    ) -> Result<Box<dyn ModemPort>, BoardError> {
+    ) -> Result<Arc<Mutex<dyn ModemPort + Send>>, BoardError> {
         let uart_config = UartConfig::new().baudrate(
             esp_idf_hal::units::Hertz(Config::UART_BAUD)
         );
@@ -109,8 +109,10 @@ impl Board for TA7670X {
 
         let port = AtPort::new(uart);
         let mut modem = A76xxModem::new(port);
-        modem.init().map_err(|e| BoardError::Uart(e.to_string()))?;
+        modem
+            .init(Config::MODEM_CELLULAR_DATA)
+            .map_err(|e| BoardError::Uart(e.to_string()))?;
 
-        Ok(Box::new(modem))
+        Ok(Arc::new(Mutex::new(modem)))
     }
 }

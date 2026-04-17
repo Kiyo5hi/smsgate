@@ -56,11 +56,15 @@ fn drain_retry_on_failure() {
     // To simulate failure, we use a ScriptedModem that returns error... but send_pdu_sms
     // on ScriptedModem doesn't use the script. Let's subclass:
     struct FailingModem;
-    impl smsgate::modem::ModemPort for FailingModem {
+    impl smsgate::modem::AtTransport for FailingModem {
         fn send_at(&mut self, _: &str) -> Result<smsgate::modem::AtResponse, smsgate::modem::ModemError> {
             Err(smsgate::modem::ModemError::Timeout)
         }
         fn poll_urc(&mut self) -> Option<String> { None }
+        fn write_raw(&mut self, _: &[u8]) -> Result<(), smsgate::modem::ModemError> { Ok(()) }
+        fn wait_for_prompt(&mut self, _: u8, _: std::time::Duration) -> bool { false }
+    }
+    impl smsgate::modem::ModemPort for FailingModem {
         fn send_pdu_sms(&mut self, _: &str, _: u8) -> Result<u8, smsgate::modem::ModemError> {
             Err(smsgate::modem::ModemError::Timeout)
         }
@@ -80,11 +84,15 @@ fn drain_max_attempts_drops_entry() {
     sender.enqueue("+1".to_string(), "Drop me".to_string());
 
     struct FailingModem;
-    impl smsgate::modem::ModemPort for FailingModem {
+    impl smsgate::modem::AtTransport for FailingModem {
         fn send_at(&mut self, _: &str) -> Result<smsgate::modem::AtResponse, smsgate::modem::ModemError> {
             Err(smsgate::modem::ModemError::Timeout)
         }
         fn poll_urc(&mut self) -> Option<String> { None }
+        fn write_raw(&mut self, _: &[u8]) -> Result<(), smsgate::modem::ModemError> { Ok(()) }
+        fn wait_for_prompt(&mut self, _: u8, _: std::time::Duration) -> bool { false }
+    }
+    impl smsgate::modem::ModemPort for FailingModem {
         fn send_pdu_sms(&mut self, _: &str, _: u8) -> Result<u8, smsgate::modem::ModemError> {
             Err(smsgate::modem::ModemError::Timeout)
         }
@@ -163,11 +171,15 @@ fn drain_once_returns_false_when_no_entry_ready() {
     // Enqueue an entry, then force it into "not ready" state by draining once
     // with a failing modem (sets next_attempt to a future Instant).
     struct FailingModem;
-    impl smsgate::modem::ModemPort for FailingModem {
+    impl smsgate::modem::AtTransport for FailingModem {
         fn send_at(&mut self, _: &str) -> Result<smsgate::modem::AtResponse, smsgate::modem::ModemError> {
             Err(smsgate::modem::ModemError::Timeout)
         }
         fn poll_urc(&mut self) -> Option<String> { None }
+        fn write_raw(&mut self, _: &[u8]) -> Result<(), smsgate::modem::ModemError> { Ok(()) }
+        fn wait_for_prompt(&mut self, _: u8, _: std::time::Duration) -> bool { false }
+    }
+    impl smsgate::modem::ModemPort for FailingModem {
         fn send_pdu_sms(&mut self, _: &str, _: u8) -> Result<u8, smsgate::modem::ModemError> {
             Err(smsgate::modem::ModemError::Timeout)
         }

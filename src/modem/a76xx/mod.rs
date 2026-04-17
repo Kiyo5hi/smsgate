@@ -1,9 +1,11 @@
 //! A76xx modem driver — ESP32 / UART implementation.
 
 pub mod at;
+pub mod qhttp;
 pub mod sms;
 
-use super::{AtResponse, ModemError, ModemPort, creg_registered};
+use std::time::Duration;
+use super::{AtResponse, AtTransport, ModemError, ModemPort, creg_registered};
 use at::AtPort;
 
 /// A76xx modem driver (A7670, A7608, A7672, etc.).
@@ -17,9 +19,14 @@ impl A76xxModem {
         A76xxModem { port }
     }
 
+    pub(crate) fn port_mut(&mut self) -> &mut AtPort {
+        &mut self.port
+    }
+
     /// Run the initialisation sequence:
     /// - Echo off, PDU mode, enable CMT URCs, wait for network registration.
-    pub fn init(&mut self) -> Result<(), ModemError> {
+    /// - Optionally attach or detach packet-switched service (`AT+CGATT`).
+    pub fn init(&mut self, cellular_data: bool) -> Result<(), ModemError> {
         // Probe until the modem responds to AT (up to 15 s).
         // A7670G typically takes 5-10 s after power-on to become responsive.
         let probe_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -80,6 +87,21 @@ impl A76xxModem {
             }
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
+
+        let cgatt = if cellular_data { "+CGATT=1" } else { "+CGATT=0" };
+        match self.send_at(cgatt) {
+            Ok(r) if r.ok => log::info!(
+                "[a76xx] cellular data {} (AT{} OK)",
+                if cellular_data { "enabled" } else { "disabled" },
+                cgatt
+            ),
+            Ok(r) => log::warn!(
+                "[a76xx] AT{}: {}",
+                cgatt,
+                r.body.trim()
+            ),
+            Err(e) => log::warn!("[a76xx] AT{} failed: {}", cgatt, e),
+        }
         Ok(())
     }
 
@@ -108,7 +130,7 @@ impl A76xxModem {
     }
 }
 
-impl ModemPort for A76xxModem {
+impl AtTransport for A76xxModem {
     fn send_at(&mut self, cmd: &str) -> Result<AtResponse, ModemError> {
         self.port.send_at(cmd)
     }
@@ -117,12 +139,20 @@ impl ModemPort for A76xxModem {
         self.port.poll_urc()
     }
 
-    fn send_pdu_sms(&mut self, hex: &str, tpdu_len: u8) -> Result<u8, ModemError> {
-        sms::send_pdu(&mut self.port, hex, tpdu_len)
+    fn write_raw(&mut self, data: &[u8]) -> Result<(), ModemError> {
+        self.port.write_raw(data)
     }
 
-    fn hang_up(&mut self) -> Result<(), ModemError> {
-        let r = self.send_at("H")?;
-        if r.ok { Ok(()) } else { Err(ModemError::AtError("ATH failed".into())) }
+    fn wait_for_prompt(&mut self, prompt: u8, timeout: Duration) -> bool {
+        self.port.wait_for_prompt(prompt, timeout)
+    }
+}
+
+impl ModemPort for A76xxModem {
+    // send_pdu_sms: default (standard AT+CMGS handshake via AtTransport)
+    // hang_up: default (ATH)
+
+    fn post_telegram_https(&mut self, path: &str, json: &str) -> Result<String, ModemError> {
+        qhttp::post_json(self, path, json)
     }
 }

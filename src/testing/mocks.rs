@@ -1,7 +1,8 @@
 //! Mock implementations of ModemPort and Messenger.
 
 use crate::im::{InboundMessage, MessageId, MessageSink, MessageSource, MessengerError};
-use crate::modem::{AtResponse, ModemError, ModemPort};
+use crate::modem::{AtResponse, AtTransport, ModemError, ModemPort};
+use std::time::Duration;
 use std::collections::VecDeque;
 
 // ---------------------------------------------------------------------------
@@ -66,7 +67,7 @@ impl ScriptedModem {
     }
 }
 
-impl ModemPort for ScriptedModem {
+impl AtTransport for ScriptedModem {
     fn send_at(&mut self, cmd: &str) -> Result<AtResponse, ModemError> {
         let Some(step) = self.script.pop_front() else {
             return Err(ModemError::AtError(format!("unexpected AT command: AT{}", cmd)));
@@ -84,6 +85,18 @@ impl ModemPort for ScriptedModem {
         self.urc_queue.pop_front()
     }
 
+    fn write_raw(&mut self, _data: &[u8]) -> Result<(), ModemError> {
+        // ScriptedModem overrides send_pdu_sms, so write_raw is never reached.
+        unreachable!("ScriptedModem: write_raw should not be called directly")
+    }
+
+    fn wait_for_prompt(&mut self, _prompt: u8, _timeout: Duration) -> bool {
+        // ScriptedModem overrides send_pdu_sms, so this is never reached.
+        unreachable!("ScriptedModem: wait_for_prompt should not be called directly")
+    }
+}
+
+impl ModemPort for ScriptedModem {
     fn send_pdu_sms(&mut self, hex: &str, tpdu_len: u8) -> Result<u8, ModemError> {
         self.sent_pdus.push((hex.to_string(), tpdu_len));
         Ok(1) // fake MR = 1
