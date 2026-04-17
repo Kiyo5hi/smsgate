@@ -49,7 +49,7 @@ fn main() {
     let config_str = std::fs::read_to_string(config_path)
         .expect("Failed to read config.toml");
 
-    let config: toml::Value = config_str
+    let config: toml::Table = config_str
         .parse()
         .expect("config.toml is not valid TOML");
 
@@ -73,6 +73,21 @@ fn main() {
     println!("cargo:rustc-env=CFG_MODEM_UART_RX={}", get("modem", "uart_rx"));
     println!("cargo:rustc-env=CFG_MODEM_UART_BAUD={}", get("modem", "uart_baud"));
     println!("cargo:rustc-env=CFG_MODEM_PWRKEY={}", get("modem", "pwrkey"));
+    let cellular_data = config
+        .get("modem")
+        .and_then(|m| m.get("cellular_data"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    println!("cargo:rustc-env=CFG_MODEM_CELLULAR_DATA={}", cellular_data);
+    let cellular_fallback = config
+        .get("modem")
+        .and_then(|m| m.get("cellular_fallback"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    println!("cargo:rustc-env=CFG_CELLULAR_FALLBACK={}", cellular_fallback);
+    println!("cargo:rustc-env=CFG_MODEM_APN={}", get("modem", "apn"));
+    println!("cargo:rustc-env=CFG_MODEM_APN_USER={}", get("modem", "apn_user"));
+    println!("cargo:rustc-env=CFG_MODEM_APN_PASS={}", get("modem", "apn_pass"));
     println!("cargo:rustc-env=CFG_BRIDGE_MAX_FAILURES={}", get("bridge", "max_failures_before_reboot"));
     println!("cargo:rustc-env=CFG_BRIDGE_POLL_INTERVAL_MS={}", get("bridge", "poll_interval_ms"));
     println!("cargo:rustc-env=CFG_BRIDGE_WATCHDOG_SEC={}", get("bridge", "watchdog_timeout_sec"));
@@ -125,6 +140,11 @@ fn emit_empty_defaults() {
     println!("cargo:rustc-env=CFG_MODEM_UART_RX=27");
     println!("cargo:rustc-env=CFG_MODEM_UART_BAUD=115200");
     println!("cargo:rustc-env=CFG_MODEM_PWRKEY=4");
+    println!("cargo:rustc-env=CFG_MODEM_CELLULAR_DATA=false");
+    println!("cargo:rustc-env=CFG_CELLULAR_FALLBACK=false");
+    println!("cargo:rustc-env=CFG_MODEM_APN=");
+    println!("cargo:rustc-env=CFG_MODEM_APN_USER=");
+    println!("cargo:rustc-env=CFG_MODEM_APN_PASS=");
     println!("cargo:rustc-env=CFG_BRIDGE_MAX_FAILURES=8");
     println!("cargo:rustc-env=CFG_BRIDGE_POLL_INTERVAL_MS=3000");
     println!("cargo:rustc-env=CFG_BRIDGE_WATCHDOG_SEC=120");
