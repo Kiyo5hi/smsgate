@@ -4,7 +4,9 @@ ESP32 firmware in Rust that bridges SMS/calls and Telegram. Receives SMS on a ce
 
 ## Hardware
 
-- **LilyGo T-A7670X** (ESP32 + A7670G LTE modem, CH9102 USB bridge)
+Any ESP32 board paired with an AT-command cellular modem is supported via the `Board` trait.
+Reference hardware: **LilyGo T-A7670X** (A7670G LTE modem, CH9102 USB bridge).
+
 - A nano-SIM card with SMS service
 
 ## Features
@@ -74,10 +76,11 @@ The system is built around four core traits. All business logic depends only on 
 
 ## USB Driver
 
-The T-A7670X uses a CH9102 USB bridge.
-- **Linux**: typically works out of the box (`/dev/ttyUSB0`); if not, load the `ch341` kernel module
-- **macOS**: [CH34x driver](https://www.wch-ic.com/downloads/CH34XSER_MAC_ZIP.html) (approve kext in System Settings > Privacy & Security)
-- **Windows**: usually auto-detected; if not, install from [WCH](https://www.wch-ic.com/downloads/CH343SER_ZIP.html)
+The USB-to-serial chip varies by board. The reference board (T-A7670X) uses a **CH9102**.
+
+- **Linux**: typically works out of the box (`/dev/ttyUSB0`); if not, load the appropriate kernel module (`ch341`, `cp210x`, etc.)
+- **macOS**: install the driver matching your chip (e.g. [CH34x](https://www.wch-ic.com/downloads/CH34XSER_MAC_ZIP.html) for CH9102) and approve the kext in System Settings > Privacy & Security
+- **Windows**: usually auto-detected; if not, install from the chip vendor (e.g. [WCH](https://www.wch-ic.com/downloads/CH343SER_ZIP.html) for CH9102)
 
 ## License
 
