@@ -2,8 +2,108 @@
 
 use crate::im::{InboundMessage, MessageId, MessageSink, MessageSource, MessengerError};
 use crate::modem::{AtResponse, AtTransport, ModemError, ModemPort};
+use crate::modem::a76xx::at::UartPort;
 use std::time::Duration;
 use std::collections::VecDeque;
+
+// ---------------------------------------------------------------------------
+// MockUart
+// ---------------------------------------------------------------------------
+
+/// Byte-level UART mock for testing `AtPort<MockUart>` without hardware.
+///
+/// ## Timing model
+///
+/// On real hardware the modem only sends its response *after* it receives a
+/// command.  `drain_urcs()` in `AtPort::send_at` drains the UART FIFO
+/// *before* writing the command — so response bytes must not be visible yet.
+///
+/// This mock mirrors that model:
+/// - `feed` / `feed_line` → bytes visible **immediately** (pre-command URCs).
+/// - `queue_response` / `queue_response_line` → bytes injected into `rx`
+///   on the **next `write_all`** call (one batch per call, FIFO order).
+///
+/// For `send_at_connect_payload` (two writes: command + payload) call
+/// `queue_response_line` once per expected write to build two batches.
+pub struct MockUart {
+    rx: VecDeque<u8>,
+    /// Pending responses: each inner Vec is flushed into `rx` on one `write_all`.
+    write_responses: VecDeque<Vec<u8>>,
+    /// Accumulator for the response being built by the current `queue_response*` calls.
+    pending_response: Vec<u8>,
+    pub tx: Vec<u8>,
+}
+
+impl MockUart {
+    pub fn new() -> Self {
+        MockUart {
+            rx: VecDeque::new(),
+            write_responses: VecDeque::new(),
+            pending_response: Vec::new(),
+            tx: Vec::new(),
+        }
+    }
+
+    /// Push bytes that are immediately available (pre-command URCs in FIFO).
+    pub fn feed(&mut self, data: &[u8]) {
+        self.rx.extend(data.iter().copied());
+    }
+
+    /// Push a line with `\r\n` that is immediately available.
+    pub fn feed_line(&mut self, line: &str) {
+        self.feed(line.as_bytes());
+        self.feed(b"\r\n");
+    }
+
+    /// Append bytes to the *current* queued response batch.
+    pub fn queue_response(&mut self, data: &[u8]) {
+        self.pending_response.extend_from_slice(data);
+    }
+
+    /// Append a line (with `\r\n`) to the current queued response batch.
+    pub fn queue_response_line(&mut self, line: &str) {
+        self.queue_response(line.as_bytes());
+        self.queue_response(b"\r\n");
+    }
+
+    /// Finalise the current response batch so the *next* `queue_response*`
+    /// calls start building the batch for the write after that.
+    ///
+    /// Called automatically on `write_all` — only needed explicitly when you
+    /// want two separate write-triggered response batches (e.g. for
+    /// `send_at_connect_payload`'s two-write sequence).
+    pub fn finish_response(&mut self) {
+        let batch = std::mem::take(&mut self.pending_response);
+        if !batch.is_empty() {
+            self.write_responses.push_back(batch);
+        }
+    }
+
+    /// View what has been transmitted as UTF-8 (panics if non-UTF-8).
+    pub fn sent_str(&self) -> &str {
+        std::str::from_utf8(&self.tx).expect("tx is valid UTF-8")
+    }
+}
+
+impl UartPort for MockUart {
+    fn read_byte(&mut self, _ticks: u32) -> Option<u8> {
+        self.rx.pop_front()
+    }
+
+    fn write_all(&mut self, data: &[u8]) -> Result<(), ModemError> {
+        self.tx.extend_from_slice(data);
+        // Finalise current pending batch, then inject the oldest queued response.
+        self.finish_response();
+        if let Some(batch) = self.write_responses.pop_front() {
+            self.rx.extend(batch.iter().copied());
+        }
+        Ok(())
+    }
+}
+
+impl Default for MockUart {
+    fn default() -> Self { Self::new() }
+}
 
 // ---------------------------------------------------------------------------
 // ScriptedModem

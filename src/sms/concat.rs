@@ -80,6 +80,19 @@ impl ConcatReassembler {
             return None;
         }
 
+        // Reject before touching the group table: a never-completing group
+        // wastes one of the 8 slots for up to 24 h.
+        if pdu.concat_total == 0
+            || pdu.concat_part == 0
+            || pdu.concat_part > pdu.concat_total
+        {
+            log::warn!(
+                "[concat] malformed concat header from {}: part={}/{} — discarded",
+                pdu.sender, pdu.concat_part, pdu.concat_total
+            );
+            return None;
+        }
+
         // Evict expired groups first
         self.groups.retain(|g| !g.is_expired());
 

@@ -25,6 +25,9 @@ fn main() {
                     let name = e.file_name();
                     if name.to_string_lossy().starts_with("esp-idf-sys-") && e.path().is_dir() {
                         let dst = e.path().join("out").join("partitions_ota.csv");
+                        if let Some(parent) = dst.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
                         let _ = std::fs::copy(src, &dst);
                     }
                 }

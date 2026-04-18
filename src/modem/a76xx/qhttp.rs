@@ -50,7 +50,6 @@ fn escape_at_quotes(s: &str) -> String {
 /// POST JSON to `https://api.telegram.org` + `path` (path includes `/bot…/method`).
 pub fn post_json(modem: &mut A76xxModem, path: &str, json: &str) -> Result<String, ModemError> {
     let url = format!("{}{}", TELEGRAM_HOST_PATH, path);
-    let url = url.trim().to_string();
 
     // Bind HTTP stack to PDP context 1; enable TLS for HTTPS.
     let _ = modem.send_at("+QHTTPCFG=\"contextid\",1");

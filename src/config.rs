@@ -17,6 +17,13 @@ impl Config {
     pub const UART_RX: u8 = parse_u8_const(env!("CFG_MODEM_UART_RX"));
     pub const UART_BAUD: u32 = parse_u32_const(env!("CFG_MODEM_UART_BAUD"));
     pub const PWRKEY_PIN: u8 = parse_u8_const(env!("CFG_MODEM_PWRKEY"));
+    /// Packet-switched (cellular data) attachment: `AT+CGATT=1` vs `AT+CGATT=0`.
+    pub const MODEM_CELLULAR_DATA: bool = parse_bool_env_true(env!("CFG_MODEM_CELLULAR_DATA"));
+    /// When WiFi fails, bring up PDP and send Telegram via modem `AT+QHTTP*` (requires `apn`).
+    pub const CELLULAR_FALLBACK: bool = parse_bool_env_true(env!("CFG_CELLULAR_FALLBACK"));
+    pub const MODEM_APN: &'static str = env!("CFG_MODEM_APN");
+    pub const MODEM_APN_USER: &'static str = env!("CFG_MODEM_APN_USER");
+    pub const MODEM_APN_PASS: &'static str = env!("CFG_MODEM_APN_PASS");
     pub const MAX_FAILURES: u8 = parse_u8_const(env!("CFG_BRIDGE_MAX_FAILURES"));
     pub const POLL_INTERVAL_MS: u32 = parse_u32_const(env!("CFG_BRIDGE_POLL_INTERVAL_MS"));
     pub const WATCHDOG_TIMEOUT_SEC: u32 = parse_u32_const(env!("CFG_BRIDGE_WATCHDOG_SEC"));
@@ -27,6 +34,11 @@ impl Config {
     pub const OTA_URL: &'static str = env!("CFG_OTA_URL");
     /// "auto" or "manual"
     pub const OTA_CONFIRM: &'static str = env!("CFG_OTA_CONFIRM");
+}
+
+const fn parse_bool_env_true(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 4 && b[0] == b't' && b[1] == b'r' && b[2] == b'u' && b[3] == b'e'
 }
 
 const fn parse_u8_const(s: &str) -> u8 {

@@ -55,7 +55,7 @@ impl CommandRegistry {
     pub fn register(&mut self, cmd: Box<dyn Command>) {
         assert!(
             self.commands.len() < 10,
-            "command cap exceeded (max 10) — see rfc/0001-foundation.md §4.2"
+            "command cap exceeded (max 10) — remove a command before adding one"
         );
         self.commands.push(cmd);
     }

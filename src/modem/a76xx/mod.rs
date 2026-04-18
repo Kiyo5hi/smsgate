@@ -1,18 +1,26 @@
 //! A76xx modem driver — ESP32 / UART implementation.
 
 pub mod at;
+
+#[cfg(feature = "esp32")]
 pub mod qhttp;
+#[cfg(feature = "esp32")]
 pub mod sms;
 
+#[cfg(feature = "esp32")]
 use std::time::Duration;
+#[cfg(feature = "esp32")]
 use super::{AtResponse, AtTransport, ModemError, ModemPort, creg_registered};
-use at::AtPort;
+#[cfg(feature = "esp32")]
+use at::HardwareAtPort as AtPort;
 
 /// A76xx modem driver (A7670, A7608, A7672, etc.).
+#[cfg(feature = "esp32")]
 pub struct A76xxModem {
     port: AtPort,
 }
 
+#[cfg(feature = "esp32")]
 impl A76xxModem {
     /// Create from an already-configured `AtPort`.
     pub fn new(port: AtPort) -> Self {
@@ -88,25 +96,22 @@ impl A76xxModem {
             std::thread::sleep(std::time::Duration::from_secs(2));
         }
 
-        let cgatt = if cellular_data { "+CGATT=1" } else { "+CGATT=0" };
-        match self.send_at(cgatt) {
-            Ok(r) if r.ok => log::info!(
-                "[a76xx] cellular data {} (AT{} OK)",
-                if cellular_data { "enabled" } else { "disabled" },
-                cgatt
-            ),
-            Ok(r) => log::warn!(
-                "[a76xx] AT{}: {}",
-                cgatt,
-                r.body.trim()
-            ),
-            Err(e) => log::warn!("[a76xx] AT{} failed: {}", cgatt, e),
+        // Only send AT+CGATT=1 when cellular data is explicitly requested.
+        // AT+CGATT=0 (detach) is unreliable on A7670G — the modem frequently
+        // doesn't respond within CMD_TIMEOUT, causing a 5 s stall at boot.
+        // SMS delivery works without touching CGATT.
+        if cellular_data {
+            match self.send_at("+CGATT=1") {
+                Ok(r) if r.ok => log::info!("[a76xx] cellular data enabled (AT+CGATT=1 OK)"),
+                Ok(r)         => log::warn!("[a76xx] AT+CGATT=1: {}", r.body.trim()),
+                Err(e)        => log::warn!("[a76xx] AT+CGATT=1 failed: {}", e),
+            }
         }
         Ok(())
     }
-
 }
 
+#[cfg(feature = "esp32")]
 impl AtTransport for A76xxModem {
     fn send_at(&mut self, cmd: &str) -> Result<AtResponse, ModemError> {
         self.port.send_at(cmd)
@@ -125,6 +130,7 @@ impl AtTransport for A76xxModem {
     }
 }
 
+#[cfg(feature = "esp32")]
 impl ModemPort for A76xxModem {
     // send_pdu_sms: default (standard AT+CMGS handshake via AtTransport)
     // hang_up: default (ATH)

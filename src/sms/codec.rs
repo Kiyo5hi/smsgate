@@ -292,6 +292,9 @@ fn decode_bcd_address(data: &[u8], byte_len: usize, digit_len: usize) -> String 
 }
 
 fn decode_scts(data: &[u8]) -> String {
+    if data.len() < 7 {
+        return String::new();
+    }
     let swap = |b: u8| -> u8 { (b & 0x0F) * 10 + ((b >> 4) & 0x0F) };
     let tz_raw = data[6];
     let tz_hi = (tz_raw >> 4) & 0x0F;

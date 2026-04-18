@@ -14,7 +14,7 @@
 
 pub mod urc;
 
-#[cfg(feature = "esp32")]
+#[cfg(any(feature = "esp32", feature = "testing"))]
 pub mod a76xx;
 
 use std::time::Duration;

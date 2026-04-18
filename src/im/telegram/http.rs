@@ -74,7 +74,7 @@ impl TelegramHttpClient {
 
         // Parse Content-Length
         let cl: usize = response.lines()
-            .find(|l| l.to_lowercase().starts_with("content-length:"))
+            .find(|l| l.get(..15).is_some_and(|p| p.eq_ignore_ascii_case("content-length:")))
             .and_then(|l| l.splitn(2, ':').nth(1))
             .and_then(|v| v.trim().parse().ok())
             .unwrap_or(0);

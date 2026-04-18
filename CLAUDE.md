@@ -56,8 +56,6 @@ $env:PATH = "$env:USERPROFILE\.rustup\toolchains\esp\xtensa-esp32-elf-clang\esp-
 
 ## Architecture
 
-Full design: `rfc/0001-foundation.md` (shared with humans — agents implement, humans review)
-
 The system is built around core traits. All business logic depends only on these;
 nothing in `bridge/`, `commands/`, or `sms/` imports a concrete implementation.
 
@@ -72,7 +70,7 @@ nothing in `bridge/`, `commands/`, or `sms/` imports a concrete implementation.
 
 `FanoutSink` wraps multiple `MessageSink`s and delivers to all of them.
 The first sink is the primary (its `MessageId` is used for reply routing);
-the rest are fire-and-forget. See `rfc/0004-fanout-delivery.md`.
+the rest are fire-and-forget.
 
 `Board` is used only during startup in `main.rs` to produce a `ModemPort`.
 After that, `Board` disappears from the call graph entirely.
@@ -89,7 +87,7 @@ NVS stores exactly four keys: `im_cursor` (i64), `reply_map` (blob), `block_list
 Dual-partition OTA via ESP-IDF (`partitions_ota.csv`). The `/update` command
 downloads firmware from the configured HTTPS URL, writes to the inactive slot,
 and reboots. Rollback is automatic if the new firmware fails to boot.
-See `rfc/0005-ota.md` for full details. Configure via `[ota]` in `config.toml`.
+Configure via `[ota]` in `config.toml`.
 
 First flash must include the partition table:
 ```bash
@@ -145,6 +143,17 @@ so `/update` always fetches the latest nightly build.
 2. `Scenario::new("...").modem_urc(...).expect_im_sent(...).run()`
 3. Real hardware recording → add `serial_capture/<description>.txt`
 
+## Hardware Testing
+
+**Every change must be tested on real hardware before the task is considered done.**
+Host tests (`cargo test`) verify logic; they cannot catch UART timing issues, modem
+power sequencing, NVS partition behaviour, or FreeRTOS scheduling interactions.
+
+Minimum verification on board after any change:
+1. Flash and confirm clean boot log (see Boot Sequence Timing below)
+2. Send an SMS to the device — confirm it forwards to Telegram
+3. Send `/status` from Telegram — confirm it replies
+
 ## Key Invariants
 
 Verify after every change:
@@ -153,8 +162,9 @@ Verify after every change:
 - Blocked numbers produce zero IM messages
 - `FakeClock` u32 wraparound fires all timers correctly
 - `ScriptedModem` unconsumed steps → test failure (no silent pass)
-- Command count ≤ 10, or exception documented in `rfc/0001-foundation.md §4.2`
-- NVS key set unchanged (4 keys only), or updated in `rfc/0001-foundation.md §4.3`
+- Command count ≤ 10 (hard cap — adding one requires removing one)
+- `"smsgate"` NVS key set unchanged (4 keys only: im_cursor, reply_map, block_list, fwd_enabled)
+- `"smsgcfg"` NVS credential keys unchanged (7 keys: wifi_ssid/pass, bot_token, chat_id, apn/user/pass)
 
 ## sdkconfig.defaults Known Quirk
 
@@ -170,6 +180,35 @@ rm target/xtensa-esp32-espidf/release/build/esp-idf-sys-*/out/sdkconfig
 ```
 Then rebuild. The `sdkconfig.defaults` is applied as a *seed* (lower priority than existing
 sdkconfig), so deleting the cache is required for changes to take effect.
+
+## Partition CSV Build Ordering (Known Issue)
+
+`CONFIG_PARTITION_TABLE_CUSTOM_FILENAME` in `sdkconfig.defaults` is a relative path resolved
+against esp-idf-sys's `out/` directory (e.g. `C:\t\...\build\esp-idf-sys-<hash>\out\`).
+`build.rs` copies `partitions_ota.csv` there, but Cargo runs esp-idf-sys's build script
+**before** smsgate's — so on a fresh build the cmake ninja step tries to find the CSV before
+the copy has happened.
+
+**Normal builds (Cargo.lock pinned, no `cargo update`) are unaffected** — esp-idf-sys is cached
+and the copy runs cleanly on smsgate's build.rs.
+
+The failure only occurs the **first time** after `cargo update` bumps esp-idf-sys to a new
+version (new hash → new out dir → CSV missing). Symptom:
+```
+ninja: error: '…/esp-idf-sys-<hash>/out/partitions_ota.csv', needed by 'partition-table.bin', missing
+```
+
+**Recovery (Windows, `CARGO_TARGET_DIR=C:\t`):**
+```powershell
+Copy-Item partitions_ota.csv `
+  (Get-ChildItem C:\t\xtensa-esp32-espidf\release\build\esp-idf-sys-*\out | Select-Object -First 1).FullName
+```
+```bash
+# bash equivalent
+cp partitions_ota.csv C:/t/xtensa-esp32-espidf/release/build/esp-idf-sys-*/out/
+```
+Then re-run `cargo +esp build`. The copy is permanent for that esp-idf-sys hash; subsequent
+builds succeed automatically.
 
 ## Boot Sequence Timing
 
@@ -211,6 +250,6 @@ CMTI notifications for all stored SMS which can overflow the 256-byte UART Rx bu
 - `>=` / `<` on raw `u32` timestamps — use `elapsed_since()` / `is_past()` only
 - Literal WiFi password, bot token, or pin numbers anywhere in `src/`
 - Importing `im::telegram` (or any concrete backend) from `bridge/`, `commands/`, `sms/`, `persist/`
-- Adding a fifth NVS key without updating `rfc/0001-foundation.md §4.3`
+- Adding a fifth NVS key to `"smsgate"` without updating the Key Invariants section above
 - ASCII art diagrams in documentation — use Mermaid instead
 - Adding `+CREG:` back to `is_urc` without also enabling `AT+CREG=1` in modem init

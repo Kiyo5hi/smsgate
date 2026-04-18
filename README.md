@@ -63,24 +63,14 @@ locale = "zh"
 
 ## Architecture
 
-See [`rfc/0001-foundation.md`](rfc/0001-foundation.md) for the full design document.
-
 The system is built around four core traits. All business logic depends only on these abstractions:
 
 | Trait | Abstracts |
 |-------|-----------|
 | `ModemPort` | AT commands, URC polling, PDU SMS send |
-| `Messenger` | Send/poll IM messages (Telegram) |
+| `MessageSink` / `MessageSource` | Send/poll IM messages (Telegram) |
 | `Store` | NVS key-value persistence |
 | `Command` | Single bot command (name, description, handler) |
-
-## Design Documents
-
-| Document | Contents |
-|----------|---------|
-| [`rfc/0001-foundation.md`](rfc/0001-foundation.md) | Scope, architecture, trait design, decision log |
-| [`rfc/0002-agent-harness.md`](rfc/0002-agent-harness.md) | Agent infrastructure design |
-| [`rfc/0003-i18n-and-ui-strings.md`](rfc/0003-i18n-and-ui-strings.md) | i18n architecture and string catalogue |
 
 ## USB Driver
 

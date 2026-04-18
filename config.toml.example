@@ -2,6 +2,11 @@
 # SECURITY: config.toml is git-ignored. Never commit your real values.
 # A leaked bot_token lets anyone send commands to your device and trigger /send
 # from your SIM card. If leaked, revoke it immediately via @BotFather.
+#
+# ALTERNATIVE (no fork required): leave wifi/im/modem credentials blank here.
+# On first boot the device will prompt for credentials over the serial console.
+# Credentials are saved to NVS and survive reboots. To re-provision, erase NVS:
+#   espflash erase-region 0x9000 0x6000
 
 [wifi]
 ssid     = "YOUR_WIFI_SSID"

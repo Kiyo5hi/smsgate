@@ -68,7 +68,6 @@ fn send_sentinel_enqueues_sms() {
 #[test]
 fn send_sentinel_rate_limited_after_5() {
     let mut store = MemStore::new();
-    let mut messenger = RecordingMessenger::new();
     let router = ReplyRouter::new();
     let reg = make_registry();
     let log = LogRing::new();
@@ -76,6 +75,7 @@ fn send_sentinel_rate_limited_after_5() {
     let mut sender = SmsSender::new();
 
     // Send 5 — all succeed
+    let mut messenger;
     for i in 0..5u8 {
         messenger = RecordingMessenger::new();
         poll_and_dispatch(

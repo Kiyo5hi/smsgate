@@ -83,6 +83,32 @@ fn non_concat_pdu_returns_none() {
 }
 
 #[test]
+fn malformed_total_zero_discarded() {
+    let mut r = ConcatReassembler::new();
+    // concat_total=0 is invalid — must not create a group
+    let result = r.feed(&make_part("A", 1, 0, 1, "body"));
+    assert!(result.is_none());
+    assert_eq!(r.group_count(), 0, "malformed PDU must not consume a slot");
+}
+
+#[test]
+fn malformed_part_zero_discarded() {
+    let mut r = ConcatReassembler::new();
+    let result = r.feed(&make_part("A", 1, 3, 0, "body"));
+    assert!(result.is_none());
+    assert_eq!(r.group_count(), 0);
+}
+
+#[test]
+fn malformed_part_exceeds_total_discarded() {
+    let mut r = ConcatReassembler::new();
+    // part=5 but total=3 — invalid
+    let result = r.feed(&make_part("A", 1, 3, 5, "body"));
+    assert!(result.is_none());
+    assert_eq!(r.group_count(), 0);
+}
+
+#[test]
 fn max_groups_evicts_oldest() {
     let mut r = ConcatReassembler::new();
     // Fill up 8 groups (max capacity)

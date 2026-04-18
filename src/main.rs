@@ -18,6 +18,7 @@ use smsgate::{
         CommandRegistry,
     },
     config::Config,
+    creds::RuntimeCreds,
     im::{
         MessageSink, MessageSource,
         fanout::FanoutSink,
@@ -36,6 +37,12 @@ fn main() {
     panic!("This binary requires the esp32 feature");
 }
 
+/// Lock a `Mutex`, recovering from a poisoned state rather than panicking.
+#[cfg(feature = "esp32")]
+macro_rules! lock {
+    ($m:expr) => { $m.lock().unwrap_or_else(|e| e.into_inner()) };
+}
+
 #[cfg(feature = "esp32")]
 fn main() {
     esp_idf_sys::link_patches();
@@ -49,8 +56,16 @@ fn main() {
     board.init(&mut peripherals).expect("board init failed");
     let modem = board.build_modem_port(&mut peripherals).expect("modem init failed");
 
-    // ---- NVS store (RFC-0025: fall back to MemStore on NVS failure) ----
+    // ---- NVS store (fall back to MemStore on NVS failure) ----
     let nvs_partition = esp_idf_svc::nvs::EspDefaultNvsPartition::take().unwrap();
+
+    // ---- Runtime credentials (NVS "smsgcfg" > compile-time defaults) ----
+    let creds = RuntimeCreds::load(&nvs_partition);
+    if !creds.is_provisioned() {
+        log::warn!("[main] not provisioned — entering serial setup");
+        serial_provision(&nvs_partition);
+    }
+
     let nvs_failed: bool;
     let mut store: Box<dyn smsgate::persist::Store> = match NvsStore::new(nvs_partition) {
         Ok(nvs) => {
@@ -78,16 +93,16 @@ fn main() {
     };
     let mut wifi = esp_idf_svc::wifi::BlockingWifi::wrap(wifi_inner, sysloop.clone())
         .expect("WiFi wrap failed");
-    let wifi_ok = setup_wifi(&mut wifi).is_ok();
+    let wifi_ok = setup_wifi(&mut wifi, &creds.wifi_ssid, &creds.wifi_pass).is_ok();
     if !wifi_ok {
         log::warn!("[wifi] failed after retries");
-        if Config::CELLULAR_FALLBACK && !Config::MODEM_APN.is_empty() {
+        if Config::CELLULAR_FALLBACK && !creds.apn.is_empty() {
             log::info!("[main] cellular fallback: attaching PDP context");
             qhttp::attach_pdp(
-                &mut *modem.lock().unwrap(),
-                Config::MODEM_APN,
-                Config::MODEM_APN_USER,
-                Config::MODEM_APN_PASS,
+                &mut *lock!(modem),
+                &creds.apn,
+                &creds.apn_user,
+                &creds.apn_pass,
             ).expect("PDP attach failed");
         } else {
             panic!(
@@ -99,9 +114,13 @@ fn main() {
 
     // ---- IM (Telegram as primary) ----
     let mut tg_messenger = if wifi_ok {
-        TelegramMessenger::new_wifi(TelegramHttpClient::new(None).expect("TLS init failed"))
+        TelegramMessenger::new_wifi(
+            TelegramHttpClient::new(None).expect("TLS init failed"),
+            creds.bot_token.clone(),
+            creds.chat_id,
+        )
     } else {
-        TelegramMessenger::new_modem(modem.clone())
+        TelegramMessenger::new_modem(modem.clone(), creds.bot_token.clone(), creds.chat_id)
     };
 
     // ---- Subsystems ----
@@ -143,22 +162,22 @@ fn main() {
     log::info!("[main] fanout: {} sink(s) configured", sinks.len());
     let mut messenger = FanoutSink::new(sinks);
 
-    // RFC-0025: alert if NVS failed (now that we have a messenger)
+    // Alert if NVS init failed (now that we have a messenger to send the notification)
     if nvs_failed {
         let _ = messenger.send_message(smsgate::i18n::nvs_fail());
     }
 
-    // ---- Sweep existing SMS from SIM on boot ----
-    // Sweep both SM (SIM) and ME (device flash) in case SMS arrived before
-    // CPMS was explicitly configured. Normal operation after init stores in ME.
+    // ---- Sweep existing SMS from ME (device flash) on boot ----
+    // Only ME is swept: on T-A7670X, AT+CPMS="SM","SM","SM" floods the UART
+    // buffer with CMTI notifications for every stored SIM message, which
+    // corrupts the subsequent AT+CMGL=4 response for both SM and ME.
+    // Normal operation stores all SMS in ME anyway (+CMTI always says "ME").
     {
-        let mut md = modem.lock().unwrap();
-        for mem in &["SM", "ME"] {
-            let _ = md.send_at(&format!("+CPMS=\"{}\",\"{}\",\"{}\"", mem, mem, mem));
-            log::info!("[main] sweeping {} storage…", mem);
-            sweep_one_storage(mem, &mut *md, &mut router, &mut log, &mut concat,
-                              &mut messenger, &mut *store);
-        }
+        let mut md = lock!(modem);
+        let _ = md.send_at("+CPMS=\"ME\",\"ME\",\"ME\"");
+        log::info!("[main] sweeping ME storage…");
+        sweep_one_storage("ME", &mut *md, &mut router, &mut log, &mut concat,
+                          &mut messenger, &mut *store);
     }
 
     // ---- OTA auto-confirm ----
@@ -172,7 +191,7 @@ fn main() {
     log::info!("smsgate ready");
     let _ = messenger.send_message(smsgate::i18n::started());
 
-    // Subscribe main task to the Task WDT (RFC-0001 §4.4: 120s timeout).
+    // Subscribe main task to the Task WDT (120s timeout).
     // The WDT fires if esp_task_wdt_reset() is not called within the timeout.
     unsafe { esp_idf_sys::esp_task_wdt_add(std::ptr::null_mut()); }
 
@@ -184,19 +203,22 @@ fn main() {
     let (tg_tx, tg_rx) =
         std::sync::mpsc::channel::<Vec<smsgate::im::InboundMessage>>();
     let modem_tg = modem.clone();
-    let wifi_ok_poll = wifi_ok;
+    let tg_token_poll = creds.bot_token.clone();
+    let tg_chat_id_poll = creds.chat_id;
     std::thread::Builder::new()
         .name("tg-poll".into())
         .stack_size(16 * 1024)
         .spawn(move || {
-            let mut poll_messenger = if wifi_ok_poll {
+            let mut poll_messenger = if wifi_ok {
                 TelegramMessenger::new_wifi(
                     TelegramHttpClient::new(None).expect("tg-poll: TLS init failed"),
+                    tg_token_poll,
+                    tg_chat_id_poll,
                 )
             } else {
-                TelegramMessenger::new_modem(modem_tg)
+                TelegramMessenger::new_modem(modem_tg, tg_token_poll, tg_chat_id_poll)
             };
-            let poll_secs = if wifi_ok_poll {
+            let poll_secs = if wifi_ok {
                 (Config::POLL_INTERVAL_MS / 1000).max(1)
             } else {
                 5u32
@@ -236,7 +258,7 @@ fn main() {
     let mut consecutive_failures: u8 = 0;
     let mut last_status_update = now_ms();
     let mut pause_until: Option<std::time::Instant> = None;
-    let mut wifi_info = fmt_wifi(wifi_ok, None);
+    let mut wifi_info = fmt_wifi(wifi_ok, None, &creds.wifi_ssid);
     let mut last_tg_activity = std::time::Instant::now();
     let mut tg_stale_alerted = false;
     let mut low_signal_alerted = false;
@@ -250,7 +272,7 @@ fn main() {
         let now = now_ms();
         let uptime_ms = elapsed_since(boot_ms, now);
 
-        // Kick the hardware watchdog (RFC-0001 §4.4)
+        // Kick the hardware watchdog
         unsafe { esp_idf_sys::esp_task_wdt_reset(); }
 
         // Auto-resume after timed /pause
@@ -267,7 +289,7 @@ fn main() {
         // Skip while cmt_pdu_pending: send_at() drains the UART buffer and would
         // consume the PDU line that belongs to the pending +CMT delivery.
         if elapsed_since(last_status_update, now) > 30_000 && !cmt_pdu_pending {
-            modem_status = modem.lock().unwrap().update_status();
+            modem_status = lock!(modem).update_status();
             last_status_update = now;
 
             // Refresh WiFi RSSI
@@ -283,7 +305,7 @@ fn main() {
             } else {
                 None
             };
-            wifi_info = fmt_wifi(wifi_ok, rssi);
+            wifi_info = fmt_wifi(wifi_ok, rssi, &creds.wifi_ssid);
 
             // Low-heap alert
             check_low_heap(&mut messenger);
@@ -324,7 +346,7 @@ fn main() {
 
         // Poll URCs (non-blocking); hold one lock for URC + tick (avoid nested lock with tg thread).
         {
-            let mut md = modem.lock().unwrap();
+            let mut md = lock!(modem);
             while let Some(urc) = md.poll_urc() {
                 log::info!("[main] URC: {:?}", urc);
 
@@ -389,8 +411,11 @@ fn main() {
                 Ok((restart, maybe_pause, ota_action)) => {
                     consecutive_failures = 0;
                     if let Some(mins) = maybe_pause {
+                        // Cap at 1 week to prevent Duration overflow on pathological input.
+                        const MAX_PAUSE_MINS: u64 = 7 * 24 * 60;
+                        let secs = (mins as u64).min(MAX_PAUSE_MINS) * 60;
                         pause_until = Some(std::time::Instant::now()
-                            + std::time::Duration::from_secs(mins as u64 * 60));
+                            + std::time::Duration::from_secs(secs));
                         log::info!("[main] pause timer set for {} min", mins);
                     }
                     match ota_action {
@@ -443,7 +468,7 @@ fn main() {
         }
 
         let drain = {
-            let mut md = modem.lock().unwrap();
+            let mut md = lock!(modem);
             sender.drain_once(&mut *md)
         };
 
@@ -482,13 +507,13 @@ fn build_registry(help_text: &str) -> CommandRegistry {
 }
 
 #[cfg(feature = "esp32")]
-fn fmt_wifi(wifi_ok: bool, rssi: Option<i32>) -> String {
+fn fmt_wifi(wifi_ok: bool, rssi: Option<i32>, ssid: &str) -> String {
     if !wifi_ok {
         return "cellular (Telegram via modem)".to_string();
     }
     match rssi {
-        Some(r) => format!("{} ({} dBm)", smsgate::config::Config::WIFI_SSID, r),
-        None    => format!("{} (--)", smsgate::config::Config::WIFI_SSID),
+        Some(r) => format!("{} ({} dBm)", ssid, r),
+        None    => format!("{} (--)", ssid),
     }
 }
 
@@ -512,14 +537,15 @@ fn check_low_heap(messenger: &mut dyn smsgate::im::MessageSink) {
 #[cfg(feature = "esp32")]
 fn setup_wifi(
     wifi: &mut esp_idf_svc::wifi::BlockingWifi<esp_idf_svc::wifi::EspWifi<'static>>,
+    ssid: &str,
+    pass: &str,
 ) -> anyhow::Result<()> {
     use esp_idf_svc::wifi::{AuthMethod, ClientConfiguration, Configuration};
-    use smsgate::config::Config;
     use std::time::Duration;
 
     let config = Configuration::Client(ClientConfiguration {
-        ssid: Config::WIFI_SSID.try_into().map_err(|_| anyhow::anyhow!("SSID too long"))?,
-        password: Config::WIFI_PASSWORD.try_into().map_err(|_| anyhow::anyhow!("Password too long"))?,
+        ssid: ssid.try_into().map_err(|_| anyhow::anyhow!("SSID too long"))?,
+        password: pass.try_into().map_err(|_| anyhow::anyhow!("Password too long"))?,
         auth_method: AuthMethod::WPA2Personal,
         ..Default::default()
     });
@@ -558,4 +584,49 @@ fn parse_sink_config() -> Vec<SinkCfg> {
             url: v.get("url")?.as_str()?.to_string(),
         })
     }).collect()
+}
+
+/// Interactive serial setup on first boot (or after NVS erase).
+/// Prompts for credentials over the serial console, writes them to NVS,
+/// then reboots so the device starts normally with the new credentials.
+/// Never returns.
+#[cfg(feature = "esp32")]
+fn serial_provision(nvs_partition: &esp_idf_svc::nvs::EspDefaultNvsPartition) -> ! {
+    use std::io::BufRead;
+
+    println!("\n\n=== smsgate first-boot setup ===");
+    println!("Enter each field and press Enter. Leave blank to accept the compile-time default (if any).\n");
+
+    let read = || -> String {
+        let mut s = String::new();
+        std::io::stdin().lock().read_line(&mut s).ok();
+        s.trim().to_string()
+    };
+
+    println!("WiFi SSID:");
+    let wifi_ssid = read();
+    println!("WiFi Password:");
+    let wifi_pass = read();
+    println!("Telegram Bot Token:");
+    let bot_token = read();
+    println!("Telegram Chat ID (integer):");
+    let chat_id_str = read();
+    let chat_id: i64 = chat_id_str.parse().unwrap_or(0);
+    println!("APN (leave blank if not using cellular fallback):");
+    let apn = read();
+    println!("APN Username (leave blank if none):");
+    let apn_user = read();
+    println!("APN Password (leave blank if none):");
+    let apn_pass = read();
+
+    let creds = smsgate::creds::RuntimeCreds { wifi_ssid, wifi_pass, bot_token, chat_id, apn, apn_user, apn_pass };
+
+    if creds.save(nvs_partition) {
+        println!("\nCredentials saved. Rebooting…");
+    } else {
+        println!("\nERROR: NVS write failed. Rebooting — please try again.");
+    }
+
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    esp_idf_hal::reset::restart();
 }

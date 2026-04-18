@@ -15,6 +15,10 @@ const CHUNK_BUF: usize = 4096;
 const READ_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 #[cfg(feature = "esp32")]
 const MAX_REDIRECTS: u8 = 3;
+/// Maximum bytes buffered while reading HTTP response headers.
+/// Prevents OOM if a server sends a pathologically large header block.
+#[cfg(feature = "esp32")]
+const MAX_HEADER_BUF: usize = 8 * 1024;
 
 #[derive(Debug)]
 pub enum OtaError {
@@ -251,19 +255,22 @@ fn read_headers(
             return Err(OtaError::Http("connection closed before headers".into()));
         }
         raw.extend_from_slice(&buf[..n]);
+        if raw.len() > MAX_HEADER_BUF {
+            return Err(OtaError::Http("response headers too large".into()));
+        }
         if let Some(pos) = find_header_end(&raw) {
-            let header_str = String::from_utf8_lossy(&raw[..pos]).to_string();
+            let header_str = String::from_utf8_lossy(&raw[..pos]);
             let remainder = raw[pos + 4..].to_vec(); // skip \r\n\r\n
 
             let status = parse_status(&header_str)?;
             let content_length = header_str
                 .lines()
-                .find(|l| l.to_lowercase().starts_with("content-length:"))
+                .find(|l| l.get(..15).is_some_and(|p| p.eq_ignore_ascii_case("content-length:")))
                 .and_then(|l| l.splitn(2, ':').nth(1))
                 .and_then(|v| v.trim().parse().ok());
             let location = header_str
                 .lines()
-                .find(|l| l.to_lowercase().starts_with("location:"))
+                .find(|l| l.get(..9).is_some_and(|p| p.eq_ignore_ascii_case("location:")))
                 .and_then(|l| l.splitn(2, ':').nth(1))
                 .map(|v| v.trim().to_string());
 

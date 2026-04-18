@@ -7,8 +7,6 @@ pub mod types;
 #[cfg(feature = "esp32")]
 use super::{InboundMessage, MessageId, MessageSink, MessageSource, MessengerError};
 #[cfg(feature = "esp32")]
-use crate::config::Config;
-#[cfg(feature = "esp32")]
 use crate::modem::ModemPort;
 #[cfg(feature = "esp32")]
 use http::TelegramHttpClient;
@@ -33,26 +31,22 @@ pub struct TelegramMessenger {
 
 #[cfg(feature = "esp32")]
 impl TelegramMessenger {
-    pub fn new_wifi(http: TelegramHttpClient) -> Self {
+    pub fn new_wifi(http: TelegramHttpClient, token: String, chat_id: i64) -> Self {
         TelegramMessenger {
             transport: Transport::Wifi(http),
-            chat_id: Config::CHAT_ID,
-            token: Config::BOT_TOKEN.to_string(),
+            chat_id,
+            token,
         }
     }
 
     /// IM over the modem's built-in HTTP stack (cellular PDP).
     /// Use a short `timeout_sec` in `poll` — the UART is shared with SMS.
-    pub fn new_modem(modem: Arc<Mutex<dyn ModemPort + Send>>) -> Self {
+    pub fn new_modem(modem: Arc<Mutex<dyn ModemPort + Send>>, token: String, chat_id: i64) -> Self {
         TelegramMessenger {
             transport: Transport::Modem(modem),
-            chat_id: Config::CHAT_ID,
-            token: Config::BOT_TOKEN.to_string(),
+            chat_id,
+            token,
         }
-    }
-
-    pub fn new(http: TelegramHttpClient) -> Self {
-        Self::new_wifi(http)
     }
 
     fn post_json(&mut self, method: &str, body: &str) -> Result<String, MessengerError> {
