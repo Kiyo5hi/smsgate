@@ -5,7 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 ESP32 firmware in Rust — bridges SMS and IM (Telegram and others); two-way forwarding.
-Hardware: LilyGo T-A7670X (ESP32 + A7670G modem, CH9102 USB bridge).
+Designed to support any ESP32 board paired with an AT-command cellular modem via the `Board` trait.
+Reference hardware: LilyGo T-A7670X (A7670G modem, CH9102 USB bridge).
 This branch (`main`) is hardware-tested and boots to working state on real hardware.
 
 ## Commands
@@ -212,7 +213,7 @@ builds succeed automatically.
 
 ## Boot Sequence Timing
 
-Expected boot log milestones on T-A7670X cold start:
+Milestones below are for the reference board (T-A7670X) on a cold start; exact timings vary by board and modem:
 - `t≈645ms`: smsgate starting
 - `t≈3545ms`: RESET_PIN configured
 - `t≈6745ms`: Board power-on sequence complete (modem booted)
@@ -236,9 +237,9 @@ registration checks would always return `false`. Do not add them back to `is_urc
 **`AT+CNMI=2,1,0,0,0`** (store + `+CMTI` notify) is the required setting. The alternative
 `mt=2` (direct `+CMT` delivery) requires two-line URC parsing that is not implemented.
 
-**`AT+CPMS` and storage memory**: On the T-A7670X hardware, `AT+CPMS?` returns `+CMS ERROR`
-(the SIM doesn't support SMS management queries). The modem defaults to `"ME"` (device flash)
-for all three memory slots. `+CMTI` notifications will say `+CMTI: "ME",<index>`. The modem
+**`AT+CPMS` and storage memory**: Some modems (e.g. A7670G on T-A7670X) return `+CMS ERROR`
+to `AT+CPMS?` because the SIM doesn't support SMS management queries. When that happens the
+modem defaults to `"ME"` (device flash) for all three memory slots. `+CMTI` notifications will say `+CMTI: "ME",<index>`. The modem
 driver passes the memory name through `Urc::NewSms { mem, index }` and calls `AT+CPMS=<mem>`
 before each `AT+CMGR` to guarantee the read uses the correct storage. SMS is deleted only after
 a successful Telegram forward — if `forward_sms` fails the slot stays occupied and sweep on
