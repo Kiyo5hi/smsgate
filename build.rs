@@ -129,7 +129,11 @@ fn emit_git_commit() {
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|| "unknown".to_string());
     println!("cargo:rustc-env=CFG_GIT_COMMIT={}", commit);
+    // Rerun on branch switch (.git/HEAD) or new commit on current branch
+    // (.git/refs/heads/<branch> or .git/packed-refs after gc).
     println!("cargo:rerun-if-changed=.git/HEAD");
+    println!("cargo:rerun-if-changed=.git/refs/heads/main");
+    println!("cargo:rerun-if-changed=.git/packed-refs");
 }
 
 fn emit_empty_defaults() {
