@@ -51,19 +51,33 @@ impl A76xxModem {
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
 
-        let cmds = [
-            "E0",              // echo off
-            "+CMGF=0",         // PDU mode
-            "+CNMI=2,1,0,0,0", // store SMS in modem memory, notify via +CMTI: <mem>,<idx>
-            "+CLIP=1",         // caller-line identification
-        ];
-        for cmd in &cmds {
+        for cmd in &["E0", "+CMGF=0", "+CLIP=1"] {
             let r = self.send_at(cmd)?;
             if r.ok {
                 log::info!("[a76xx] init AT{} OK", cmd);
             } else {
                 log::warn!("[a76xx] init AT{} ERROR: {}", cmd, r.body.trim());
             }
+        }
+
+        // AT+CNMI=2,1,0,0,0 must succeed for +CMTI notifications to work.
+        // On warm reboot the modem resets and its SMS subsystem may not be ready
+        // when the AT probe first succeeds. Retry until accepted (up to 30 s).
+        let cnmi_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            match self.send_at("+CNMI=2,1,0,0,0") {
+                Ok(r) if r.ok => {
+                    log::info!("[a76xx] CNMI set OK");
+                    break;
+                }
+                Ok(r) => log::warn!("[a76xx] CNMI ERROR: {} — retrying", r.body.trim()),
+                Err(e) => log::warn!("[a76xx] CNMI timeout: {} — retrying", e),
+            }
+            if std::time::Instant::now() > cnmi_deadline {
+                log::error!("[a76xx] CNMI never accepted after 30 s — SMS notifications may not work");
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(2));
         }
 
         // Verify CNMI setting was accepted

@@ -110,7 +110,7 @@ fn main() {
             );
         }
     }
-    let _wifi = wifi; // keep WiFi driver alive
+    let mut wifi = wifi; // keep WiFi driver alive; also used for reconnect on drop
 
     // ---- IM (Telegram as primary) ----
     let mut tg_messenger = if wifi_ok {
@@ -166,6 +166,12 @@ fn main() {
     if nvs_failed {
         let _ = messenger.send_message(smsgate::i18n::nvs_fail());
     }
+
+    // /pause is a transient, timer-driven state. The resume timer lives in RAM
+    // only — a reboot (crash, OTA, /restart, power cycle) loses it. Clear the
+    // flag here so forwarding is always enabled at startup; a deliberate
+    // long-term pause should be re-issued after reboot if still needed.
+    let _ = smsgate::persist::save_bool(&mut *store, smsgate::persist::keys::FWD_ENABLED, true);
 
     // ---- Sweep existing SMS from ME (device flash) on boot ----
     // Only ME is swept: on T-A7670X, AT+CPMS="SM","SM","SM" floods the UART
@@ -226,7 +232,11 @@ fn main() {
             let mut cursor = initial_cursor;
             const HEARTBEAT_INTERVAL: u8 = 20;
             let mut heartbeat_counter: u8 = 0;
+            // Subscribe this thread to the Task WDT (same 120 s timeout as main).
+            // If poll() hangs indefinitely the WDT fires and reboots the device.
+            unsafe { esp_idf_sys::esp_task_wdt_add(std::ptr::null_mut()); }
             loop {
+                unsafe { esp_idf_sys::esp_task_wdt_reset(); }
                 match poll_messenger.poll(cursor, poll_secs) {
                     Ok(msgs) if !msgs.is_empty() => {
                         heartbeat_counter = 0;
@@ -332,6 +342,20 @@ fn main() {
             }
             if !modem_status.operator.is_empty() {
                 last_operator.clone_from(&modem_status.operator);
+            }
+
+            // WiFi watchdog: reconnect if the station lost its association.
+            // This is the primary recovery path for "device alive but Telegram dead"
+            // after a router reboot or DHCP expiry.  Only attempted in WiFi mode;
+            // in cellular fallback mode wifi_ok is false and wifi is not used.
+            if wifi_ok && !wifi.is_connected().unwrap_or(false) {
+                log::warn!("[wifi] disconnected — reconnecting");
+                let reconnected = reconnect_wifi(&mut wifi);
+                if reconnected {
+                    log::info!("[wifi] reconnected OK");
+                } else {
+                    log::error!("[wifi] reconnect failed — will retry next cycle");
+                }
             }
 
             const POLL_STALE_SECS: u64 = 300;
@@ -584,6 +608,30 @@ fn parse_sink_config() -> Vec<SinkCfg> {
             url: v.get("url")?.as_str()?.to_string(),
         })
     }).collect()
+}
+
+/// Reconnect an already-started BlockingWifi that has lost its AP association.
+/// Does not call start() or set_configuration() — assumes the driver is already
+/// running with the correct config from the initial setup_wifi() call.
+#[cfg(feature = "esp32")]
+fn reconnect_wifi(
+    wifi: &mut esp_idf_svc::wifi::BlockingWifi<esp_idf_svc::wifi::EspWifi<'static>>,
+) -> bool {
+    use std::time::Duration;
+    let _ = wifi.disconnect();
+    std::thread::sleep(Duration::from_secs(1));
+    for attempt in 1u32..=5 {
+        if wifi.connect().is_ok() && wifi.wait_netif_up().is_ok() {
+            log::info!("[wifi] reconnect OK (attempt {})", attempt);
+            return true;
+        }
+        log::warn!("[wifi] reconnect attempt {}/5 failed", attempt);
+        let _ = wifi.disconnect();
+        if attempt < 5 {
+            std::thread::sleep(Duration::from_secs(3));
+        }
+    }
+    false
 }
 
 /// Interactive serial setup on first boot (or after NVS erase).

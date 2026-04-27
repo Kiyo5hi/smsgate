@@ -1,6 +1,6 @@
 //! HTTPS client for Telegram API over ESP-IDF TLS.
 
-use esp_idf_svc::tls::{EspTls, InternalSocket, X509};
+use esp_idf_svc::tls::{EspTls, InternalSocket, KeepAliveConfig, X509};
 use std::time::Duration;
 
 const HOST: &str = "api.telegram.org";
@@ -17,6 +17,12 @@ impl TelegramHttpClient {
     pub fn new(ca_bundle: Option<&'static [u8]>) -> anyhow::Result<Self> {
         let conf = esp_idf_svc::tls::Config {
             ca_cert: ca_bundle.map(|b| X509::pem_until_nul(b)),
+            keep_alive_cfg: Some(KeepAliveConfig {
+                enable: true,
+                idle: std::time::Duration::from_secs(60),
+                interval: std::time::Duration::from_secs(10),
+                count: 5,
+            }),
             ..Default::default()
         };
         let mut tls = EspTls::new()?;
@@ -97,7 +103,15 @@ impl TelegramHttpClient {
     }
 
     fn reconnect(&mut self) -> anyhow::Result<()> {
-        let conf = esp_idf_svc::tls::Config::default();
+        let conf = esp_idf_svc::tls::Config {
+            keep_alive_cfg: Some(KeepAliveConfig {
+                enable: true,
+                idle: std::time::Duration::from_secs(60),
+                interval: std::time::Duration::from_secs(10),
+                count: 5,
+            }),
+            ..Default::default()
+        };
         let mut tls = EspTls::new()?;
         tls.connect(HOST, PORT, &conf)?;
         self.tls = tls;
