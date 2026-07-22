@@ -25,7 +25,7 @@ use smsgate::{
         },
         MessageSink, MessageSource,
     },
-    log_clock::LogClock,
+    log_clock::{LogClock, NetworkDateTime},
     log_ring::LogRing,
     modem::{
         a76xx::qhttp,
@@ -133,6 +133,20 @@ fn main() {
         }
     }
     let mut wifi = wifi; // keep WiFi driver alive; also used for reconnect on drop
+    let _sntp = if wifi_ok {
+        match esp_idf_svc::sntp::EspSntp::new_default() {
+            Ok(sntp) => {
+                log::info!("[time] SNTP initialized");
+                Some(sntp)
+            }
+            Err(e) => {
+                log::warn!("[time] SNTP init failed: {}", e);
+                None
+            }
+        }
+    } else {
+        None
+    };
 
     // ---- IM (Telegram as primary) ----
     let trusted_chat_ids = parse_trusted_chat_ids();
@@ -166,7 +180,10 @@ fn main() {
         }
     };
     let mut log_clock = LogClock::new();
-    if let Ok(time) = lock!(modem).query_network_time() {
+    if let Some(time) = current_system_time_utc() {
+        log_clock.sync_from_network(boot_started.elapsed().as_millis() as u32, time);
+        log::info!("[log] clock synchronized from SNTP: {}", time.format());
+    } else if let Ok(time) = lock!(modem).query_network_time() {
         log_clock.sync_from_network(boot_started.elapsed().as_millis() as u32, time);
         log::info!("[log] clock synchronized from modem: {}", time.format());
     } else {
@@ -411,6 +428,8 @@ fn main() {
     let mut tg_stale_alerted = false;
     let mut low_signal_alerted = false;
     let mut last_operator = String::new();
+    const CLOCK_SYNC_RETRY_MS: u32 = 60_000;
+    let mut last_clock_sync_attempt = now_ms().wrapping_sub(CLOCK_SYNC_RETRY_MS);
     // +CMT direct delivery is two lines: header then raw PDU hex.
     // This flag is set when the header arrives so the next poll_urc() line
     // is treated as the PDU rather than a new URC.
@@ -510,6 +529,31 @@ fn main() {
             }
             if !modem_status.operator.is_empty() {
                 last_operator.clone_from(&modem_status.operator);
+            }
+
+            // Modem network time is often unavailable during early boot. Keep
+            // retrying after registration so runtime log entries get wall time.
+            if !log_clock.is_synced() {
+                if let Some(time) = current_system_time_utc() {
+                    log_clock.sync_from_network(u32::try_from(uptime_ms).unwrap_or(u32::MAX), time);
+                    log::info!("[log] clock synchronized from SNTP: {}", time.format());
+                } else if modem_status.registered
+                    && elapsed_since(last_clock_sync_attempt, now) >= CLOCK_SYNC_RETRY_MS
+                {
+                    last_clock_sync_attempt = now;
+                    match lock!(modem).query_network_time() {
+                        Ok(time) => {
+                            log_clock.sync_from_network(
+                                u32::try_from(uptime_ms).unwrap_or(u32::MAX),
+                                time,
+                            );
+                            log::info!("[log] clock synchronized from modem: {}", time.format());
+                        }
+                        Err(e) => {
+                            log::warn!("[log] modem clock still unavailable: {}", e);
+                        }
+                    }
+                }
             }
 
             // WiFi watchdog: reconnect if the station lost its association.
@@ -897,6 +941,21 @@ fn fmt_wifi(wifi_ok: bool, rssi: Option<i32>, ssid: &str) -> String {
 #[cfg(feature = "esp32")]
 fn now_ms() -> u32 {
     (esp_idf_svc::systime::EspSystemTime.now().as_millis() & 0xFFFF_FFFF) as u32
+}
+
+#[cfg(feature = "esp32")]
+fn current_system_time_utc() -> Option<NetworkDateTime> {
+    const MIN_VALID_UNIX_SECONDS: u64 = 1_704_067_200; // 2024-01-01T00:00:00Z
+    let seconds = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_secs();
+    if seconds < MIN_VALID_UNIX_SECONDS {
+        return None;
+    }
+    Some(NetworkDateTime::from_unix_seconds_utc(
+        i64::try_from(seconds).ok()?,
+    ))
 }
 
 #[cfg(feature = "esp32")]

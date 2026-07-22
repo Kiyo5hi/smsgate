@@ -2,7 +2,7 @@
 
 use smsgate::commands::{builtin::*, Command, CommandContext, CommandRegistry};
 use smsgate::i18n;
-use smsgate::log_ring::{LogEntry, LogRing};
+use smsgate::log_ring::{LogEntry, LogKind, LogRing};
 use smsgate::modem::ModemStatus;
 use smsgate::persist::{keys, mem::MemStore, save_bool};
 use smsgate::sms::sender::SmsSender;
@@ -114,6 +114,30 @@ fn status_command_shows_uptime() {
     );
     assert!(result.contains("China Mobile"));
     assert!(result.contains(i18n::status_reg_ok()));
+}
+
+#[test]
+fn status_command_shows_latest_sms_not_latest_event() {
+    let store = MemStore::new();
+    let status = ModemStatus::default();
+    let mut log = LogRing::new();
+    log.push(LogEntry::sms(
+        "+12138464205".into(),
+        "hello".into(),
+        "2026-07-21 22:00:00-07:00".into(),
+        true,
+    ));
+    log.push(LogEntry::runtime(
+        LogKind::User,
+        "8024680950",
+        "/status",
+        "0000-01-01 00:06:49".into(),
+        true,
+    ));
+    let queue = SmsSender::new();
+    let result = StatusCommand.handle("", &ctx(&store, &status, &log, &queue));
+    assert!(result.contains("+12138464205"), "status: {}", result);
+    assert!(!result.contains("8024680950"), "status: {}", result);
 }
 
 #[test]

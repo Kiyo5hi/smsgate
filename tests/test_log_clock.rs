@@ -1,4 +1,4 @@
-use smsgate::log_clock::{parse_cclk_time, LogClock};
+use smsgate::log_clock::{parse_cclk_time, LogClock, NetworkDateTime};
 
 #[test]
 fn parses_simcom_cclk_timezone_quarters() {
@@ -12,6 +12,12 @@ fn rejects_stale_or_invalid_network_clock() {
     assert!(parse_cclk_time("+CCLK: \"20/01/01,00:00:00+00\"").is_none());
     assert!(parse_cclk_time("+CCLK: \"70/01/01,00:00:00+00\"").is_none());
     assert!(parse_cclk_time("+CCLK: \"26/13/01,00:00:00+00\"").is_none());
+}
+
+#[test]
+fn builds_utc_time_from_unix_seconds() {
+    let time = NetworkDateTime::from_unix_seconds_utc(0);
+    assert_eq!(time.format(), "1970-01-01 00:00:00+00:00");
 }
 
 #[test]

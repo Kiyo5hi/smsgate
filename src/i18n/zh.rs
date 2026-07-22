@@ -138,7 +138,7 @@ pub fn format_status(
         String::new()
     };
     let last_line = match last_sms {
-        Some((sender, ts)) => format!("📩 最近：{}（{}）\n", sender, ts),
+        Some((sender, ts)) => format!("📩 最近短信：{}（{}）\n", sender, ts),
         None => String::new(),
     };
     format!(
@@ -313,7 +313,7 @@ pub fn desc_send() -> &'static str {
     "发送短信：/send <号码> <内容>"
 }
 pub fn desc_log() -> &'static str {
-    "最近 N 条事件记录（默认 10）"
+    "分页查看事件记录"
 }
 pub fn desc_block() -> &'static str {
     "屏蔽号码"

@@ -14,6 +14,10 @@ pub struct NetworkDateTime {
 }
 
 impl NetworkDateTime {
+    pub fn from_unix_seconds_utc(seconds: i64) -> Self {
+        Self::from_local_seconds(seconds, 0)
+    }
+
     pub fn format(&self) -> String {
         format_datetime(
             self.year as i32,

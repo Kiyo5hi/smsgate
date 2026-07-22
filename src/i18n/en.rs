@@ -317,7 +317,7 @@ pub fn desc_send() -> &'static str {
     "Send an SMS: /send <number> <text>"
 }
 pub fn desc_log() -> &'static str {
-    "Last N runtime events (default 10)"
+    "Page through runtime events"
 }
 pub fn desc_block() -> &'static str {
     "Block SMS from a number"

@@ -58,7 +58,7 @@ impl A76xxModem {
         }
         sim::ensure_sim_unlocked(self, sim_pin)?;
 
-        for cmd in &["+CMGF=0", "+CLIP=1"] {
+        for cmd in &["+CMGF=0", "+CLIP=1", "+CTZU=1", "+CTZR=1"] {
             let r = self.send_at(cmd)?;
             if r.ok {
                 log::info!("[a76xx] init AT{} OK", cmd);

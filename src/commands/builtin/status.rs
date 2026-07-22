@@ -1,4 +1,5 @@
 use crate::commands::{Command, CommandContext};
+use crate::log_ring::{LogEntry, LogKind, LogRing, LOG_PAGE_SIZE};
 use crate::modem::CSQ_UNKNOWN;
 
 pub struct StatusCommand;
@@ -34,9 +35,9 @@ impl Command for StatusCommand {
             crate::persist::load_bool(ctx.store, crate::persist::keys::FWD_ENABLED).unwrap_or(true);
         let free_heap_kb = ctx.free_heap_bytes / 1024;
 
-        let last = ctx.log_ring.last_n(1);
-        let last_sms = last
-            .first()
+        let latest_sms = latest_sms_entry(ctx.log_ring);
+        let last_sms = latest_sms
+            .as_ref()
             .map(|e| (e.sender.as_str(), e.timestamp.as_str()));
 
         let mut out = crate::i18n::format_status(
@@ -57,6 +58,28 @@ impl Command for StatusCommand {
         ));
         out
     }
+}
+
+fn latest_sms_entry(log: &LogRing) -> Option<LogEntry> {
+    let total = log.len();
+    let mut offset = 0;
+    while offset < total {
+        let entries = match log.page(offset, LOG_PAGE_SIZE) {
+            Ok(entries) => entries,
+            Err(e) => {
+                log::warn!("[status] log read failed: {}", e);
+                return None;
+            }
+        };
+        if entries.is_empty() {
+            return None;
+        }
+        if let Some(entry) = entries.into_iter().find(|e| e.kind == LogKind::Sms) {
+            return Some(entry);
+        }
+        offset = offset.saturating_add(LOG_PAGE_SIZE);
+    }
+    None
 }
 
 fn format_uptime(total_seconds: u64) -> String {
