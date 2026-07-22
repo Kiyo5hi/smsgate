@@ -16,9 +16,13 @@ password = "YOUR_WIFI_PASSWORD"  # DO NOT COMMIT
 backend   = "telegram"
 bot_token = "123456:ABC-DEF..."  # DO NOT COMMIT — revoke at @BotFather if leaked
 chat_id   = 987654321            # Your Telegram user ID (not a group ID)
+# Additional private chats allowed to issue commands. Command replies return to
+# the caller; SMS and other notifications still go to chat_id.
+trusted_chat_ids = []
 
 [modem]
-# Default pins for LilyGo T-A7670X — edit when switching boards
+# LilyGo T-A7670X R2: TX=26, RX=27, PWRKEY=4
+# LilyGo T-A7670X S3 Standard (H799): TX=4, RX=5, PWRKEY=46
 uart_tx   = 26
 uart_rx   = 27
 uart_baud = 115200
@@ -30,6 +34,8 @@ cellular_fallback = false
 apn       = ""
 apn_user  = ""
 apn_pass  = ""
+# Optional 4-8 digit SIM PIN. Leave empty for an unlocked SIM. Do not commit a real PIN.
+sim_pin   = ""
 
 [bridge]
 max_failures_before_reboot = 8

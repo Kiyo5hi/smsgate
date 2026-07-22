@@ -20,13 +20,46 @@ pub const UPDATE_SENTINEL: &str = "__UPDATE__";
 pub const UPDATE_CONFIRM_SENTINEL: &str = "__UPDATE_CONFIRM__";
 // Keep `pub` (not `pub(crate)`) — integration tests import them.
 
+pub(crate) fn push_encoded_sentinel_body(out: &mut String, body: &str) {
+    for ch in body.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            ch => out.push(ch),
+        }
+    }
+}
+
+pub(crate) fn decode_sentinel_body(encoded: &str) -> String {
+    let mut out = String::with_capacity(encoded.len());
+    let mut chars = encoded.chars();
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            out.push(ch);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('r') => out.push('\r'),
+            Some('\\') => out.push('\\'),
+            Some(other) => {
+                out.push('\\');
+                out.push(other);
+            }
+            None => out.push('\\'),
+        }
+    }
+    out
+}
+
 /// Read-only context available to a command handler.
 pub struct CommandContext<'a> {
     pub store: &'a dyn Store,
     pub modem_status: &'a ModemStatus,
     pub log_ring: &'a LogRing,
     pub send_queue: &'a SmsSender,
-    pub uptime_ms: u32,
+    pub uptime_ms: u64,
     /// Free heap in bytes (0 on host/tests; real value on device).
     pub free_heap_bytes: u32,
     /// WiFi status string ("" on host/tests).
@@ -48,7 +81,9 @@ pub struct CommandRegistry {
 
 impl CommandRegistry {
     pub fn new() -> Self {
-        CommandRegistry { commands: Vec::new() }
+        CommandRegistry {
+            commands: Vec::new(),
+        }
     }
 
     /// Register a command. Panics if cap is exceeded.
@@ -63,20 +98,25 @@ impl CommandRegistry {
     /// Dispatch a message text to the matching command. Returns reply or None.
     pub fn dispatch(&self, text: &str, ctx: &CommandContext) -> Option<String> {
         let text = text.trim_start_matches('/');
-        let (name, args) = text.split_once(|c: char| c.is_whitespace())
+        let (name, args) = text
+            .split_once(|c: char| c.is_whitespace())
             .unwrap_or((text, ""));
 
         // Strip bot username suffix (e.g. /help@mybot)
         let name = name.split('@').next().unwrap_or(name);
 
-        self.commands.iter()
+        self.commands
+            .iter()
             .find(|c| c.name() == name)
             .map(|c| c.handle(args.trim(), ctx))
     }
 
     /// Returns (name, description) pairs for registration with IM backend.
     pub fn command_list(&self) -> Vec<(&str, &str)> {
-        self.commands.iter().map(|c| (c.name(), c.description())).collect()
+        self.commands
+            .iter()
+            .map(|c| (c.name(), c.description()))
+            .collect()
     }
 
     /// Generate /help text.
@@ -90,5 +130,7 @@ impl CommandRegistry {
 }
 
 impl Default for CommandRegistry {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

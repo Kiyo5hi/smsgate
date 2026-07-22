@@ -118,7 +118,7 @@ Required GitHub Secrets (Settings → Secrets and variables → Actions):
 | `WIFI_SSID` | `MyNetwork` |
 | `WIFI_PASSWORD` | `hunter2` |
 | `TELEGRAM_BOT_TOKEN` | `123456:ABC-DEF...` |
-| `TELEGRAM_CHAT_ID` | `8024680950` |
+| `TELEGRAM_CHAT_ID` | `987654321` |
 | `UI_LOCALE` *(optional)* | `zh` (default) or `en` |
 
 The OTA URL in the built firmware points to the same repo's nightly release,

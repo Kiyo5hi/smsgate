@@ -4,8 +4,12 @@ use crate::ota;
 pub struct UpdateCommand;
 
 impl Command for UpdateCommand {
-    fn name(&self) -> &'static str { "update" }
-    fn description(&self) -> &'static str { crate::i18n::desc_update() }
+    fn name(&self) -> &'static str {
+        "update"
+    }
+    fn description(&self) -> &'static str {
+        crate::i18n::desc_update()
+    }
 
     fn handle(&self, args: &str, _ctx: &CommandContext) -> String {
         match args.trim() {
@@ -13,7 +17,11 @@ impl Command for UpdateCommand {
                 if !ota::is_manual_confirm() {
                     return crate::i18n::update_confirm_not_manual().to_string();
                 }
-                format!("{}\n{}", UPDATE_CONFIRM_SENTINEL, crate::i18n::update_confirming())
+                format!(
+                    "{}\n{}",
+                    UPDATE_CONFIRM_SENTINEL,
+                    crate::i18n::update_confirming()
+                )
             }
             "" => {
                 if !ota::is_enabled() {

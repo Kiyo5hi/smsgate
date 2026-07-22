@@ -4,13 +4,13 @@ use smsgate::creds::RuntimeCreds;
 
 fn creds(token: &str, chat_id: i64) -> RuntimeCreds {
     RuntimeCreds {
-        wifi_ssid:  String::new(),
-        wifi_pass:  String::new(),
-        bot_token:  token.to_string(),
+        wifi_ssid: String::new(),
+        wifi_pass: String::new(),
+        bot_token: token.to_string(),
         chat_id,
-        apn:        String::new(),
-        apn_user:   String::new(),
-        apn_pass:   String::new(),
+        apn: String::new(),
+        apn_user: String::new(),
+        apn_pass: String::new(),
     }
 }
 
@@ -33,6 +33,30 @@ fn zero_chat_id_not_provisioned() {
 fn negative_chat_id_is_provisioned() {
     // Telegram channel IDs are negative; they must be accepted.
     assert!(creds("123:abc", -100123456789).is_provisioned());
+}
+
+#[test]
+fn software_only_image_preserves_loaded_credentials() {
+    let loaded = RuntimeCreds {
+        bot_token: "runtime".into(),
+        ..RuntimeCreds::default()
+    };
+    assert_eq!(
+        RuntimeCreds::resolve_compiled_config(loaded, false).bot_token,
+        "runtime"
+    );
+}
+
+#[test]
+fn with_config_image_uses_compiled_defaults() {
+    let loaded = RuntimeCreds {
+        bot_token: "runtime".into(),
+        ..RuntimeCreds::default()
+    };
+    assert_eq!(
+        RuntimeCreds::resolve_compiled_config(loaded, true).bot_token,
+        RuntimeCreds::default().bot_token
+    );
 }
 
 #[test]

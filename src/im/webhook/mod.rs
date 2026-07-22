@@ -21,8 +21,9 @@ pub struct WebhookSink {
 impl WebhookSink {
     /// Parse a URL like `https://example.com:8443/hook/path` into components.
     pub fn from_url(url: &str) -> Result<Self, MessengerError> {
-        let (scheme, rest) = url.split_once("://")
-            .ok_or_else(|| MessengerError::Http("webhook URL must start with http:// or https://".into()))?;
+        let (scheme, rest) = url.split_once("://").ok_or_else(|| {
+            MessengerError::Http("webhook URL must start with http:// or https://".into())
+        })?;
         let use_tls = scheme == "https";
         let default_port: u16 = if use_tls { 443 } else { 80 };
 
@@ -36,7 +37,12 @@ impl WebhookSink {
             None => (host_port.to_string(), default_port),
         };
 
-        Ok(WebhookSink { host, port, path: path.to_string(), use_tls })
+        Ok(WebhookSink {
+            host,
+            port,
+            path: path.to_string(),
+            use_tls,
+        })
     }
 }
 
@@ -55,13 +61,16 @@ impl MessageSink for WebhookSink {
              Connection: close\r\n\
              \r\n\
              {}",
-            self.path, self.host, body_bytes.len(), body
+            self.path,
+            self.host,
+            body_bytes.len(),
+            body
         );
 
         if self.use_tls {
             let conf = esp_idf_svc::tls::Config::default();
-            let mut tls: EspTls<InternalSocket> = EspTls::new()
-                .map_err(|e| MessengerError::Http(format!("TLS init: {}", e)))?;
+            let mut tls: EspTls<InternalSocket> =
+                EspTls::new().map_err(|e| MessengerError::Http(format!("TLS init: {}", e)))?;
             tls.connect(&self.host, self.port, &conf)
                 .map_err(|e| MessengerError::Http(format!("TLS connect: {}", e)))?;
             tls.write_all(request.as_bytes())
@@ -72,8 +81,11 @@ impl MessageSink for WebhookSink {
             let addr = format!("{}:{}", self.host, self.port);
             let mut stream = std::net::TcpStream::connect(&addr)
                 .map_err(|e| MessengerError::Http(format!("TCP connect: {}", e)))?;
-            stream.set_write_timeout(Some(std::time::Duration::from_secs(10))).ok();
-            stream.write_all(request.as_bytes())
+            stream
+                .set_write_timeout(Some(std::time::Duration::from_secs(10)))
+                .ok();
+            stream
+                .write_all(request.as_bytes())
                 .map_err(|e| MessengerError::Http(format!("TCP write: {}", e)))?;
         }
 
@@ -86,7 +98,9 @@ fn drain_response(tls: &mut EspTls<InternalSocket>) -> Result<(), MessengerError
     let mut buf = [0u8; 512];
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
     loop {
-        if std::time::Instant::now() > deadline { break; }
+        if std::time::Instant::now() > deadline {
+            break;
+        }
         match tls.read(&mut buf) {
             Ok(0) => break,
             Ok(_) => continue,

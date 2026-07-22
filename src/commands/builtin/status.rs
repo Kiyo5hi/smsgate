@@ -4,14 +4,15 @@ use crate::modem::CSQ_UNKNOWN;
 pub struct StatusCommand;
 
 impl Command for StatusCommand {
-    fn name(&self) -> &'static str { "status" }
-    fn description(&self) -> &'static str { crate::i18n::desc_status() }
+    fn name(&self) -> &'static str {
+        "status"
+    }
+    fn description(&self) -> &'static str {
+        crate::i18n::desc_status()
+    }
 
     fn handle(&self, _args: &str, ctx: &CommandContext) -> String {
-        let uptime_s = ctx.uptime_ms / 1000;
-        let h = uptime_s / 3600;
-        let m = (uptime_s % 3600) / 60;
-        let s = uptime_s % 60;
+        let uptime = format_uptime(ctx.uptime_ms / 1000);
 
         let csq = ctx.modem_status.csq;
         let signal = if csq == CSQ_UNKNOWN {
@@ -26,29 +27,57 @@ impl Command for StatusCommand {
             ctx.modem_status.operator.clone()
         };
 
-        let queue_n    = ctx.send_queue.len();
-        let log_n      = ctx.log_ring.len();
-        let blocked_n  = crate::bridge::forwarder::load_blocklist(ctx.store).len();
-        let fwd_on     = crate::persist::load_bool(ctx.store, crate::persist::keys::FWD_ENABLED)
-                             .unwrap_or(true);
+        let queue_n = ctx.send_queue.len();
+        let log_n = ctx.log_ring.len();
+        let blocked_n = crate::bridge::forwarder::load_blocklist(ctx.store).len();
+        let fwd_on =
+            crate::persist::load_bool(ctx.store, crate::persist::keys::FWD_ENABLED).unwrap_or(true);
         let free_heap_kb = ctx.free_heap_bytes / 1024;
 
         let last = ctx.log_ring.last_n(1);
-        let last_sms = last.first().map(|e| (e.sender.as_str(), e.timestamp.as_str()));
+        let last_sms = last
+            .first()
+            .map(|e| (e.sender.as_str(), e.timestamp.as_str()));
 
         let mut out = crate::i18n::format_status(
-            h, m, s,
-            &signal, &operator,
+            &uptime,
+            &signal,
+            &operator,
             ctx.modem_status.registered,
             free_heap_kb,
-            queue_n, blocked_n, log_n,
+            queue_n,
+            blocked_n,
+            log_n,
             fwd_on,
             last_sms,
             ctx.wifi_info,
         );
-        out.push_str(&crate::i18n::status_build(crate::config::Config::GIT_COMMIT));
+        out.push_str(&crate::i18n::status_build(
+            crate::config::Config::GIT_COMMIT,
+        ));
         out
     }
+}
+
+fn format_uptime(total_seconds: u64) -> String {
+    let seconds = total_seconds % 60;
+    let total_minutes = total_seconds / 60;
+    let minutes = total_minutes % 60;
+    let total_hours = total_minutes / 60;
+    let hours = total_hours % 24;
+
+    if total_hours < 24 {
+        return format!("{:02}h {:02}m {:02}s", total_hours, minutes, seconds);
+    }
+
+    let total_days = total_hours / 24;
+    if total_days < 365 {
+        return format!("{}d {:02}h {:02}m", total_days, hours, minutes);
+    }
+
+    let years = total_days / 365;
+    let days = total_days % 365;
+    format!("{}y {}d {:02}h", years, days, hours)
 }
 
 fn csq_to_dbm(csq: u8) -> i32 {

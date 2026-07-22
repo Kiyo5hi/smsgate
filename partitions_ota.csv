@@ -1,8 +1,9 @@
-# smsgate OTA partition table (4 MB flash)
-# Two equally-sized app slots; ~1.94 MB each — enough for firmware + TLS stack.
+# Compatibility copy of the 4 MB layout. New builds select
+# partitions_ota_4m.csv or partitions_ota_16m.csv in build.rs.
 # Name,    Type, SubType, Offset,   Size,     Flags
 nvs,       data, nvs,     0x9000,   0x6000,
 otadata,   data, ota,     0xf000,   0x2000,
 phy_init,  data, phy,     0x11000,  0x1000,
-ota_0,     app,  ota_0,   0x20000,  0x1F0000,
-ota_1,     app,  ota_1,   0x210000, 0x1F0000,
+ota_0,     app,  ota_0,   0x20000,  0x1E0000,
+ota_1,     app,  ota_1,   0x200000, 0x1E0000,
+log_ring,  data, undefined, 0x3E0000, 0x20000,

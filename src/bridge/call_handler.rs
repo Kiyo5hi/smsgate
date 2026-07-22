@@ -11,18 +11,32 @@ const COOLDOWN: Duration = Duration::from_secs(6);
 #[derive(Debug, PartialEq)]
 enum State {
     Idle,
-    Ringing { since: Instant, clip_deadline: Instant, number: Option<String> },
-    Cooldown { until: Instant },
+    Ringing {
+        since: Instant,
+        clip_deadline: Instant,
+        number: Option<String>,
+    },
+    Cooldown {
+        until: Instant,
+    },
 }
 
 /// Incoming call handler with auto-hangup and IM notification.
 pub struct CallHandler {
     state: State,
+    pending_log_event: Option<(String, bool)>,
 }
 
 impl CallHandler {
     pub fn new() -> Self {
-        CallHandler { state: State::Idle }
+        CallHandler {
+            state: State::Idle,
+            pending_log_event: None,
+        }
+    }
+
+    pub fn take_log_event(&mut self) -> Option<(String, bool)> {
+        self.pending_log_event.take()
     }
 
     /// Feed a URC line. Call this for every line from `modem.poll_urc()`.
@@ -44,7 +58,12 @@ impl CallHandler {
             return;
         }
         if line == "NO CARRIER" {
-            self.state = State::Idle;
+            // Only reset to Idle when not in Cooldown. NO CARRIER arrives after our own
+            // ATH (hang-up inside commit_call), so it would otherwise clear Cooldown and
+            // let the very next RING fire a duplicate notification.
+            if !matches!(self.state, State::Cooldown { .. }) {
+                self.state = State::Idle;
+            }
         }
     }
 
@@ -56,7 +75,11 @@ impl CallHandler {
         sender: &mut SmsSender,
     ) {
         match &self.state {
-            State::Ringing { clip_deadline, number, since: _ } => {
+            State::Ringing {
+                clip_deadline,
+                number,
+                since: _,
+            } => {
                 let deadline = *clip_deadline;
                 let num = number.clone();
                 if Instant::now() >= deadline {
@@ -99,7 +122,11 @@ impl CallHandler {
         sender: &mut SmsSender,
     ) {
         if let State::Ringing { .. } = &mut self.state {
-            let n = if number.is_empty() { None } else { Some(number) };
+            let n = if number.is_empty() {
+                None
+            } else {
+                Some(number)
+            };
             self.commit_call(n, modem, messenger, sender);
         }
     }
@@ -112,8 +139,10 @@ impl CallHandler {
         _sender: &mut SmsSender,
     ) {
         // Auto-hang-up
+        let mut ok = true;
         if let Err(e) = modem.hang_up() {
             log::warn!("[call] hang_up failed: {}", e);
+            ok = false;
         }
 
         // Notify via IM
@@ -124,13 +153,19 @@ impl CallHandler {
         let text = crate::i18n::incoming_call(&display);
         if let Err(e) = messenger.send_message(&text) {
             log::error!("[call] IM notify failed: {}", e);
+            ok = false;
         }
 
         log::info!("[call] call from {} — hung up and notified", display);
-        self.state = State::Cooldown { until: Instant::now() + COOLDOWN };
+        self.state = State::Cooldown {
+            until: Instant::now() + COOLDOWN,
+        };
+        self.pending_log_event = Some((display, ok));
     }
 }
 
 impl Default for CallHandler {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }

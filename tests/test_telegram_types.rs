@@ -1,6 +1,46 @@
 //! Tests for Telegram Bot API JSON deserialization (types.rs).
 
 use smsgate::im::telegram::types::{json_escape, ApiResult, SendMessageResult, Update};
+use smsgate::im::telegram::{build_message_body, is_trusted_chat, update_to_inbound_message};
+use smsgate::im::{
+    telegram::{poll_retry_after, send_retry_delay, should_retry_send, SEND_RETRY_INTERVAL},
+    InlineKeyboard, InlineKeyboardButton, MessageFormat, MessengerError,
+};
+
+#[test]
+fn primary_chat_is_trusted() {
+    assert!(is_trusted_chat(10, &[20], 10));
+}
+
+#[test]
+fn additional_chat_is_trusted() {
+    assert!(is_trusted_chat(10, &[20, 30], 20));
+}
+
+#[test]
+fn unknown_chat_is_rejected() {
+    assert!(!is_trusted_chat(10, &[20, 30], 40));
+}
+
+#[test]
+fn formatted_keyboard_body_is_valid_json() {
+    let keyboard = InlineKeyboard::single_row(vec![InlineKeyboardButton::new("Older", "log:16")]);
+    let raw = build_message_body(
+        10,
+        Some(77),
+        "<b>events</b>",
+        Some(&keyboard),
+        MessageFormat::Html,
+    );
+    let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+    assert_eq!(value["chat_id"], 10);
+    assert_eq!(value["message_id"], 77);
+    assert_eq!(value["parse_mode"], "HTML");
+    assert_eq!(
+        value["reply_markup"]["inline_keyboard"][0][0]["callback_data"],
+        "log:16"
+    );
+}
 
 // ---------------------------------------------------------------------------
 // json_escape — used by send_message to build valid JSON bodies
@@ -212,4 +252,101 @@ fn get_updates_api_error() {
     assert!(!r.ok);
     assert!(r.result.is_none());
     assert!(r.description.unwrap().contains("Too Many Requests"));
+}
+
+#[test]
+fn update_deserializes_document_and_callback() {
+    let document_json = r#"{"update_id":5,"message":{"message_id":8,"caption":"/ota","document":{"file_id":"f","file_unique_id":"u","file_name":"fw.bin","file_size":123},"chat":{"id":10}}}"#;
+    let update: Update = serde_json::from_str(document_json).unwrap();
+    assert_eq!(
+        update
+            .message
+            .unwrap()
+            .document
+            .unwrap()
+            .file_name
+            .as_deref(),
+        Some("fw.bin")
+    );
+
+    let callback_json = r#"{"update_id":6,"callback_query":{"id":"cb","data":"log:16","message":{"message_id":9,"chat":{"id":10}}}}"#;
+    let update: Update = serde_json::from_str(callback_json).unwrap();
+    assert_eq!(
+        update.callback_query.unwrap().data.as_deref(),
+        Some("log:16")
+    );
+}
+
+#[test]
+fn converts_trusted_ota_document_and_callback() {
+    let document: Update = serde_json::from_str(
+        r#"{"update_id":5,"message":{"message_id":8,"chat":{"id":20},"caption":"/ota","document":{"file_id":"fw","file_unique_id":"fw-unique","file_name":"smsgate.bin","file_size":1234}}}"#,
+    )
+    .unwrap();
+    let inbound = update_to_inbound_message(document, 10, &[20]).unwrap();
+    assert_eq!(inbound.conversation_id, Some(20));
+    assert_eq!(inbound.text, "/ota");
+    assert_eq!(inbound.document.unwrap().file_id, "fw");
+
+    let callback: Update = serde_json::from_str(
+        r#"{"update_id":6,"callback_query":{"id":"cb","data":"log:16","message":{"message_id":9,"chat":{"id":20}}}}"#,
+    )
+    .unwrap();
+    let inbound = update_to_inbound_message(callback, 10, &[20]).unwrap();
+    let callback = inbound.callback.unwrap();
+    assert_eq!(callback.conversation_id, 20);
+    assert_eq!(callback.data, "log:16");
+}
+
+#[test]
+fn rejects_untrusted_document_updates() {
+    let update: Update = serde_json::from_str(
+        r#"{"update_id":5,"message":{"message_id":8,"chat":{"id":30},"caption":"/ota","document":{"file_id":"fw","file_unique_id":"fw-unique"}}}"#,
+    )
+    .unwrap();
+    assert!(update_to_inbound_message(update, 10, &[20]).is_none());
+}
+
+#[test]
+fn api_result_extracts_retry_after() {
+    let json = r#"{"ok":false,"description":"Too Many Requests","parameters":{"retry_after":37}}"#;
+    let r: ApiResult<Vec<Update>> = serde_json::from_str(json).unwrap();
+    assert_eq!(r.parameters.unwrap().retry_after, Some(37));
+}
+
+#[test]
+fn poll_retry_after_uses_structured_rate_limit() {
+    let error = MessengerError::RateLimited {
+        retry_after_secs: 42,
+        description: "Too Many Requests".into(),
+    };
+    assert_eq!(poll_retry_after(&error).unwrap().as_secs(), 42);
+}
+
+#[test]
+fn poll_retry_after_accepts_legacy_description() {
+    let error = MessengerError::Api("Too Many Requests: retry after 19".into());
+    assert_eq!(poll_retry_after(&error).unwrap().as_secs(), 19);
+}
+
+#[test]
+fn send_retry_policy_retries_transport_but_not_api_errors() {
+    assert!(should_retry_send(&MessengerError::Http("reset".into())));
+    assert!(should_retry_send(&MessengerError::Disconnected));
+    assert!(!should_retry_send(&MessengerError::Api(
+        "bad request".into()
+    )));
+}
+
+#[test]
+fn send_retry_policy_honors_rate_limit() {
+    let error = MessengerError::RateLimited {
+        retry_after_secs: 42,
+        description: "slow down".into(),
+    };
+    assert_eq!(send_retry_delay(&error), std::time::Duration::from_secs(42));
+    assert_eq!(
+        send_retry_delay(&MessengerError::Http("reset".into())),
+        SEND_RETRY_INTERVAL
+    );
 }

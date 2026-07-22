@@ -44,7 +44,15 @@ pub fn attach_pdp(
 }
 
 fn escape_at_quotes(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            ch => out.push(ch),
+        }
+    }
+    out
 }
 
 /// POST JSON to `https://api.telegram.org` + `path` (path includes `/bot…/method`).

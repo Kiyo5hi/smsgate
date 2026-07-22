@@ -1,9 +1,78 @@
 //! LogRing tests.
 
-use smsgate::log_ring::{LogEntry, LogRing};
+use smsgate::log_ring::{FlashLogRing, MemFlashLogStorage, FLASH_LOG_RECORD_SIZE};
+use smsgate::log_ring::{LogEntry, LogKind, LogRing};
 
 fn entry(sender: &str) -> LogEntry {
-    LogEntry { sender: sender.to_string(), body_preview: "body".to_string(), timestamp: "ts".to_string(), forwarded: true }
+    LogEntry {
+        kind: LogKind::Sms,
+        sender: sender.to_string(),
+        body_preview: "body".to_string(),
+        timestamp: "ts".to_string(),
+        forwarded: true,
+    }
+}
+
+fn flash_entry(sender: &str, body: &str, forwarded: bool) -> LogEntry {
+    LogEntry {
+        kind: LogKind::Sms,
+        sender: sender.to_string(),
+        body_preview: body.to_string(),
+        timestamp: "ts".to_string(),
+        forwarded,
+    }
+}
+
+#[test]
+fn flash_log_survives_remount() {
+    let storage = MemFlashLogStorage::new(4096, 4096);
+    let mut flash = FlashLogRing::mount(storage).unwrap();
+    flash.append(&flash_entry("+1", "persisted", true)).unwrap();
+    let storage = flash.into_storage();
+    let mut remounted = FlashLogRing::mount(storage).unwrap();
+    assert_eq!(remounted.last_n(1).unwrap()[0].body_preview, "persisted");
+}
+
+#[test]
+fn flash_log_ignores_corrupt_record_on_remount() {
+    let storage = MemFlashLogStorage::new(4096, 4096);
+    let mut flash = FlashLogRing::mount(storage).unwrap();
+    flash
+        .append(&flash_entry("+1", "incomplete", true))
+        .unwrap();
+    let mut storage = flash.into_storage();
+    storage.corrupt_byte(20);
+    let mut remounted = FlashLogRing::mount(storage).unwrap();
+    assert!(remounted.last_n(10).unwrap().is_empty());
+}
+
+#[test]
+fn flash_log_wraps_by_erase_sector() {
+    let storage = MemFlashLogStorage::new(4096, 4096);
+    let mut flash = FlashLogRing::mount(storage).unwrap();
+    let slots = 4096 / FLASH_LOG_RECORD_SIZE;
+    for i in 0..slots + 2 {
+        flash
+            .append(&flash_entry("+1", &format!("message-{i}"), true))
+            .unwrap();
+    }
+    let entries = flash.last_n(slots).unwrap();
+    assert_eq!(entries.len(), 2);
+    assert_eq!(entries[0].body_preview, format!("message-{slots}"));
+}
+
+#[test]
+fn flash_log_truncates_long_unicode_record_without_panicking() {
+    let storage = MemFlashLogStorage::new(4096, 4096);
+    let mut flash = FlashLogRing::mount(storage).unwrap();
+    flash
+        .append(&flash_entry(&"发".repeat(100), &"信".repeat(100), false))
+        .unwrap();
+    let entry = &flash.last_n(1).unwrap()[0];
+    assert!(entry.sender.is_char_boundary(entry.sender.len()));
+    assert!(entry
+        .body_preview
+        .is_char_boundary(entry.body_preview.len()));
 }
 
 #[test]
@@ -43,14 +112,13 @@ fn last_n_returns_most_recent_first() {
 }
 
 #[test]
-fn ring_evicts_oldest_when_full() {
+fn ring_evicts_oldest_sector_when_full() {
     let mut r = LogRing::new();
-    for i in 0..51 {
+    for i in 0..66 {
         r.push(entry(&i.to_string()));
     }
-    assert_eq!(r.len(), 50); // capacity is 50
-    // Oldest (0) evicted; newest (50) is present
-    let entries = r.last_n(50);
-    assert_eq!(entries[0].sender, "1");
-    assert_eq!(entries[49].sender, "50");
+    assert_eq!(r.len(), 50); // one 16-record sector was erased on wrap
+    let entries = r.last_n(64);
+    assert_eq!(entries[0].sender, "16");
+    assert_eq!(entries[49].sender, "65");
 }

@@ -1,7 +1,9 @@
 //! Board hardware abstraction layer.
 
-#[cfg(feature = "esp32")]
+#[cfg(all(feature = "esp32", not(esp32s3)))]
 pub mod ta7670x;
+#[cfg(all(feature = "esp32", esp32s3))]
+pub mod ta7670x_s3;
 
 #[cfg(feature = "esp32")]
 use crate::modem::ModemPort;

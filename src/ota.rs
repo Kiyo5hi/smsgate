@@ -4,6 +4,9 @@
 //! over HTTPS, write it to the inactive partition, reboot, then confirm or
 //! rollback.
 
+use crate::im::InboundMessage;
+#[cfg(feature = "esp32")]
+use crate::im::{telegram::http::TelegramHttpClient, InboundDocument};
 #[cfg(feature = "esp32")]
 use esp_idf_svc::ota::EspOta;
 #[cfg(feature = "esp32")]
@@ -25,6 +28,9 @@ pub enum OtaError {
     Disabled,
     Http(String),
     Flash(String),
+    MissingFilePath,
+    ImageTooLarge { size: usize, slot_size: usize },
+    FileSizeTooLarge(u64),
 }
 
 impl core::fmt::Display for OtaError {
@@ -33,8 +39,33 @@ impl core::fmt::Display for OtaError {
             OtaError::Disabled => write!(f, "OTA disabled (url is empty)"),
             OtaError::Http(s) => write!(f, "HTTP: {}", s),
             OtaError::Flash(s) => write!(f, "Flash: {}", s),
+            OtaError::MissingFilePath => write!(f, "Telegram file has no download path"),
+            OtaError::ImageTooLarge { size, slot_size } => {
+                write!(f, "file size {} exceeds OTA slot size {}", size, slot_size)
+            }
+            OtaError::FileSizeTooLarge(size) => {
+                write!(f, "file size is too large for this platform: {}", size)
+            }
         }
     }
+}
+
+pub fn is_ota_caption(caption: &str) -> bool {
+    let Some(first) = caption.split_whitespace().next() else {
+        return false;
+    };
+    first
+        .strip_prefix('/')
+        .and_then(|value| value.split('@').next())
+        == Some("ota")
+}
+
+pub fn latest_ota_document_cursor(messages: &[InboundMessage]) -> Option<i64> {
+    messages
+        .iter()
+        .filter(|message| message.document.is_some() && is_ota_caption(&message.text))
+        .map(|message| message.cursor)
+        .max()
 }
 
 /// Returns true if OTA is configured (URL is non-empty).
@@ -164,6 +195,77 @@ where
 }
 
 #[cfg(feature = "esp32")]
+pub fn perform_telegram_update<F>(
+    http: &mut TelegramHttpClient,
+    token: &str,
+    document: &InboundDocument,
+    mut on_progress: F,
+) -> Result<(), OtaError>
+where
+    F: FnMut(usize, Option<usize>),
+{
+    let file = http
+        .get_file(token, &document.file_id)
+        .map_err(|e| OtaError::Http(e.to_string()))?;
+    let file_path = file.file_path.ok_or(OtaError::MissingFilePath)?;
+    let raw_size = document.file_size.or(file.file_size);
+    let expected = raw_size
+        .map(usize::try_from)
+        .transpose()
+        .map_err(|_| OtaError::FileSizeTooLarge(raw_size.unwrap()))?;
+    let slot_size = next_update_slot_size()?;
+    if expected.is_some_and(|size| size > slot_size) {
+        return Err(OtaError::ImageTooLarge {
+            size: expected.unwrap(),
+            slot_size,
+        });
+    }
+
+    let mut ota = EspOta::new().map_err(|e| OtaError::Flash(e.to_string()))?;
+    let mut update = match expected {
+        Some(size) => ota.initiate_update_with_known_size(size),
+        None => ota.initiate_update(),
+    }
+    .map_err(|e| OtaError::Flash(format!("initiate: {e}")))?;
+    let mut written = 0usize;
+    let mut flash_error = None;
+    let result = http.download_file(token, &file_path, |chunk| {
+        if let Err(error) = update.write(chunk) {
+            flash_error = Some(OtaError::Flash(format!("write: {error}")));
+            anyhow::bail!("flash write failed");
+        }
+        written += chunk.len();
+        unsafe {
+            let _ = esp_idf_sys::esp_task_wdt_reset();
+        }
+        on_progress(written, expected);
+        Ok(())
+    });
+    if let Err(error) = result {
+        return Err(flash_error.unwrap_or_else(|| OtaError::Http(error.to_string())));
+    }
+    if expected.is_some_and(|size| size != written) {
+        return Err(OtaError::Http(format!(
+            "incomplete: got {written} of {}",
+            expected.unwrap()
+        )));
+    }
+    update
+        .complete()
+        .map_err(|e| OtaError::Flash(format!("complete: {e}")))?;
+    Ok(())
+}
+
+#[cfg(feature = "esp32")]
+fn next_update_slot_size() -> Result<usize, OtaError> {
+    let partition = unsafe { esp_idf_sys::esp_ota_get_next_update_partition(std::ptr::null()) };
+    if partition.is_null() {
+        return Err(OtaError::Flash("next OTA partition not found".into()));
+    }
+    Ok(unsafe { (*partition).size as usize })
+}
+
+#[cfg(feature = "esp32")]
 fn parse_url(url: &str) -> Result<(String, u16, String, bool), OtaError> {
     let (scheme, rest) = url
         .split_once("://")
@@ -265,12 +367,18 @@ fn read_headers(
             let status = parse_status(&header_str)?;
             let content_length = header_str
                 .lines()
-                .find(|l| l.get(..15).is_some_and(|p| p.eq_ignore_ascii_case("content-length:")))
+                .find(|l| {
+                    l.get(..15)
+                        .is_some_and(|p| p.eq_ignore_ascii_case("content-length:"))
+                })
                 .and_then(|l| l.splitn(2, ':').nth(1))
                 .and_then(|v| v.trim().parse().ok());
             let location = header_str
                 .lines()
-                .find(|l| l.get(..9).is_some_and(|p| p.eq_ignore_ascii_case("location:")))
+                .find(|l| {
+                    l.get(..9)
+                        .is_some_and(|p| p.eq_ignore_ascii_case("location:"))
+                })
                 .and_then(|l| l.splitn(2, ':').nth(1))
                 .map(|v| v.trim().to_string());
 

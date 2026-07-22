@@ -1,18 +1,29 @@
 //! Telegram Bot API JSON types.
 
-use serde::Deserialize;
 use crate::im::MessageId;
+use serde::Deserialize;
 
 /// Escape a string for embedding inside a JSON string literal.
 ///
 /// Handles the characters that would produce invalid JSON: backslash,
 /// double-quote, and ASCII control characters (LF, CR, TAB).
 pub fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\")
-     .replace('"', "\\\"")
-     .replace('\n', "\\n")
-     .replace('\r', "\\r")
-     .replace('\t', "\\t")
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            ch if ch.is_control() => {
+                use core::fmt::Write as _;
+                let _ = write!(out, "\\u{:04X}", ch as u32);
+            }
+            ch => out.push(ch),
+        }
+    }
+    out
 }
 
 #[derive(Debug, Deserialize)]
@@ -20,6 +31,12 @@ pub struct ApiResult<T> {
     pub ok: bool,
     pub result: Option<T>,
     pub description: Option<String>,
+    pub parameters: Option<ResponseParameters>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ResponseParameters {
+    pub retry_after: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -31,14 +48,41 @@ pub struct SendMessageResult {
 pub struct Update {
     pub update_id: i64,
     pub message: Option<Message>,
+    pub callback_query: Option<CallbackQuery>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct Message {
     pub message_id: MessageId,
     pub text: Option<String>,
+    pub caption: Option<String>,
+    pub document: Option<Document>,
     pub reply_to_message: Option<ReplyToMessage>,
     pub chat: Chat,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Document {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub file_name: Option<String>,
+    pub mime_type: Option<String>,
+    pub file_size: Option<u64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CallbackQuery {
+    pub id: String,
+    pub data: Option<String>,
+    pub message: Option<Message>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TelegramFile {
+    pub file_id: String,
+    pub file_unique_id: String,
+    pub file_size: Option<u64>,
+    pub file_path: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

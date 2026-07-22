@@ -8,6 +8,8 @@ impl Config {
     pub const WIFI_PASSWORD: &'static str = env!("CFG_WIFI_PASSWORD");
     pub const IM_BACKEND: &'static str = env!("CFG_IM_BACKEND");
     pub const BOT_TOKEN: &'static str = env!("CFG_IM_BOT_TOKEN");
+    /// JSON array of additional Telegram chat IDs allowed to issue commands.
+    pub const TRUSTED_CHAT_IDS: &'static str = env!("CFG_IM_TRUSTED_CHAT_IDS");
     pub const CHAT_ID: i64 = {
         // parse at compile time; default 0 if empty/missing
         let s = env!("CFG_IM_CHAT_ID");
@@ -24,6 +26,7 @@ impl Config {
     pub const MODEM_APN: &'static str = env!("CFG_MODEM_APN");
     pub const MODEM_APN_USER: &'static str = env!("CFG_MODEM_APN_USER");
     pub const MODEM_APN_PASS: &'static str = env!("CFG_MODEM_APN_PASS");
+    pub const MODEM_SIM_PIN: &'static str = env!("CFG_MODEM_SIM_PIN");
     pub const MAX_FAILURES: u8 = parse_u8_const(env!("CFG_BRIDGE_MAX_FAILURES"));
     pub const POLL_INTERVAL_MS: u32 = parse_u32_const(env!("CFG_BRIDGE_POLL_INTERVAL_MS"));
     pub const WATCHDOG_TIMEOUT_SEC: u32 = parse_u32_const(env!("CFG_BRIDGE_WATCHDOG_SEC"));
@@ -34,6 +37,7 @@ impl Config {
     pub const OTA_URL: &'static str = env!("CFG_OTA_URL");
     /// "auto" or "manual"
     pub const OTA_CONFIRM: &'static str = env!("CFG_OTA_CONFIRM");
+    pub const APPLY_COMPILED_CONFIG: bool = parse_bool_env_true(env!("CFG_APPLY_COMPILED_CONFIG"));
 }
 
 const fn parse_bool_env_true(s: &str) -> bool {
@@ -54,7 +58,11 @@ const fn parse_i64_const(s: &str) -> i64 {
     if bytes.is_empty() {
         return 0;
     }
-    let (neg, start) = if bytes[0] == b'-' { (true, 1) } else { (false, 0) };
+    let (neg, start) = if bytes[0] == b'-' {
+        (true, 1)
+    } else {
+        (false, 0)
+    };
     let mut i = start;
     let mut acc: i64 = 0;
     while i < bytes.len() {
@@ -64,7 +72,11 @@ const fn parse_i64_const(s: &str) -> i64 {
         }
         i += 1;
     }
-    if neg { -acc } else { acc }
+    if neg {
+        -acc
+    } else {
+        acc
+    }
 }
 
 const fn parse_u64_const(s: &str) -> u64 {

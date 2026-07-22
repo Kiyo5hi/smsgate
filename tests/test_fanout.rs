@@ -1,7 +1,7 @@
 //! Tests for the FanoutSink dispatcher.
 
-use smsgate::im::{MessageId, MessageSink, MessengerError};
 use smsgate::im::fanout::FanoutSink;
+use smsgate::im::{MessageId, MessageSink, MessengerError};
 
 struct CaptureSink {
     messages: Vec<String>,
@@ -10,7 +10,10 @@ struct CaptureSink {
 
 impl CaptureSink {
     fn new(start_id: i64) -> Self {
-        CaptureSink { messages: Vec::new(), next_id: start_id }
+        CaptureSink {
+            messages: Vec::new(),
+            next_id: start_id,
+        }
     }
 }
 

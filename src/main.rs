@@ -6,31 +6,41 @@
 
 #[cfg(feature = "esp32")]
 use smsgate::{
-    boards::{ta7670x::TA7670X, Board},
+    boards::Board,
     bridge::{
         call_handler::CallHandler,
         poller::poll_and_dispatch,
         reply_router::ReplyRouter,
         sms_handler::{handle_new_sms, process_pdu_hex, sweep_one_storage},
     },
-    commands::{
-        builtin::*,
-        CommandRegistry,
-    },
+    commands::{builtin::*, CommandRegistry},
     config::Config,
     creds::RuntimeCreds,
     im::{
-        MessageSink, MessageSource,
         fanout::FanoutSink,
-        telegram::{http::TelegramHttpClient, TelegramMessenger},
+        telegram::{
+            http::TelegramHttpClient,
+            worker::{TelegramSendEvent, TelegramSendWorker},
+            TelegramMessenger,
+        },
+        MessageSink, MessageSource,
     },
+    log_clock::LogClock,
     log_ring::LogRing,
-    modem::{urc::{parse_urc, Urc}, a76xx::qhttp},
+    modem::{
+        a76xx::qhttp,
+        urc::{parse_urc, Urc},
+    },
     persist::nvs::NvsStore,
     sms::concat::ConcatReassembler,
     sms::sender::{DrainOutcome, SmsSender},
     timer::elapsed_since,
 };
+
+#[cfg(all(feature = "esp32", not(esp32s3)))]
+use smsgate::boards::ta7670x::TA7670X;
+#[cfg(all(feature = "esp32", esp32s3))]
+use smsgate::boards::ta7670x_s3::TA7670XS3;
 
 #[cfg(not(feature = "esp32"))]
 fn main() {
@@ -40,27 +50,39 @@ fn main() {
 /// Lock a `Mutex`, recovering from a poisoned state rather than panicking.
 #[cfg(feature = "esp32")]
 macro_rules! lock {
-    ($m:expr) => { $m.lock().unwrap_or_else(|e| e.into_inner()) };
+    ($m:expr) => {
+        $m.lock().unwrap_or_else(|e| e.into_inner())
+    };
 }
 
 #[cfg(feature = "esp32")]
 fn main() {
     esp_idf_sys::link_patches();
     esp_idf_svc::log::EspLogger::initialize_default();
+    let boot_started = std::time::Instant::now();
 
     log::info!("smsgate starting…");
 
     // ---- Board init ----
     let mut peripherals = esp_idf_hal::peripherals::Peripherals::take().unwrap();
+    #[cfg(not(esp32s3))]
     let board = TA7670X;
+    #[cfg(esp32s3)]
+    let board = TA7670XS3;
     board.init(&mut peripherals).expect("board init failed");
-    let modem = board.build_modem_port(&mut peripherals).expect("modem init failed");
+    let modem = board
+        .build_modem_port(&mut peripherals)
+        .expect("modem init failed");
 
     // ---- NVS store (fall back to MemStore on NVS failure) ----
     let nvs_partition = esp_idf_svc::nvs::EspDefaultNvsPartition::take().unwrap();
 
     // ---- Runtime credentials (NVS "smsgcfg" > compile-time defaults) ----
-    let creds = RuntimeCreds::load(&nvs_partition);
+    let loaded_creds = RuntimeCreds::load(&nvs_partition);
+    let creds = RuntimeCreds::resolve_compiled_config(loaded_creds, Config::APPLY_COMPILED_CONFIG);
+    if Config::APPLY_COMPILED_CONFIG && !creds.save(&nvs_partition) {
+        log::error!("[main] failed to apply compiled credentials to NVS");
+    }
     if !creds.is_provisioned() {
         log::warn!("[main] not provisioned — entering serial setup");
         serial_provision(&nvs_partition);
@@ -86,9 +108,8 @@ fn main() {
     // 'static is sound because the wifi driver is kept alive until main exits.
     let wifi_inner: esp_idf_svc::wifi::EspWifi<'static> = unsafe {
         std::mem::transmute(
-            esp_idf_svc::wifi::EspWifi::new(
-                peripherals.modem, sysloop.clone(), None
-            ).expect("WiFi init failed")
+            esp_idf_svc::wifi::EspWifi::new(peripherals.modem, sysloop.clone(), None)
+                .expect("WiFi init failed"),
         )
     };
     let mut wifi = esp_idf_svc::wifi::BlockingWifi::wrap(wifi_inner, sysloop.clone())
@@ -103,7 +124,8 @@ fn main() {
                 &creds.apn,
                 &creds.apn_user,
                 &creds.apn_pass,
-            ).expect("PDP attach failed");
+            )
+            .expect("PDP attach failed");
         } else {
             panic!(
                 "no WiFi and no cellular fallback (set modem.cellular_fallback + modem.apn, or fix WiFi)"
@@ -113,21 +135,50 @@ fn main() {
     let mut wifi = wifi; // keep WiFi driver alive; also used for reconnect on drop
 
     // ---- IM (Telegram as primary) ----
-    let mut tg_messenger = if wifi_ok {
-        TelegramMessenger::new_wifi(
-            TelegramHttpClient::new(None).expect("TLS init failed"),
-            creds.bot_token.clone(),
-            creds.chat_id,
-        )
-    } else {
-        TelegramMessenger::new_modem(modem.clone(), creds.bot_token.clone(), creds.chat_id)
-    };
+    let trusted_chat_ids = parse_trusted_chat_ids();
+    log::info!(
+        "[main] Telegram trusted chats: {} additional",
+        trusted_chat_ids.len()
+    );
+    let (tg_send_event_tx, tg_send_event_rx) = std::sync::mpsc::channel();
+    let tg_poll_event_tx = tg_send_event_tx.clone();
+    let tg_send_worker = TelegramSendWorker::spawn(
+        wifi_ok,
+        modem.clone(),
+        creds.bot_token.clone(),
+        creds.chat_id,
+        trusted_chat_ids.clone(),
+        tg_send_event_tx,
+    );
 
     // ---- Subsystems ----
     let mut sender = SmsSender::new();
     let mut router = ReplyRouter::new();
     router.load(&*store);
-    let mut log = LogRing::new();
+    let mut log = match smsgate::log_ring::open_flash_log_ring("log_ring") {
+        Ok(log) => {
+            log::info!("[log] persistent log_ring partition mounted");
+            log
+        }
+        Err(e) => {
+            log::error!("[log] persistent log unavailable: {} — using RAM", e);
+            LogRing::new()
+        }
+    };
+    let mut log_clock = LogClock::new();
+    if let Ok(time) = lock!(modem).query_network_time() {
+        log_clock.sync_from_network(boot_started.elapsed().as_millis() as u32, time);
+        log::info!("[log] clock synchronized from modem: {}", time.format());
+    } else {
+        log::warn!("[log] modem clock unavailable; using monotonic timestamps");
+    }
+    log.push(smsgate::log_ring::LogEntry::runtime(
+        smsgate::log_ring::LogKind::System,
+        "boot",
+        "firmware started",
+        log_clock.timestamp(boot_started.elapsed().as_millis() as u32),
+        true,
+    ));
     let mut concat = ConcatReassembler::new();
     let mut call_handler = CallHandler::new();
     let mut modem_status = smsgate::modem::ModemStatus::default();
@@ -138,24 +189,22 @@ fn main() {
     let registry = build_registry(&help_text);
 
     // Register bot commands with Telegram
-    if let Err(e) = tg_messenger.register_commands(&registry.command_list()) {
+    if let Err(e) = tg_send_worker.register_commands(&registry.command_list()) {
         log::warn!("[main] register_commands failed: {} — continuing", e);
     }
 
     // ---- Build fanout sink (Telegram + any configured extra sinks) ----
     let mut sinks: Vec<Box<dyn MessageSink>> = Vec::new();
-    sinks.push(Box::new(tg_messenger));
+    sinks.push(Box::new(tg_send_worker));
     for sink_cfg in parse_sink_config() {
         match sink_cfg.sink_type.as_str() {
-            "webhook" => {
-                match smsgate::im::webhook::WebhookSink::from_url(&sink_cfg.url) {
-                    Ok(ws) => {
-                        log::info!("[main] added webhook sink: {}", sink_cfg.url);
-                        sinks.push(Box::new(ws));
-                    }
-                    Err(e) => log::error!("[main] invalid webhook URL '{}': {}", sink_cfg.url, e),
+            "webhook" => match smsgate::im::webhook::WebhookSink::from_url(&sink_cfg.url) {
+                Ok(ws) => {
+                    log::info!("[main] added webhook sink: {}", sink_cfg.url);
+                    sinks.push(Box::new(ws));
                 }
-            }
+                Err(e) => log::error!("[main] invalid webhook URL '{}': {}", sink_cfg.url, e),
+            },
             other => log::warn!("[main] unknown sink type '{}' — skipped", other),
         }
     }
@@ -182,8 +231,15 @@ fn main() {
         let mut md = lock!(modem);
         let _ = md.send_at("+CPMS=\"ME\",\"ME\",\"ME\"");
         log::info!("[main] sweeping ME storage…");
-        sweep_one_storage("ME", &mut *md, &mut router, &mut log, &mut concat,
-                          &mut messenger, &mut *store);
+        sweep_one_storage(
+            "ME",
+            &mut *md,
+            &mut router,
+            &mut log,
+            &mut concat,
+            &mut messenger,
+            &mut *store,
+        );
     }
 
     // ---- OTA auto-confirm ----
@@ -195,50 +251,70 @@ fn main() {
     }
 
     log::info!("smsgate ready");
+    log.push(smsgate::log_ring::LogEntry::runtime(
+        smsgate::log_ring::LogKind::System,
+        "ready",
+        "smsgate ready",
+        log_clock.timestamp(boot_started.elapsed().as_millis() as u32),
+        true,
+    ));
     let _ = messenger.send_message(smsgate::i18n::started());
 
     // Subscribe main task to the Task WDT (120s timeout).
     // The WDT fires if esp_task_wdt_reset() is not called within the timeout.
-    unsafe { esp_idf_sys::esp_task_wdt_add(std::ptr::null_mut()); }
+    unsafe {
+        esp_idf_sys::esp_task_wdt_add(std::ptr::null_mut());
+    }
 
     // ---- Telegram polling thread ----
     // Runs getUpdates (long-poll) independently so the main loop is never blocked
     // waiting for the network. The channel delivers batches of inbound messages.
-    let initial_cursor = smsgate::persist::load_i64(&*store, smsgate::persist::keys::IM_CURSOR)
-        .unwrap_or(0);
-    let (tg_tx, tg_rx) =
-        std::sync::mpsc::channel::<Vec<smsgate::im::InboundMessage>>();
+    let initial_cursor =
+        smsgate::persist::load_i64(&*store, smsgate::persist::keys::IM_CURSOR).unwrap_or(0);
+    let (tg_tx, tg_rx) = std::sync::mpsc::channel::<Vec<smsgate::im::InboundMessage>>();
     let modem_tg = modem.clone();
     let tg_token_poll = creds.bot_token.clone();
     let tg_chat_id_poll = creds.chat_id;
+    let tg_trusted_chat_ids_poll = trusted_chat_ids;
     std::thread::Builder::new()
         .name("tg-poll".into())
         .stack_size(16 * 1024)
         .spawn(move || {
-            let mut poll_messenger = if wifi_ok {
+            let mut poll_messenger = (if wifi_ok {
                 TelegramMessenger::new_wifi(
                     TelegramHttpClient::new(None).expect("tg-poll: TLS init failed"),
-                    tg_token_poll,
+                    tg_token_poll.clone(),
                     tg_chat_id_poll,
                 )
             } else {
-                TelegramMessenger::new_modem(modem_tg, tg_token_poll, tg_chat_id_poll)
-            };
+                TelegramMessenger::new_modem(
+                    modem_tg.clone(),
+                    tg_token_poll.clone(),
+                    tg_chat_id_poll,
+                )
+            })
+            .with_trusted_chat_ids(tg_trusted_chat_ids_poll.clone());
             let poll_secs = if wifi_ok {
                 (Config::POLL_INTERVAL_MS / 1000).max(1)
             } else {
                 5u32
             };
             let mut cursor = initial_cursor;
+            let mut consecutive_poll_errors: u16 = 0;
             const HEARTBEAT_INTERVAL: u8 = 20;
             let mut heartbeat_counter: u8 = 0;
             // Subscribe this thread to the Task WDT (same 120 s timeout as main).
             // If poll() hangs indefinitely the WDT fires and reboots the device.
-            unsafe { esp_idf_sys::esp_task_wdt_add(std::ptr::null_mut()); }
+            unsafe {
+                esp_idf_sys::esp_task_wdt_add(std::ptr::null_mut());
+            }
             loop {
-                unsafe { esp_idf_sys::esp_task_wdt_reset(); }
+                unsafe {
+                    esp_idf_sys::esp_task_wdt_reset();
+                }
                 match poll_messenger.poll(cursor, poll_secs) {
                     Ok(msgs) if !msgs.is_empty() => {
+                        consecutive_poll_errors = 0;
                         heartbeat_counter = 0;
                         cursor = msgs.iter().map(|m| m.cursor).max().unwrap_or(cursor);
                         if tg_tx.send(msgs).is_err() {
@@ -246,6 +322,7 @@ fn main() {
                         }
                     }
                     Ok(_) => {
+                        consecutive_poll_errors = 0;
                         heartbeat_counter += 1;
                         if heartbeat_counter >= HEARTBEAT_INTERVAL {
                             heartbeat_counter = 0;
@@ -256,7 +333,69 @@ fn main() {
                     }
                     Err(e) => {
                         log::error!("[tg-poll] error: {}", e);
-                        std::thread::sleep(std::time::Duration::from_secs(5));
+                        if let Some(delay) = smsgate::im::telegram::poll_retry_after(&e) {
+                            consecutive_poll_errors = 0;
+                            log::warn!(
+                                "[tg-poll] rate limited; retrying after {}s",
+                                delay.as_secs()
+                            );
+                            if !sleep_poll_thread(delay, &tg_tx) {
+                                break;
+                            }
+                            continue;
+                        }
+
+                        consecutive_poll_errors = consecutive_poll_errors.saturating_add(1);
+                        if consecutive_poll_errors == 1
+                            || consecutive_poll_errors.is_multiple_of(12)
+                        {
+                            let _ = tg_poll_event_tx.send(TelegramSendEvent::Log(
+                                smsgate::log_ring::LogEntry::runtime(
+                                    smsgate::log_ring::LogKind::Network,
+                                    "telegram poll",
+                                    &e.to_string(),
+                                    "-".into(),
+                                    false,
+                                ),
+                            ));
+                        }
+                        if consecutive_poll_errors.is_multiple_of(12) {
+                            log::warn!(
+                                "[tg-poll] {} consecutive errors; rebuilding transport",
+                                consecutive_poll_errors
+                            );
+                            let rebuilt = if wifi_ok {
+                                TelegramHttpClient::new(None).map(|http| {
+                                    TelegramMessenger::new_wifi(
+                                        http,
+                                        tg_token_poll.clone(),
+                                        tg_chat_id_poll,
+                                    )
+                                })
+                            } else {
+                                Ok(TelegramMessenger::new_modem(
+                                    modem_tg.clone(),
+                                    tg_token_poll.clone(),
+                                    tg_chat_id_poll,
+                                ))
+                            };
+                            match rebuilt {
+                                Ok(messenger) => {
+                                    poll_messenger = messenger
+                                        .with_trusted_chat_ids(tg_trusted_chat_ids_poll.clone());
+                                    consecutive_poll_errors = 0;
+                                }
+                                Err(rebuild_error) => {
+                                    log::error!(
+                                        "[tg-poll] transport rebuild failed: {}",
+                                        rebuild_error
+                                    );
+                                }
+                            }
+                        }
+                        if !sleep_poll_thread(std::time::Duration::from_secs(5), &tg_tx) {
+                            break;
+                        }
                     }
                 }
             }
@@ -264,7 +403,6 @@ fn main() {
         .expect("failed to spawn tg-poll thread");
 
     // ---- Main loop ----
-    let boot_ms = now_ms();
     let mut consecutive_failures: u8 = 0;
     let mut last_status_update = now_ms();
     let mut pause_until: Option<std::time::Instant> = None;
@@ -280,16 +418,43 @@ fn main() {
 
     loop {
         let now = now_ms();
-        let uptime_ms = elapsed_since(boot_ms, now);
+        let uptime_ms = u64::try_from(boot_started.elapsed().as_millis()).unwrap_or(u64::MAX);
 
         // Kick the hardware watchdog
-        unsafe { esp_idf_sys::esp_task_wdt_reset(); }
+        unsafe {
+            esp_idf_sys::esp_task_wdt_reset();
+        }
+
+        // Persist diagnostics from the outbound worker. A restart event means
+        // Telegram has been continuously unavailable beyond the recovery window.
+        while let Ok(event) = tg_send_event_rx.try_recv() {
+            match event {
+                TelegramSendEvent::Log(mut entry) => {
+                    if entry.timestamp == "-" {
+                        entry.timestamp = log_clock.timestamp(uptime_ms as u32);
+                    }
+                    log.push(entry)
+                }
+                TelegramSendEvent::Restart(mut entry) => {
+                    if entry.timestamp == "-" {
+                        entry.timestamp = log_clock.timestamp(uptime_ms as u32);
+                    }
+                    log.push(entry);
+                    log::error!("[main] Telegram send recovery exhausted — rebooting");
+                    esp_idf_hal::reset::restart();
+                }
+            }
+        }
 
         // Auto-resume after timed /pause
         if let Some(until) = pause_until {
             if std::time::Instant::now() >= until {
                 pause_until = None;
-                let _ = smsgate::persist::save_bool(&mut *store, smsgate::persist::keys::FWD_ENABLED, true);
+                let _ = smsgate::persist::save_bool(
+                    &mut *store,
+                    smsgate::persist::keys::FWD_ENABLED,
+                    true,
+                );
                 let _ = messenger.send_message(smsgate::i18n::resume_ok());
                 log::info!("[main] pause expired — forwarding re-enabled");
             }
@@ -328,17 +493,20 @@ fn main() {
                     let _ = messenger.send_message(&smsgate::i18n::low_signal(modem_status.csq));
                 } else if modem_status.csq > CSQ_WEAK && low_signal_alerted {
                     low_signal_alerted = false;
-                    let _ = messenger.send_message(&smsgate::i18n::signal_restored(modem_status.csq));
+                    let _ =
+                        messenger.send_message(&smsgate::i18n::signal_restored(modem_status.csq));
                 }
             }
 
             // Operator change alert (skip the initial "" → "SomeOp" transition)
-            if !modem_status.operator.is_empty() && !last_operator.is_empty()
+            if !modem_status.operator.is_empty()
+                && !last_operator.is_empty()
                 && modem_status.operator != last_operator
             {
-                let _ = messenger.send_message(
-                    &smsgate::i18n::operator_changed(&last_operator, &modem_status.operator),
-                );
+                let _ = messenger.send_message(&smsgate::i18n::operator_changed(
+                    &last_operator,
+                    &modem_status.operator,
+                ));
             }
             if !modem_status.operator.is_empty() {
                 last_operator.clone_from(&modem_status.operator);
@@ -353,8 +521,22 @@ fn main() {
                 let reconnected = reconnect_wifi(&mut wifi);
                 if reconnected {
                     log::info!("[wifi] reconnected OK");
+                    log.push(smsgate::log_ring::LogEntry::runtime(
+                        smsgate::log_ring::LogKind::Network,
+                        "wifi",
+                        "reconnected",
+                        log_clock.timestamp(uptime_ms as u32),
+                        true,
+                    ));
                 } else {
                     log::error!("[wifi] reconnect failed — will retry next cycle");
+                    log.push(smsgate::log_ring::LogEntry::runtime(
+                        smsgate::log_ring::LogKind::Network,
+                        "wifi",
+                        "reconnect failed",
+                        log_clock.timestamp(uptime_ms as u32),
+                        false,
+                    ));
                 }
             }
 
@@ -378,15 +560,30 @@ fn main() {
                 // Direct delivery has no modem slot — nothing to delete afterwards.
                 if cmt_pdu_pending {
                     cmt_pdu_pending = false;
-                    process_pdu_hex(urc.trim(), 0, &mut router, &mut log,
-                                    &mut concat, &mut messenger, &mut *store);
+                    process_pdu_hex(
+                        urc.trim(),
+                        0,
+                        &mut router,
+                        &mut log,
+                        &mut concat,
+                        &mut messenger,
+                        &mut *store,
+                    );
                     continue;
                 }
 
                 match parse_urc(&urc) {
                     Urc::NewSms { mem, index } => {
-                        handle_new_sms(&mem, index, &mut *md, &mut router, &mut log,
-                                       &mut concat, &mut messenger, &mut *store);
+                        handle_new_sms(
+                            &mem,
+                            index,
+                            &mut *md,
+                            &mut router,
+                            &mut log,
+                            &mut concat,
+                            &mut messenger,
+                            &mut *store,
+                        );
                     }
                     Urc::SmsDelivery => {
                         cmt_pdu_pending = true; // next poll_urc() line is the raw PDU
@@ -397,6 +594,15 @@ fn main() {
                 }
             }
             call_handler.tick(&mut *md, &mut messenger, &mut sender);
+            if let Some((caller, ok)) = call_handler.take_log_event() {
+                log.push(smsgate::log_ring::LogEntry::runtime(
+                    smsgate::log_ring::LogKind::Call,
+                    &caller,
+                    "incoming call hung up",
+                    log_clock.timestamp(uptime_ms as u32),
+                    ok,
+                ));
+            }
         }
 
         // Collect any Telegram messages delivered by the polling thread
@@ -405,7 +611,10 @@ fn main() {
             let mut channel_active = false;
             loop {
                 match tg_rx.try_recv() {
-                    Ok(msgs) => { channel_active = true; batch.extend(msgs); }
+                    Ok(msgs) => {
+                        channel_active = true;
+                        batch.extend(msgs);
+                    }
                     Err(std::sync::mpsc::TryRecvError::Empty) => break,
                     Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                         log::error!("[main] tg-poll thread died — rebooting");
@@ -424,22 +633,158 @@ fn main() {
         if !tg_messages.is_empty() {
             if let Some(new_cursor) = tg_messages.iter().map(|m| m.cursor).max() {
                 let _ = smsgate::persist::save_i64(
-                    &mut *store, smsgate::persist::keys::IM_CURSOR, new_cursor,
+                    &mut *store,
+                    smsgate::persist::keys::IM_CURSOR,
+                    new_cursor,
                 );
             }
             let free_heap = unsafe { esp_idf_sys::esp_get_free_heap_size() };
+            if let Some(cursor) = smsgate::ota::latest_ota_document_cursor(&tg_messages) {
+                if let Some(message) = tg_messages.iter().find(|message| message.cursor == cursor) {
+                    if let Some(document) = message.document.as_ref() {
+                        let conversation_id = message.conversation_id.unwrap_or(creds.chat_id);
+                        if !wifi_ok {
+                            let _ = messenger.send_message_to(
+                                conversation_id,
+                                smsgate::i18n::ota_upload_wifi_required(),
+                            );
+                        } else {
+                            let name = document.file_name.as_deref().unwrap_or("firmware.bin");
+                            let progress_id = messenger
+                                .send_message_to(
+                                    conversation_id,
+                                    &smsgate::i18n::ota_upload_starting(name, document.file_size),
+                                )
+                                .ok();
+                            log.push(smsgate::log_ring::LogEntry::runtime(
+                                smsgate::log_ring::LogKind::Ota,
+                                "telegram",
+                                &format!("upload started: {name}"),
+                                log_clock.timestamp(uptime_ms as u32),
+                                true,
+                            ));
+                            match TelegramHttpClient::new(None) {
+                                Ok(mut http) => {
+                                    let mut next_progress = 128 * 1024;
+                                    let result = smsgate::ota::perform_telegram_update(
+                                        &mut http,
+                                        &creds.bot_token,
+                                        document,
+                                        |written, total| {
+                                            if written >= next_progress {
+                                                next_progress = written.saturating_add(128 * 1024);
+                                                if let Some(id) = progress_id {
+                                                    let _ = messenger
+                                                        .edit_message_in_with_keyboard_and_format(
+                                                            conversation_id,
+                                                            id,
+                                                            &smsgate::i18n::ota_upload_progress(
+                                                                written, total,
+                                                            ),
+                                                            None,
+                                                            smsgate::im::MessageFormat::Plain,
+                                                        );
+                                                }
+                                            }
+                                        },
+                                    );
+                                    match result {
+                                        Ok(()) => {
+                                            let text = smsgate::i18n::update_success();
+                                            if let Some(id) = progress_id {
+                                                let _ = messenger
+                                                    .edit_message_in_with_keyboard_and_format(
+                                                        conversation_id,
+                                                        id,
+                                                        &text,
+                                                        None,
+                                                        smsgate::im::MessageFormat::Plain,
+                                                    );
+                                            }
+                                            log.push(smsgate::log_ring::LogEntry::runtime(
+                                                smsgate::log_ring::LogKind::Ota,
+                                                "telegram",
+                                                "upload complete; rebooting",
+                                                log_clock.timestamp(uptime_ms as u32),
+                                                true,
+                                            ));
+                                            std::thread::sleep(std::time::Duration::from_millis(
+                                                500,
+                                            ));
+                                            esp_idf_hal::reset::restart();
+                                        }
+                                        Err(error) => {
+                                            let text =
+                                                smsgate::i18n::update_failed(&error.to_string());
+                                            if let Some(id) = progress_id {
+                                                let _ = messenger
+                                                    .edit_message_in_with_keyboard_and_format(
+                                                        conversation_id,
+                                                        id,
+                                                        &text,
+                                                        None,
+                                                        smsgate::im::MessageFormat::Plain,
+                                                    );
+                                            } else {
+                                                let _ = messenger
+                                                    .send_message_to(conversation_id, &text);
+                                            }
+                                            log.push(smsgate::log_ring::LogEntry::runtime(
+                                                smsgate::log_ring::LogKind::Ota,
+                                                "telegram",
+                                                &error.to_string(),
+                                                log_clock.timestamp(uptime_ms as u32),
+                                                false,
+                                            ));
+                                        }
+                                    }
+                                }
+                                Err(error) => {
+                                    let _ = messenger.send_message_to(
+                                        conversation_id,
+                                        &smsgate::i18n::update_failed(&error.to_string()),
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             match poll_and_dispatch(
-                &tg_messages, &mut messenger, &mut sender, &router, &registry,
-                &mut *store, &log, &modem_status, uptime_ms, free_heap, &wifi_info,
+                &tg_messages,
+                &mut messenger,
+                &mut sender,
+                &router,
+                &registry,
+                &mut *store,
+                &log,
+                &modem_status,
+                uptime_ms,
+                free_heap,
+                &wifi_info,
             ) {
                 Ok((restart, maybe_pause, ota_action)) => {
                     consecutive_failures = 0;
+                    for message in &tg_messages {
+                        if message.text.trim().starts_with('/') && message.document.is_none() {
+                            log.push(smsgate::log_ring::LogEntry::runtime(
+                                smsgate::log_ring::LogKind::User,
+                                &message
+                                    .conversation_id
+                                    .map(|id| id.to_string())
+                                    .unwrap_or_else(|| "unknown".into()),
+                                message.text.trim(),
+                                log_clock.timestamp(uptime_ms as u32),
+                                true,
+                            ));
+                        }
+                    }
                     if let Some(mins) = maybe_pause {
                         // Cap at 1 week to prevent Duration overflow on pathological input.
                         const MAX_PAUSE_MINS: u64 = 7 * 24 * 60;
                         let secs = (mins as u64).min(MAX_PAUSE_MINS) * 60;
-                        pause_until = Some(std::time::Instant::now()
-                            + std::time::Duration::from_secs(secs));
+                        pause_until =
+                            Some(std::time::Instant::now() + std::time::Duration::from_secs(secs));
                         log::info!("[main] pause timer set for {} min", mins);
                     }
                     match ota_action {
@@ -451,12 +796,15 @@ fn main() {
                                 }
                             }) {
                                 Ok(()) => {
-                                    let _ = messenger.send_message(&smsgate::i18n::update_success());
+                                    let _ =
+                                        messenger.send_message(&smsgate::i18n::update_success());
                                     esp_idf_hal::reset::restart();
                                 }
                                 Err(e) => {
                                     log::error!("[main] OTA failed: {}", e);
-                                    let _ = messenger.send_message(&smsgate::i18n::update_failed(&e.to_string()));
+                                    let _ = messenger.send_message(&smsgate::i18n::update_failed(
+                                        &e.to_string(),
+                                    ));
                                 }
                             }
                         }
@@ -464,11 +812,14 @@ fn main() {
                             match smsgate::ota::confirm_running() {
                                 Ok(()) => {
                                     log::info!("[main] OTA confirm: running slot marked valid");
-                                    let _ = messenger.send_message(smsgate::i18n::update_confirmed());
+                                    let _ =
+                                        messenger.send_message(smsgate::i18n::update_confirmed());
                                 }
                                 Err(e) => {
                                     log::error!("[main] OTA confirm failed: {}", e);
-                                    let _ = messenger.send_message(&smsgate::i18n::update_failed(&e.to_string()));
+                                    let _ = messenger.send_message(&smsgate::i18n::update_failed(
+                                        &e.to_string(),
+                                    ));
                                 }
                             }
                         }
@@ -517,7 +868,9 @@ fn main() {
 #[cfg(feature = "esp32")]
 fn build_registry(help_text: &str) -> CommandRegistry {
     let mut r = CommandRegistry::new();
-    r.register(Box::new(HelpCommand { help_text: help_text.to_string() }));
+    r.register(Box::new(HelpCommand {
+        help_text: help_text.to_string(),
+    }));
     r.register(Box::new(StatusCommand));
     r.register(Box::new(SendCommand));
     r.register(Box::new(LogCommand));
@@ -537,7 +890,7 @@ fn fmt_wifi(wifi_ok: bool, rssi: Option<i32>, ssid: &str) -> String {
     }
     match rssi {
         Some(r) => format!("{} ({} dBm)", ssid, r),
-        None    => format!("{} (--)", ssid),
+        None => format!("{} (--)", ssid),
     }
 }
 
@@ -568,8 +921,12 @@ fn setup_wifi(
     use std::time::Duration;
 
     let config = Configuration::Client(ClientConfiguration {
-        ssid: ssid.try_into().map_err(|_| anyhow::anyhow!("SSID too long"))?,
-        password: pass.try_into().map_err(|_| anyhow::anyhow!("Password too long"))?,
+        ssid: ssid
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("SSID too long"))?,
+        password: pass
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Password too long"))?,
         auth_method: AuthMethod::WPA2Personal,
         ..Default::default()
     });
@@ -602,12 +959,46 @@ struct SinkCfg {
 fn parse_sink_config() -> Vec<SinkCfg> {
     let json = smsgate::config::Config::SINKS;
     let arr: Vec<serde_json::Value> = serde_json::from_str(json).unwrap_or_default();
-    arr.into_iter().filter_map(|v| {
-        Some(SinkCfg {
-            sink_type: v.get("type")?.as_str()?.to_string(),
-            url: v.get("url")?.as_str()?.to_string(),
+    arr.into_iter()
+        .filter_map(|v| {
+            Some(SinkCfg {
+                sink_type: v.get("type")?.as_str()?.to_string(),
+                url: v.get("url")?.as_str()?.to_string(),
+            })
         })
-    }).collect()
+        .collect()
+}
+
+#[cfg(feature = "esp32")]
+fn parse_trusted_chat_ids() -> Vec<i64> {
+    serde_json::from_str(Config::TRUSTED_CHAT_IDS).unwrap_or_default()
+}
+
+#[cfg(feature = "esp32")]
+fn sleep_poll_thread(
+    duration: std::time::Duration,
+    tx: &std::sync::mpsc::Sender<Vec<smsgate::im::InboundMessage>>,
+) -> bool {
+    const TICK: std::time::Duration = std::time::Duration::from_secs(5);
+    const HEARTBEAT: std::time::Duration = std::time::Duration::from_secs(30);
+    let started = std::time::Instant::now();
+    let mut last_heartbeat = started;
+    loop {
+        unsafe {
+            esp_idf_sys::esp_task_wdt_reset();
+        }
+        let remaining = duration.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            return true;
+        }
+        std::thread::sleep(remaining.min(TICK));
+        if last_heartbeat.elapsed() >= HEARTBEAT {
+            if tx.send(Vec::new()).is_err() {
+                return false;
+            }
+            last_heartbeat = std::time::Instant::now();
+        }
+    }
 }
 
 /// Reconnect an already-started BlockingWifi that has lost its AP association.
@@ -667,7 +1058,15 @@ fn serial_provision(nvs_partition: &esp_idf_svc::nvs::EspDefaultNvsPartition) ->
     println!("APN Password (leave blank if none):");
     let apn_pass = read();
 
-    let creds = smsgate::creds::RuntimeCreds { wifi_ssid, wifi_pass, bot_token, chat_id, apn, apn_user, apn_pass };
+    let creds = smsgate::creds::RuntimeCreds {
+        wifi_ssid,
+        wifi_pass,
+        bot_token,
+        chat_id,
+        apn,
+        apn_user,
+        apn_pass,
+    };
 
     if creds.save(nvs_partition) {
         println!("\nCredentials saved. Rebooting…");

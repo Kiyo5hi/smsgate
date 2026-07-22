@@ -1,0 +1,21 @@
+# ESP32-S3 defaults for LilyGo T-A7670X S3 Standard (H799)
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=60
+CONFIG_LWIP_DNS_MAX_SERVERS=2
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_ESP_TLS_INSECURE=n
+CONFIG_HTTPD_MAX_REQ_HDR_LEN=1024
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=32768
+
+# H799 uses an ESP32-S3-WROOM-1-N16R2. PSRAM is intentionally left disabled;
+# smsgate does not need it, and this keeps allocation behavior identical to R2.
+# CONFIG_SPIRAM=n
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# ESP-USB is the native USB Serial/JTAG port used for flashing and provisioning.
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+
+CONFIG_PARTITION_TABLE_CUSTOM=y
+# build.rs installs partitions_ota_16m.csv under this compatibility name.
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions_ota.csv"
+CONFIG_PARTITION_TABLE_OFFSET=0x8000
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y

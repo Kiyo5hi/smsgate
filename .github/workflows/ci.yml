@@ -7,9 +7,27 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  host:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --no-default-features --features testing
+        with:
+          components: rustfmt, clippy
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint
+        run: cargo clippy --no-default-features --features testing --all-targets -- -D warnings
+      - name: Test
+        run: cargo test --no-default-features --features testing
+      - name: Validate board partition layouts
+        shell: python
+        run: |
+          import csv
+          layouts = [('partitions_ota_4m.csv', 4 << 20), ('partitions_ota_16m.csv', 16 << 20)]
+          for path, flash_size in layouts:
+              rows = [r for r in csv.reader(line for line in open(path) if not line.lstrip().startswith('#')) if r]
+              parts = {r[0].strip(): (int(r[3], 0), int(r[4], 0)) for r in rows}
+              assert {'nvs', 'otadata', 'ota_0', 'ota_1', 'log_ring'} <= parts.keys()
+              assert max(offset + size for offset, size in parts.values()) <= flash_size
+              assert parts['ota_0'][1] == parts['ota_1'][1]

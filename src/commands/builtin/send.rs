@@ -2,14 +2,18 @@
 //!
 //! Returns a sentinel line for poller.rs to parse + a user-visible confirmation.
 
-use crate::commands::{Command, CommandContext, SEND_SENTINEL};
-use crate::sms::{MAX_SMS_PARTS, codec::count_sms_parts};
+use crate::commands::{push_encoded_sentinel_body, Command, CommandContext, SEND_SENTINEL};
+use crate::sms::{codec::count_sms_parts, MAX_SMS_PARTS};
 
 pub struct SendCommand;
 
 impl Command for SendCommand {
-    fn name(&self) -> &'static str { "send" }
-    fn description(&self) -> &'static str { crate::i18n::desc_send() }
+    fn name(&self) -> &'static str {
+        "send"
+    }
+    fn description(&self) -> &'static str {
+        crate::i18n::desc_send()
+    }
 
     fn handle(&self, args: &str, _ctx: &CommandContext) -> String {
         let args = args.trim();
@@ -28,10 +32,17 @@ impl Command for SendCommand {
         if parts == 0 {
             return crate::i18n::send_too_long().to_string();
         }
-        let preview: String = body.chars().take(50).collect();
-        let body_encoded = body.replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r");
-        format!("{}{}|{}\n{}",
-            SEND_SENTINEL, phone, body_encoded,
-            crate::i18n::send_queued(&phone, &preview, parts))
+        let (preview, truncated) = crate::text::char_prefix(body, 50);
+        let queued = crate::i18n::send_queued(&phone, preview, truncated, parts);
+        let mut out = String::with_capacity(
+            SEND_SENTINEL.len() + phone.len() + body.len() + queued.len() + 2,
+        );
+        out.push_str(SEND_SENTINEL);
+        out.push_str(&phone);
+        out.push('|');
+        push_encoded_sentinel_body(&mut out, body);
+        out.push('\n');
+        out.push_str(&queued);
+        out
     }
 }
