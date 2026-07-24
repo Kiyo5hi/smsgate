@@ -109,11 +109,20 @@ impl A76xxModem {
             Err(_) => log::debug!("[a76xx] CPMS? timed out"),
         }
 
-        // Wait for network registration (up to 30 s)
+        // Wait for network registration (up to 30 s). CEREG is the
+        // authoritative registration status on LTE-only networks.
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            let r = self.send_at("+CREG?")?;
-            if creg_registered(&r.body) {
+            let eps_registered = self
+                .send_at("+CEREG?")
+                .is_ok_and(|response| response.ok && creg_registered(&response.body));
+            let cs_registered = if eps_registered {
+                false
+            } else {
+                self.send_at("+CREG?")
+                    .is_ok_and(|response| response.ok && creg_registered(&response.body))
+            };
+            if eps_registered || cs_registered {
                 log::info!("[a76xx] network registered");
                 break;
             }
@@ -125,9 +134,8 @@ impl A76xxModem {
         }
 
         // Only send AT+CGATT=1 when cellular data is explicitly requested.
-        // AT+CGATT=0 (detach) is unreliable on A7670G — the modem frequently
-        // doesn't respond within CMD_TIMEOUT, causing a 5 s stall at boot.
-        // SMS delivery works without touching CGATT.
+        // Never use CGATT=0 as a data guard: it detaches the whole LTE packet
+        // domain and can also remove LTE/IMS registration needed for SMS.
         if cellular_data {
             match self.send_at("+CGATT=1") {
                 Ok(r) if r.ok => log::info!("[a76xx] cellular data enabled (AT+CGATT=1 OK)"),
@@ -152,14 +160,9 @@ impl A76xxModem {
         let mut completed = false;
         let mut any_ok = false;
         let mut last_error = None;
-        for cmd in [
-            "+QIDEACT=1",
-            "+QIDEACT=8",
-            "+CNACT=0,1",
-            "+CNACT=0,8",
-            "+CGACT=0,1",
-            "+CGACT=0,8",
-        ] {
+        // CID 1 is the user/default data context observed on A7670G. CID 8 is
+        // network-managed (typically IMS) and must remain available for LTE SMS.
+        for cmd in ["+QIDEACT=1", "+CNACT=0,1", "+CGACT=0,1"] {
             match self.send_at(cmd) {
                 Ok(response) => {
                     completed = true;
@@ -184,8 +187,11 @@ impl A76xxModem {
         match self.send_at("+CGACT?") {
             Ok(response) if response.ok => {
                 log::info!("[a76xx] CGACT after guard: {}", response.body.trim());
-                if packet_data_context_active(&response.body) {
-                    self.detach_packet_domain(&response.body)
+                if packet_data_context_active(&response.body, 1) {
+                    Err(ModemError::AtError(format!(
+                        "user packet-data context still active: {}",
+                        response.body.trim()
+                    )))
                 } else {
                     Ok(())
                 }
@@ -206,77 +212,18 @@ impl A76xxModem {
             }
         }
     }
-
-    fn detach_packet_domain(&mut self, active_contexts: &str) -> Result<(), ModemError> {
-        log::warn!(
-            "[a76xx] PDP still active after CGACT; detaching packet domain: {}",
-            active_contexts.trim()
-        );
-        match self
-            .port
-            .send_at_timeout("+CGATT=0", std::time::Duration::from_secs(60))
-        {
-            Ok(response) if response.ok => {
-                log::info!("[a76xx] data guard AT+CGATT=0 OK");
-                std::thread::sleep(std::time::Duration::from_secs(1));
-            }
-            Ok(response) => {
-                return Err(ModemError::AtError(format!(
-                    "CGATT=0 failed: {}",
-                    response.body.trim()
-                )));
-            }
-            Err(error) => return Err(error),
-        }
-
-        match self.send_at("+CGATT?") {
-            Ok(response) if response.ok => {
-                log::info!("[a76xx] CGATT after guard: {}", response.body.trim());
-                if packet_domain_detached(&response.body) {
-                    return Ok(());
-                }
-            }
-            Ok(response) => log::debug!("[a76xx] CGATT? after guard: {}", response.body.trim()),
-            Err(error) => log::warn!("[a76xx] CGATT? after guard failed: {}", error),
-        }
-
-        match self.send_at("+CGACT?") {
-            Ok(response) if response.ok => {
-                log::info!("[a76xx] CGACT after detach: {}", response.body.trim());
-                if packet_data_context_active(&response.body) {
-                    Err(ModemError::AtError(format!(
-                        "packet data still active: {}",
-                        response.body.trim()
-                    )))
-                } else {
-                    Ok(())
-                }
-            }
-            Ok(response) => Err(ModemError::AtError(response.body)),
-            Err(error) => Err(error),
-        }
-    }
 }
 
 #[cfg(feature = "esp32")]
-fn packet_data_context_active(body: &str) -> bool {
+fn packet_data_context_active(body: &str, target_cid: u8) -> bool {
     body.lines().any(|line| {
         let Some(rest) = line.trim().strip_prefix("+CGACT:") else {
             return false;
         };
-        rest.split(',')
-            .nth(1)
-            .is_some_and(|state| state.trim() == "1")
-    })
-}
-
-#[cfg(feature = "esp32")]
-fn packet_domain_detached(body: &str) -> bool {
-    body.lines().any(|line| {
-        let Some(rest) = line.trim().strip_prefix("+CGATT:") else {
-            return false;
-        };
-        rest.trim() == "0"
+        let mut fields = rest.split(',').map(str::trim);
+        let cid = fields.next().and_then(|value| value.parse::<u8>().ok());
+        let state = fields.next();
+        cid == Some(target_cid) && state == Some("1")
     })
 }
 
@@ -318,5 +265,10 @@ impl ModemPort for A76xxModem {
 
     fn disable_packet_data(&mut self) -> Result<(), ModemError> {
         self.disable_packet_data_contexts()
+    }
+
+    fn packet_context_required_for_sms(&self, cid: u8) -> bool {
+        // A7670G exposes its network-managed IMS context as CID 8.
+        cid == 8
     }
 }

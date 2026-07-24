@@ -641,6 +641,13 @@ fn main() {
                             .map(|value| value.to_string())
                             .unwrap_or_else(|| "unknown".into());
                         if Config::MODEM_DISABLE_CELLULAR_DATA {
+                            if cid.is_some_and(|value| md.packet_context_required_for_sms(value)) {
+                                log::info!(
+                                    "[main] network-managed PDP cid {} retained for LTE/SMS",
+                                    cid_text
+                                );
+                                continue;
+                            }
                             if elapsed_since(last_data_guard_attempt, now) < DATA_GUARD_RETRY_MS {
                                 log::debug!(
                                     "[main] auto PDP cid {}; data guard retry suppressed",

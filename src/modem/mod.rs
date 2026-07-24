@@ -69,10 +69,26 @@ impl Default for ModemStatus {
     }
 }
 
-/// Parse a +CREG? response body for registration status.
-/// Returns true when stat is 1 (home) or 5 (roaming).
+/// Parse a +CREG?, +CGREG?, or +CEREG? response body for registration status.
+/// Home, roaming, and SMS-only registration states are all usable.
 pub fn creg_registered(body: &str) -> bool {
-    body.contains(",1") || body.contains(",5")
+    body.lines().any(|line| {
+        let line = line.trim();
+        let Some((_, values)) = line.split_once(':') else {
+            return false;
+        };
+        if !line.starts_with("+CREG:")
+            && !line.starts_with("+CGREG:")
+            && !line.starts_with("+CEREG:")
+        {
+            return false;
+        }
+
+        let mut fields = values.split(',').map(str::trim);
+        let first = fields.next().and_then(|value| value.parse::<u8>().ok());
+        let second = fields.next().and_then(|value| value.parse::<u8>().ok());
+        matches!(second.or(first), Some(1 | 5 | 6 | 7))
+    })
 }
 
 // ── Tier 1: wire protocol ─────────────────────────────────────────────────────
@@ -145,6 +161,11 @@ pub trait ModemPort: AtTransport {
         Err(ModemError::NotSupported)
     }
 
+    /// Whether a network-managed PDP context must remain active for LTE SMS.
+    fn packet_context_required_for_sms(&self, _cid: u8) -> bool {
+        false
+    }
+
     /// Query CSQ, operator name, and registration status from the modem.
     fn update_status(&mut self) -> ModemStatus {
         let mut s = ModemStatus::default();
@@ -164,8 +185,15 @@ pub trait ModemPort: AtTransport {
                 }
             }
         }
-        if let Ok(r) = self.send_at("+CREG?") {
-            s.registered = creg_registered(&r.body);
+        // CEREG is authoritative on LTE-only networks. Fall back to CREG for
+        // circuit-switched networks and older modem implementations.
+        if let Ok(r) = self.send_at("+CEREG?") {
+            s.registered = r.ok && creg_registered(&r.body);
+        }
+        if !s.registered {
+            if let Ok(r) = self.send_at("+CREG?") {
+                s.registered = r.ok && creg_registered(&r.body);
+            }
         }
         s
     }
