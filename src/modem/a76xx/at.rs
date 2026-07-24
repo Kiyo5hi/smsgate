@@ -47,12 +47,21 @@ impl<U: UartPort> AtPort<U> {
 
     /// Send "AT<cmd>\r" and collect lines until OK/ERROR/timeout.
     pub fn send_at(&mut self, cmd: &str) -> Result<AtResponse, ModemError> {
+        self.send_at_timeout(cmd, CMD_TIMEOUT)
+    }
+
+    /// Send "AT<cmd>\r" with a command-specific timeout.
+    pub fn send_at_timeout(
+        &mut self,
+        cmd: &str,
+        timeout: Duration,
+    ) -> Result<AtResponse, ModemError> {
         self.drain_urcs();
 
         let command = format!("AT{}\r", cmd);
         self.uart.write_all(command.as_bytes())?;
 
-        let deadline = Instant::now() + CMD_TIMEOUT;
+        let deadline = Instant::now() + timeout;
         let mut body = ResponseBody::new();
         if let Some(err) = self.collect_until_ok(deadline, &mut body)? {
             return Ok(err);

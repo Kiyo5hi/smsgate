@@ -117,7 +117,9 @@ fn main() {
     let wifi_ok = setup_wifi(&mut wifi, &creds.wifi_ssid, &creds.wifi_pass).is_ok();
     if !wifi_ok {
         log::warn!("[wifi] failed after retries");
-        if Config::CELLULAR_FALLBACK && !creds.apn.is_empty() {
+        if Config::CELLULAR_FALLBACK && Config::MODEM_DISABLE_CELLULAR_DATA {
+            panic!("no WiFi and cellular fallback is blocked by modem.disable_cellular_data=true");
+        } else if Config::CELLULAR_FALLBACK && !creds.apn.is_empty() {
             log::info!("[main] cellular fallback: attaching PDP context");
             qhttp::attach_pdp(
                 &mut *lock!(modem),
@@ -430,6 +432,8 @@ fn main() {
     let mut last_operator = String::new();
     const CLOCK_SYNC_RETRY_MS: u32 = 60_000;
     let mut last_clock_sync_attempt = now_ms().wrapping_sub(CLOCK_SYNC_RETRY_MS);
+    const DATA_GUARD_RETRY_MS: u32 = 30_000;
+    let mut last_data_guard_attempt = now_ms().wrapping_sub(DATA_GUARD_RETRY_MS);
     // +CMT direct delivery is two lines: header then raw PDU hex.
     // This flag is set when the header arrives so the next poll_urc() line
     // is treated as the PDU rather than a new URC.
@@ -631,6 +635,45 @@ fn main() {
                     }
                     Urc::SmsDelivery => {
                         cmt_pdu_pending = true; // next poll_urc() line is the raw PDU
+                    }
+                    Urc::PacketDataActivated { cid } => {
+                        let cid_text = cid
+                            .map(|value| value.to_string())
+                            .unwrap_or_else(|| "unknown".into());
+                        if Config::MODEM_DISABLE_CELLULAR_DATA {
+                            if elapsed_since(last_data_guard_attempt, now) < DATA_GUARD_RETRY_MS {
+                                log::debug!(
+                                    "[main] auto PDP cid {}; data guard retry suppressed",
+                                    cid_text
+                                );
+                                continue;
+                            }
+                            last_data_guard_attempt = now;
+                            let result = md.disable_packet_data();
+                            let ok = result.is_ok();
+                            let detail = match result {
+                                Ok(()) => format!("auto PDP cid {cid_text}; guard deactivated"),
+                                Err(error) => {
+                                    format!("auto PDP cid {cid_text}; guard failed: {error}")
+                                }
+                            };
+                            log::warn!("[main] {}", detail);
+                            log.push(smsgate::log_ring::LogEntry::runtime(
+                                smsgate::log_ring::LogKind::Network,
+                                "cellular data",
+                                &detail,
+                                log_clock.timestamp(uptime_ms as u32),
+                                ok,
+                            ));
+                        } else {
+                            log.push(smsgate::log_ring::LogEntry::runtime(
+                                smsgate::log_ring::LogKind::Network,
+                                "cellular data",
+                                &format!("PDP cid {cid_text} activated"),
+                                log_clock.timestamp(uptime_ms as u32),
+                                true,
+                            ));
+                        }
                     }
                     _ => {
                         call_handler.handle_urc(&urc, &mut *md, &mut messenger, &mut sender);

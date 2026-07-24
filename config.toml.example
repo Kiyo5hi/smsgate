@@ -31,6 +31,9 @@ pwrkey    = 4
 cellular_data = false
 # If WiFi fails after retries, attach PDP and use modem HTTPS for Telegram (same UART as SMS — use short poll timeouts).
 cellular_fallback = false
+# Keep packet data off for SMS-only deployments. If the modem/network auto-activates
+# a PDP context while roaming, the firmware deactivates it again.
+disable_cellular_data = true
 apn       = ""
 apn_user  = ""
 apn_pass  = ""

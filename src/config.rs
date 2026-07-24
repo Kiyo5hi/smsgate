@@ -23,6 +23,9 @@ impl Config {
     pub const MODEM_CELLULAR_DATA: bool = parse_bool_env_true(env!("CFG_MODEM_CELLULAR_DATA"));
     /// When WiFi fails, bring up PDP and send Telegram via modem `AT+QHTTP*` (requires `apn`).
     pub const CELLULAR_FALLBACK: bool = parse_bool_env_true(env!("CFG_CELLULAR_FALLBACK"));
+    /// SMS-only data guard: deactivate PDP contexts if the modem/network brings them up.
+    pub const MODEM_DISABLE_CELLULAR_DATA: bool =
+        parse_bool_env_true(env!("CFG_MODEM_DISABLE_CELLULAR_DATA"));
     pub const MODEM_APN: &'static str = env!("CFG_MODEM_APN");
     pub const MODEM_APN_USER: &'static str = env!("CFG_MODEM_APN_USER");
     pub const MODEM_APN_PASS: &'static str = env!("CFG_MODEM_APN_PASS");

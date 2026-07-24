@@ -17,7 +17,8 @@ pub fn is_urc(line: &str) -> bool {
              line.starts_with("+CLIP:") ||
              line.starts_with("RING")   ||
              line.starts_with("NO CARRIER") ||
-             line.starts_with("+CUSD:")
+             line.starts_with("+CUSD:") ||
+             line.starts_with("+CGEV:")
     )
 }
 
@@ -34,6 +35,10 @@ pub enum Urc {
     Clip(String),
     /// Registration status change.
     Creg,
+    /// Packet-data PDP context was activated by the modem or network.
+    PacketDataActivated { cid: Option<u8> },
+    /// Packet-data PDP context was deactivated.
+    PacketDataDeactivated { cid: Option<u8> },
     /// Status report available.
     StatusReport,
     /// Other / unrecognised.
@@ -71,8 +76,38 @@ pub fn parse_urc(line: &str) -> Urc {
     if line.starts_with("+CDS:") || line.starts_with("+CDSI:") {
         return Urc::StatusReport;
     }
+    if let Some(rest) = line.strip_prefix("+CGEV:") {
+        let rest = rest.trim();
+        if rest.contains("PDN ACT") || rest.contains("PDP ACT") {
+            return Urc::PacketDataActivated {
+                cid: first_number(rest),
+            };
+        }
+        if rest.contains("PDN DEACT") || rest.contains("PDP DEACT") {
+            return Urc::PacketDataDeactivated {
+                cid: first_number(rest),
+            };
+        }
+    }
     if line.starts_with("+CREG:") || line.starts_with("+CGREG:") || line.starts_with("+CEREG:") {
         return Urc::Creg;
     }
     Urc::Other(line.to_string())
+}
+
+fn first_number(value: &str) -> Option<u8> {
+    let bytes = value.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            i += 1;
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            return value[start..i].parse().ok();
+        }
+        i += 1;
+    }
+    None
 }

@@ -137,6 +137,14 @@ pub trait ModemPort: AtTransport {
         Err(ModemError::NotSupported)
     }
 
+    /// Deactivate packet-data PDP contexts for SMS-only operation.
+    ///
+    /// SMS and call handling should not require an IP data context. Concrete
+    /// modem drivers can override this with vendor-specific cleanup commands.
+    fn disable_packet_data(&mut self) -> Result<(), ModemError> {
+        Err(ModemError::NotSupported)
+    }
+
     /// Query CSQ, operator name, and registration status from the modem.
     fn update_status(&mut self) -> ModemStatus {
         let mut s = ModemStatus::default();

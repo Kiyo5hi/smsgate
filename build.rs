@@ -141,6 +141,15 @@ fn main() {
         "cargo:rustc-env=CFG_CELLULAR_FALLBACK={}",
         cellular_fallback
     );
+    let disable_cellular_data = config
+        .get("modem")
+        .and_then(|m| m.get("disable_cellular_data"))
+        .and_then(|v| v.as_bool())
+        .unwrap_or(!cellular_data && !cellular_fallback);
+    println!(
+        "cargo:rustc-env=CFG_MODEM_DISABLE_CELLULAR_DATA={}",
+        disable_cellular_data
+    );
     println!("cargo:rustc-env=CFG_MODEM_APN={}", get("modem", "apn"));
     println!(
         "cargo:rustc-env=CFG_MODEM_APN_USER={}",
@@ -256,6 +265,7 @@ fn emit_empty_defaults() {
     println!("cargo:rustc-env=CFG_MODEM_PWRKEY=4");
     println!("cargo:rustc-env=CFG_MODEM_CELLULAR_DATA=false");
     println!("cargo:rustc-env=CFG_CELLULAR_FALLBACK=false");
+    println!("cargo:rustc-env=CFG_MODEM_DISABLE_CELLULAR_DATA=true");
     println!("cargo:rustc-env=CFG_MODEM_APN=");
     println!("cargo:rustc-env=CFG_MODEM_APN_USER=");
     println!("cargo:rustc-env=CFG_MODEM_APN_PASS=");

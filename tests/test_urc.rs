@@ -52,6 +52,11 @@ fn cusd_is_urc() {
 }
 
 #[test]
+fn cgev_is_urc() {
+    assert!(is_urc("+CGEV: ME PDN ACT 8,1"));
+}
+
+#[test]
 fn ok_response_is_not_urc() {
     assert!(!is_urc("OK"));
 }
@@ -131,6 +136,22 @@ fn parse_creg_variants() {
     assert!(matches!(parse_urc("+CREG: 1"), Urc::Creg));
     assert!(matches!(parse_urc("+CGREG: 1"), Urc::Creg));
     assert!(matches!(parse_urc("+CEREG: 1"), Urc::Creg));
+}
+
+#[test]
+fn parse_cgev_pdn_act_extracts_cid() {
+    assert!(matches!(
+        parse_urc("+CGEV: ME PDN ACT 8,1"),
+        Urc::PacketDataActivated { cid: Some(8) }
+    ));
+}
+
+#[test]
+fn parse_cgev_pdn_deact_extracts_cid() {
+    assert!(matches!(
+        parse_urc("+CGEV: NW PDN DEACT 8"),
+        Urc::PacketDataDeactivated { cid: Some(8) }
+    ));
 }
 
 #[test]

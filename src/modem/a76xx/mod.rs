@@ -35,7 +35,12 @@ impl A76xxModem {
     /// Run the initialisation sequence:
     /// - Echo off, PDU mode, enable CMT URCs, wait for network registration.
     /// - Optionally attach or detach packet-switched service (`AT+CGATT`).
-    pub fn init(&mut self, cellular_data: bool, sim_pin: &str) -> Result<(), ModemError> {
+    pub fn init(
+        &mut self,
+        cellular_data: bool,
+        disable_cellular_data: bool,
+        sim_pin: &str,
+    ) -> Result<(), ModemError> {
         // Probe until the modem responds to AT (up to 15 s).
         // A7670G typically takes 5-10 s after power-on to become responsive.
         let probe_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -129,9 +134,150 @@ impl A76xxModem {
                 Ok(r) => log::warn!("[a76xx] AT+CGATT=1: {}", r.body.trim()),
                 Err(e) => log::warn!("[a76xx] AT+CGATT=1 failed: {}", e),
             }
+        } else if disable_cellular_data {
+            match self.disable_packet_data_contexts() {
+                Ok(()) => log::info!("[a76xx] packet data guard enabled"),
+                Err(e) => log::warn!("[a76xx] packet data guard init failed: {}", e),
+            }
         }
         Ok(())
     }
+
+    fn disable_packet_data_contexts(&mut self) -> Result<(), ModemError> {
+        let before = self.send_at("+CGACT?").ok();
+        if let Some(response) = before.as_ref().filter(|response| response.ok) {
+            log::info!("[a76xx] CGACT before guard: {}", response.body.trim());
+        }
+
+        let mut completed = false;
+        let mut any_ok = false;
+        let mut last_error = None;
+        for cmd in [
+            "+QIDEACT=1",
+            "+QIDEACT=8",
+            "+CNACT=0,1",
+            "+CNACT=0,8",
+            "+CGACT=0,1",
+            "+CGACT=0,8",
+        ] {
+            match self.send_at(cmd) {
+                Ok(response) => {
+                    completed = true;
+                    if response.ok {
+                        any_ok = true;
+                        log::info!("[a76xx] data guard AT{} OK", cmd);
+                    } else {
+                        log::debug!(
+                            "[a76xx] data guard AT{} returned: {}",
+                            cmd,
+                            response.body.trim()
+                        );
+                    }
+                }
+                Err(error) => {
+                    log::warn!("[a76xx] data guard AT{} failed: {}", cmd, error);
+                    last_error = Some(error);
+                }
+            }
+        }
+
+        match self.send_at("+CGACT?") {
+            Ok(response) if response.ok => {
+                log::info!("[a76xx] CGACT after guard: {}", response.body.trim());
+                if packet_data_context_active(&response.body) {
+                    self.detach_packet_domain(&response.body)
+                } else {
+                    Ok(())
+                }
+            }
+            Ok(response) => {
+                if any_ok || completed {
+                    Ok(())
+                } else {
+                    Err(ModemError::AtError(response.body))
+                }
+            }
+            Err(error) => {
+                if any_ok || completed {
+                    Ok(())
+                } else {
+                    Err(last_error.unwrap_or(error))
+                }
+            }
+        }
+    }
+
+    fn detach_packet_domain(&mut self, active_contexts: &str) -> Result<(), ModemError> {
+        log::warn!(
+            "[a76xx] PDP still active after CGACT; detaching packet domain: {}",
+            active_contexts.trim()
+        );
+        match self
+            .port
+            .send_at_timeout("+CGATT=0", std::time::Duration::from_secs(60))
+        {
+            Ok(response) if response.ok => {
+                log::info!("[a76xx] data guard AT+CGATT=0 OK");
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            Ok(response) => {
+                return Err(ModemError::AtError(format!(
+                    "CGATT=0 failed: {}",
+                    response.body.trim()
+                )));
+            }
+            Err(error) => return Err(error),
+        }
+
+        match self.send_at("+CGATT?") {
+            Ok(response) if response.ok => {
+                log::info!("[a76xx] CGATT after guard: {}", response.body.trim());
+                if packet_domain_detached(&response.body) {
+                    return Ok(());
+                }
+            }
+            Ok(response) => log::debug!("[a76xx] CGATT? after guard: {}", response.body.trim()),
+            Err(error) => log::warn!("[a76xx] CGATT? after guard failed: {}", error),
+        }
+
+        match self.send_at("+CGACT?") {
+            Ok(response) if response.ok => {
+                log::info!("[a76xx] CGACT after detach: {}", response.body.trim());
+                if packet_data_context_active(&response.body) {
+                    Err(ModemError::AtError(format!(
+                        "packet data still active: {}",
+                        response.body.trim()
+                    )))
+                } else {
+                    Ok(())
+                }
+            }
+            Ok(response) => Err(ModemError::AtError(response.body)),
+            Err(error) => Err(error),
+        }
+    }
+}
+
+#[cfg(feature = "esp32")]
+fn packet_data_context_active(body: &str) -> bool {
+    body.lines().any(|line| {
+        let Some(rest) = line.trim().strip_prefix("+CGACT:") else {
+            return false;
+        };
+        rest.split(',')
+            .nth(1)
+            .is_some_and(|state| state.trim() == "1")
+    })
+}
+
+#[cfg(feature = "esp32")]
+fn packet_domain_detached(body: &str) -> bool {
+    body.lines().any(|line| {
+        let Some(rest) = line.trim().strip_prefix("+CGATT:") else {
+            return false;
+        };
+        rest.trim() == "0"
+    })
 }
 
 #[cfg(feature = "esp32")]
@@ -168,5 +314,9 @@ impl ModemPort for A76xxModem {
 
     fn post_telegram_https(&mut self, path: &str, json: &str) -> Result<String, ModemError> {
         qhttp::post_json(self, path, json)
+    }
+
+    fn disable_packet_data(&mut self) -> Result<(), ModemError> {
+        self.disable_packet_data_contexts()
     }
 }
