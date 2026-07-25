@@ -248,7 +248,9 @@ fn log_page_is_html_escaped_and_has_older_button() {
     );
     assert!(page.text.contains("&lt;admin&gt;"));
     assert!(page.text.contains("event &amp;"));
-    assert_eq!(page.keyboard.unwrap().rows[0][0].callback_data, "log:16");
+    assert!(page.text.contains("event &amp; 19"));
+    assert!(!page.text.contains("event &amp; 14"));
+    assert_eq!(page.keyboard.unwrap().rows[0][0].callback_data, "log:5");
 }
 
 #[test]

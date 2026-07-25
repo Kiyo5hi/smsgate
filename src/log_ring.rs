@@ -4,7 +4,7 @@ use std::cell::RefCell;
 use thiserror::Error;
 
 pub const FLASH_LOG_RECORD_SIZE: usize = 256;
-pub const LOG_PAGE_SIZE: usize = 16;
+pub const LOG_PAGE_SIZE: usize = 5;
 const HEADER_SIZE: usize = 16;
 const PAYLOAD_SIZE: usize = FLASH_LOG_RECORD_SIZE - HEADER_SIZE;
 const MAGIC: u32 = 0x534D_4C47; // SMLG
