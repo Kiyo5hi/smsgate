@@ -2,6 +2,10 @@
 
 ESP32 firmware in Rust that bridges SMS/calls and Telegram. Receives SMS on a cellular modem, forwards to Telegram; reply to a Telegram message to send an SMS back.
 
+Project procedures and cross-machine handoff live in [docs/README.md](docs/README.md).
+Start with [sharing](docs/sharing.md) on a new host and
+[handoff](docs/handoff.md) when continuing unfinished work.
+
 ## Hardware
 
 Any ESP32 board paired with an AT-command cellular modem is supported via the `Board` trait.

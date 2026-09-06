@@ -5,6 +5,9 @@ fuzz/target/
 # User configuration — contains secrets, never commit
 /config.toml
 
+# Private captures, device records, and locally built firmware
+/.local/
+
 # Generated partition table binary — regenerate from partitions_ota.csv, do not commit
 /partitions_ota.bin
 
