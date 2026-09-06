@@ -275,7 +275,7 @@ fn decode_ucs2_hex(text: &str) -> Option<String> {
         return None;
     }
     let mut units = Vec::with_capacity(hex.len() / 4);
-    for chunk in hex.as_bytes().chunks_exact(4) {
+    for chunk in hex.as_bytes().as_chunks::<4>().0 {
         let raw = std::str::from_utf8(chunk).ok()?;
         units.push(u16::from_str_radix(raw, 16).ok()?);
     }
